@@ -1,0 +1,128 @@
+{
+  "time": "2025-05-24T12:48:44.117Z",
+  "body": {
+    "vpbx_api_key": "ns5wfgnhpfn15sv2h2ycyfnksrxr6oqy",
+    "sign": "2c501f6cb863c563241ed0cbbfb5818cc4e85c2d882d6dbae60e0ebeaf6a82a5",
+    "json": "{\"entry_id\":\"MjM3MjMyMjY0MDY=\",\"call_id\":\"MToxMDIwNjUzMjo1NzI6OTA3NDAwMDM6MQ==\",\"timestamp\":1748090923,\"seq\":1,\"call_state\":\"Appeared\",\"location\":\"ivr\",\"from\":{\"number\":\"79936014136\"},\"to\":{\"number\":\"79585382001\",\"line_number\":\"79585382001\"},\"dct\":{\"type\":0}}"
+  }
+},
+{
+  "time": "2025-05-24T12:48:46.725Z",
+  "body": {
+    "vpbx_api_key": "ns5wfgnhpfn15sv2h2ycyfnksrxr6oqy",
+    "sign": "00ae6776beee036f6c6137201494c8a057767c6c22a7057e42505a3a9102732a",
+    "json": "{\"entry_id\":\"MjM3MjMyMjY0MDY=\",\"call_id\":\"MToxMDIwNjUzMjo1NzI6OTA3NDAwMDQ=\",\"timestamp\":1748090923,\"seq\":1,\"call_state\":\"Appeared\",\"location\":\"abonent\",\"from\":{\"number\":\"79936014136\",\"taken_from_call_id\":\"MToxMDIwNjUzMjo1NzI6OTA3NDAwMDM6MQ==\"},\"to\":{\"extension\":\"12\",\"number\":\"sip:gennady@vpbx400311913.mangosip.ru\",\"line_number\":\"79585382001\"},\"dct\":{\"type\":0}}"
+  }
+},
+{
+  "time": "2025-05-24T12:48:47.147Z",
+  "body": {
+    "vpbx_api_key": "ns5wfgnhpfn15sv2h2ycyfnksrxr6oqy",
+    "sign": "c919e34b73ef8b26c29c7b30276d862e1e075845743ea9bb1fee6b98341b4aae",
+    "json": "{\"entry_id\":\"MjM3MjMyMjY0MDY=\",\"call_id\":\"MToxMDIwNjUzMjo1NzI6OTA3NDAwMDM6MQ==\",\"timestamp\":1748090926,\"seq\":2,\"call_state\":\"Disconnected\",\"location\":\"ivr\",\"from\":{\"number\":\"79936014136\"},\"to\":{\"number\":\"79585382001\",\"line_number\":\"79585382001\"},\"disconnect_reason\":1100,\"dct\":{\"type\":0}}"
+  }
+},
+{
+  "time": "2025-05-24T12:48:47.162Z",
+  "body": {
+    "vpbx_api_key": "ns5wfgnhpfn15sv2h2ycyfnksrxr6oqy",
+    "sign": "e3467e7191a92c66f942e6efdc2e0e2385fc309dbae11257de9620a4f5deda33",
+    "json": "{\"entry_id\":\"MjM3MjMyMjY0MDY=\",\"call_id\":\"MToxMDIwNjUzMjo1NzI6OTA3NDAwMDQ=\",\"timestamp\":1748090926,\"seq\":2,\"call_state\":\"Connected\",\"location\":\"abonent\",\"from\":{\"number\":\"79936014136\",\"taken_from_call_id\":\"MToxMDIwNjUzMjo1NzI6OTA3NDAwMDM6MQ==\"},\"to\":{\"extension\":\"12\",\"number\":\"sip:gennady@vpbx400311913.mangosip.ru\",\"line_number\":\"79585382001\"},\"dct\":{\"type\":0}}"
+  }
+},
+{
+  "time": "2025-05-24T12:48:59.924Z",
+  "body": {
+    "vpbx_api_key": "ns5wfgnhpfn15sv2h2ycyfnksrxr6oqy",
+    "sign": "e28d14219d7f5c59274f1018df75c09260593fd5cb207a2ce5b930a73566ab13",
+    "json": "{\"entry_id\":\"MjM3MjMyMjY0MDY=\",\"call_id\":\"MToxMDIwNjUzMjo1NzI6OTA3NDAwMDQ=\",\"timestamp\":1748090939,\"seq\":3,\"call_state\":\"Disconnected\",\"location\":\"abonent\",\"from\":{\"number\":\"79936014136\",\"taken_from_call_id\":\"MToxMDIwNjUzMjo1NzI6OTA3NDAwMDM6MQ==\"},\"to\":{\"extension\":\"12\",\"number\":\"sip:gennady@vpbx400311913.mangosip.ru\",\"line_number\":\"79585382001\"},\"disconnect_reason\":1110,\"dct\":{\"type\":0}}"
+  }
+},
+{
+  "time": "2025-05-24T12:49:00.337Z",
+  "body": {
+    "vpbx_api_key": "ns5wfgnhpfn15sv2h2ycyfnksrxr6oqy",
+    "sign": "feda25297d73fed2a46aacea33e189019eb8be561b0a24474d591e5c78150750",
+    "json": "{\"entry_id\":\"MjM3MjMyMjY0MDY=\",\"call_direction\":1,\"from\":{\"number\":\"79936014136\"},\"to\":{\"extension\":\"12\",\"number\":\"sip:gennady@vpbx400311913.mangosip.ru\"},\"line_number\":\"79585382001\",\"create_time\":1748090923,\"forward_time\":1748090926,\"talk_time\":1748090926,\"end_time\":1748090939,\"entry_result\":1,\"disconnect_reason\":1110}"
+  }
+},
+{
+  "time": "2025-05-24T12:52:28.369Z",
+  "body": {
+    "vpbx_api_key": "ns5wfgnhpfn15sv2h2ycyfnksrxr6oqy",
+    "sign": "eba39103f68e569ad27a02e3e55f931c6ecad834b19ae0692c1a0906b8716d38",
+    "json": "{\"entry_id\":\"MjM3MjMyNTA0MjI=\",\"call_id\":\"MToxMDIwNjUzMjo1NDg6MzM3MDYzNzYyOjE=\",\"timestamp\":1748091147,\"seq\":2,\"call_state\":\"Disconnected\",\"location\":\"ivr\",\"from\":{\"number\":\"79936014136\"},\"to\":{\"number\":\"79585382001\",\"line_number\":\"79585382001\"},\"disconnect_reason\":1100,\"dct\":{\"type\":0}}"
+  }
+},
+{
+  "time": "2025-05-24T12:52:28.463Z",
+  "body": {
+    "vpbx_api_key": "ns5wfgnhpfn15sv2h2ycyfnksrxr6oqy",
+    "sign": "3938e803cda05b6f30559f3e1cb9698854960ca98d8236b9fee34a631ad959b9",
+    "json": "{\"entry_id\":\"MjM3MjMyNTA0MjI=\",\"call_id\":\"MToxMDIwNjUzMjo1NDg6MzM3MDYzNzY0\",\"timestamp\":1748091147,\"seq\":1,\"call_state\":\"Appeared\",\"location\":\"abonent\",\"from\":{\"number\":\"79936014136\",\"taken_from_call_id\":\"MToxMDIwNjUzMjo1NDg6MzM3MDYzNzYyOjE=\"},\"to\":{\"extension\":\"12\",\"number\":\"sip:gennady@vpbx400311913.mangosip.ru\",\"line_number\":\"79585382001\"},\"dct\":{\"type\":0}}"
+  }
+},
+{
+  "time": "2025-05-24T12:52:28.498Z",
+  "body": {
+    "vpbx_api_key": "ns5wfgnhpfn15sv2h2ycyfnksrxr6oqy",
+    "sign": "a262bd9c4cfd0437748a29421a17adb20c8cfb13597e820533ae7b398dd55907",
+    "json": "{\"entry_id\":\"MjM3MjMyNTA0MjI=\",\"call_id\":\"MToxMDIwNjUzMjo1NDg6MzM3MDYzNzYyOjE=\",\"timestamp\":1748091147,\"seq\":1,\"call_state\":\"Appeared\",\"location\":\"ivr\",\"from\":{\"number\":\"79936014136\"},\"to\":{\"number\":\"79585382001\",\"line_number\":\"79585382001\"},\"dct\":{\"type\":0}}"
+  }
+},
+{
+  "time": "2025-05-24T12:52:31.378Z",
+  "body": {
+    "vpbx_api_key": "ns5wfgnhpfn15sv2h2ycyfnksrxr6oqy",
+    "sign": "75b22a5bba67e8f034ff46ece14e6300e2204333e25060597d414fdbdcf3dc20",
+    "json": "{\"entry_id\":\"MjM3MjMyNTA0MjI=\",\"call_id\":\"MToxMDIwNjUzMjo1NDg6MzM3MDYzNzY0\",\"timestamp\":1748091151,\"seq\":2,\"call_state\":\"Connected\",\"location\":\"abonent\",\"from\":{\"number\":\"79936014136\",\"taken_from_call_id\":\"MToxMDIwNjUzMjo1NDg6MzM3MDYzNzYyOjE=\"},\"to\":{\"extension\":\"12\",\"number\":\"sip:gennady@vpbx400311913.mangosip.ru\",\"line_number\":\"79585382001\"},\"dct\":{\"type\":0}}"
+  }
+},
+{
+  "time": "2025-05-24T12:52:36.456Z",
+  "body": {
+    "vpbx_api_key": "ns5wfgnhpfn15sv2h2ycyfnksrxr6oqy",
+    "sign": "6e4b42ec0afe97dc58c47bada614a2a3312d61fa4db1ad0d4549092627d8c6a9",
+    "json": "{\"entry_id\":\"MjM3MjMyNTA0MjI=\",\"call_id\":\"MToxMDIwNjUzMjo1NDg6MzM3MDYzNzY0\",\"timestamp\":1748091156,\"seq\":3,\"call_state\":\"Disconnected\",\"location\":\"abonent\",\"from\":{\"number\":\"79936014136\",\"taken_from_call_id\":\"MToxMDIwNjUzMjo1NDg6MzM3MDYzNzYyOjE=\"},\"to\":{\"extension\":\"12\",\"number\":\"sip:gennady@vpbx400311913.mangosip.ru\",\"line_number\":\"79585382001\"},\"disconnect_reason\":1110,\"dct\":{\"type\":0}}"
+  }
+},
+{
+  "time": "2025-05-24T12:52:36.587Z",
+  "body": {
+    "vpbx_api_key": "ns5wfgnhpfn15sv2h2ycyfnksrxr6oqy",
+    "sign": "deee6030df322328bb0e417943a59dfba165d41695a0ac298d46e959931e3b9e",
+    "json": "{\"entry_id\":\"MjM3MjMyNTA0MjI=\",\"call_direction\":1,\"from\":{\"number\":\"79936014136\"},\"to\":{\"extension\":\"12\",\"number\":\"sip:gennady@vpbx400311913.mangosip.ru\"},\"line_number\":\"79585382001\",\"create_time\":1748091147,\"forward_time\":1748091147,\"talk_time\":1748091151,\"end_time\":1748091156,\"entry_result\":1,\"disconnect_reason\":1110}"
+  }
+},
+{
+  "time": "2025-05-24T12:55:27.626Z",
+  "body": {
+    "vpbx_api_key": "ns5wfgnhpfn15sv2h2ycyfnksrxr6oqy",
+    "sign": "a42db50bd1072fb4f62402b14d9f75856a33620e3af87ac63f4bc78787c73fc1",
+    "json": "{\"entry_id\":\"MjM3MjMyNjkzOTE=\",\"call_id\":\"MToxMDIwNjUzMjo1NTQ6MzUxODIwNzMz\",\"timestamp\":1748091323,\"seq\":1,\"call_state\":\"Appeared\",\"location\":\"abonent\",\"from\":{\"extension\":\"10\",\"number\":\"sip:mironov1998@vpbx400311913.mangosip.ru\"},\"to\":{\"number\":\"79309435755\"},\"dct\":{\"type\":0},\"sip_call_id\":\"FAA51FBD-F903-4A28-93C4-14E3542DEAEE\"}"
+  }
+},
+{
+  "time": "2025-05-24T12:55:30.990Z",
+  "body": {
+    "vpbx_api_key": "ns5wfgnhpfn15sv2h2ycyfnksrxr6oqy",
+    "sign": "9c56ac17af567180b44bd8e6b2c66c0facb8fa0e5e4dce299022dbe6e31ecea7",
+    "json": "{\"entry_id\":\"MjM3MjMyNjkzOTE=\",\"call_id\":\"MToxMDIwNjUzMjo1NTQ6MzUxODIwNzMz\",\"timestamp\":1748091330,\"seq\":2,\"call_state\":\"Connected\",\"location\":\"abonent\",\"from\":{\"extension\":\"10\",\"number\":\"sip:mironov1998@vpbx400311913.mangosip.ru\"},\"to\":{\"number\":\"79309435755\"},\"dct\":{\"type\":0},\"sip_call_id\":\"FAA51FBD-F903-4A28-93C4-14E3542DEAEE\"}"
+  }
+},
+{
+  "time": "2025-05-24T12:55:31.366Z",
+  "body": {
+    "vpbx_api_key": "ns5wfgnhpfn15sv2h2ycyfnksrxr6oqy",
+    "sign": "6e4dfcfa69f470d0fb14eb277ddfb26c5bcb718b4de66812282fe84fce95625a",
+    "json": "{\"entry_id\":\"MjM3MjMyNjkzOTE=\",\"call_direction\":2,\"from\":{\"extension\":\"10\",\"number\":\"sip:mironov1998@vpbx400311913.mangosip.ru\"},\"to\":{\"number\":\"79309435755\"},\"line_number\":\"79852194439\",\"create_time\":1748091323,\"forward_time\":1748091323,\"talk_time\":1748091330,\"end_time\":1748091331,\"entry_result\":1,\"disconnect_reason\":1110,\"sip_call_id\":\"FAA51FBD-F903-4A28-93C4-14E3542DEAEE\"}"
+  }
+},
+{
+  "time": "2025-05-24T12:55:31.430Z",
+  "body": {
+    "vpbx_api_key": "ns5wfgnhpfn15sv2h2ycyfnksrxr6oqy",
+    "sign": "4413957c084acca29275e4c8cbbbdecccf1d8961efeec3dc7e490f96ae5a5b21",
+    "json": "{\"entry_id\":\"MjM3MjMyNjkzOTE=\",\"call_id\":\"MToxMDIwNjUzMjo1NTQ6MzUxODIwNzMz\",\"timestamp\":1748091331,\"seq\":3,\"call_state\":\"Disconnected\",\"location\":\"abonent\",\"from\":{\"extension\":\"10\",\"number\":\"sip:mironov1998@vpbx400311913.mangosip.ru\"},\"to\":{\"number\":\"79309435755\"},\"disconnect_reason\":1110,\"dct\":{\"type\":0},\"sip_call_id\":\"FAA51FBD-F903-4A28-93C4-14E3542DEAEE\"}"
+  }
+},
