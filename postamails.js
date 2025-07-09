@@ -16,7 +16,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const TABLES_TO_CHECK = [
   "appeals", "appealsotkaz", "dobivashki",
-  "dogovornew", "eventsnew", "zamerotkaz", "contractsfinalnew"
+  "dogovornew", "eventsnew", "zamerotkaz"
 ];
 
 const PRODUCT_KEYWORDS = [
@@ -94,6 +94,22 @@ function extractProduct(text) {
   return found || "Продукт не указан";
 }
 
+// ---- Поиск по завершенным договорам (локальный файл) ----
+function findContractByPhoneFromFile(phone) {
+  try {
+    const filePath = path.join(__dirname, "contractsfinalnew.json");
+    if (!fs.existsSync(filePath)) return null;
+    const contracts = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    const clearPhone = phone.replace(/\D/g, '');
+    return contracts.find(contract => {
+      const contractPhone = (contract.phone || '').replace(/\D/g, '');
+      return contractPhone && contractPhone === clearPhone;
+    }) || null;
+  } catch (e) {
+    return null;
+  }
+}
+
 // ---- Работа с Supabase ----
 async function getFreeAppealId() {
   console.log("[getFreeAppealId] — Ищу свободный appeal_id...");
@@ -151,6 +167,20 @@ async function insertAppealFromEmail(emailText) {
   if (!phone) throw new Error("Телефон не найден");
   const normalizedPhone = normalizePhone(phone);
   if (!normalizedPhone) throw new Error("Невалидный номер");
+
+  // === Поиск в локальном файле завершённых договоров ===
+  const contract = findContractByPhoneFromFile(normalizedPhone);
+  if (contract) {
+    if (TELEGRAM_BOT) {
+      await TELEGRAM_BOT.sendMessage(
+        TELEGRAM_CHAT_ID,
+        `⛔️ <b>Клиент найден в завершённых договорах</b>\nНомер: <b>${contract.appeal_id || ''}</b>\nКлиент: <b>${contract.client_name || ''}</b>\nТелефон: <b>${contract.phone || ''}</b>\nГород: <b>${contract.city || ''}</b>\nНомер договора: <b>${contract.dogovor_number || ''}</b>`,
+        { parse_mode: "HTML" }
+      );
+    }
+    return "Клиент найден в завершённых договорах";
+  }
+
   const isDuplicate = await phoneExistsInAnyTable(normalizedPhone);
   if (isDuplicate) return "Уже есть такая заявка";
   const name = extractName(emailText);
