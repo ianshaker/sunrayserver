@@ -6,6 +6,10 @@ const schedule = require("node-schedule");
 
 const TELEGRAM_CHAT_ID = -1002582438853;
 
+// -- Бот подключается через server.js и передаётся сюда (см. внизу export)
+let TELEGRAM_BOT = null;
+
+// Supabase setup
 const SUPABASE_URL = "https://xyzkneqhggpxstxqbqhs.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzIiwicmVmIjoieHl6a25lcWhnZ3B4c3R4cWJxaHMiLCJyb2xlIjoiYW5vbiIsImlhdCI6MTc0NjU1MTUzMiwiZXhwIjoyMDYyMTI3NTMyfQ.HmkcuxviENuQbiYgyQh0MBPr5zYlk88YLnRBlTXaKUU";
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -144,15 +148,18 @@ async function insertAppealFromEmail(emailText) {
     updated_at: new Date().toISOString(),
   };
 
+  // Отправка в БД
   const { error: insertError } = await supabase.from("appeals").insert([appeal]);
   if (insertError) throw insertError;
 
-  await TELEGRAM_BOT.sendMessage(
-    TELEGRAM_CHAT_ID,
-    `📨 <b>НОВАЯ ЗАЯВКА С ПОЧТЫ</b>\nНомер: <b>${appeal_id}</b>\nКлиент: <b>${name}</b>\nТелефон: <b>${phone}</b>\nГород: <b>${city}</b>\nПродукт: <b>${product_type}</b>`,
-    { parse_mode: "HTML" }
-  );
-
+  // Уведомление в Telegram
+  if (TELEGRAM_BOT) {
+    await TELEGRAM_BOT.sendMessage(
+      TELEGRAM_CHAT_ID,
+      `📨 <b>НОВАЯ ЗАЯВКА С ПОЧТЫ</b>\nНомер: <b>${appeal_id}</b>\nКлиент: <b>${name}</b>\nТелефон: <b>${phone}</b>\nГород: <b>${city}</b>\nПродукт: <b>${product_type}</b>`,
+      { parse_mode: "HTML" }
+    );
+  }
   return "Заявка создана";
 }
 
@@ -199,11 +206,12 @@ async function checkNewEmails() {
   }
 }
 
-// ---- Запуск ----
-(async () => {
+// ---- Запуск автопроверки ----
+async function startEmailChecker(telegramBot) {
+  TELEGRAM_BOT = telegramBot;
   await initGmailClient();
   schedule.scheduleJob('*/30 * * * * *', checkNewEmails); // каждые 30 секунд
   console.log('Автопроверка заявок с почты каждые 30 сек ЗАПУЩЕНА!');
-})();
+}
 
-module.exports = { insertAppealFromEmail };
+module.exports = { insertAppealFromEmail, startEmailChecker };
