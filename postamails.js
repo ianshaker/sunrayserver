@@ -47,11 +47,9 @@ async function initGmailClient() {
 
 // ---- Универсальная функция для формата телефона ----
 function formatPhoneClassic(digits) {
-  // digits: только цифры, 10 или 11 знаков
   if (!digits) return "";
-  // если +7 или 8, убираем первую цифру
   digits = digits.replace(/^(\+7|7|8)/, "");
-  if (digits.length !== 10) return digits; // fallback на случай сбоя
+  if (digits.length !== 10) return digits;
   return `8(${digits.substring(0, 3)})${digits.substring(3, 6)}-${digits.substring(6, 8)}-${digits.substring(8, 10)}`;
 }
 
@@ -60,21 +58,18 @@ function extractPhone(text) {
   const match = text.match(/\+7\s*\(?\d{3}\)?[-\s]?\d{3}[-\s]?\d{2}[-\s]?\d{2}/);
   if (!match) return null;
   const digits = match[0].replace(/\D/g, "");
-  // Приводим к виду "8(915)141-87-21"
   return formatPhoneClassic(digits);
 }
 
 // ---- Нормализация: всегда формат как в базе! ----
 function normalizePhone(phone) {
   if (!phone) return null;
-  // Оставить только цифры, далее привести к нужному формату
   const digits = phone.replace(/\D/g, "");
   if (digits.length === 11) {
-    // если начинается с 7 или 8, убрать первую цифру
     return formatPhoneClassic(digits);
   }
   if (digits.length === 10) {
-    return formatPhoneClassic('8' + digits); // добавить ведущую 8
+    return formatPhoneClassic('8' + digits);
   }
   return phone;
 }
@@ -110,6 +105,22 @@ function findContractByPhoneFromFile(phone) {
   }
 }
 
+// ---- Поиск по базе Supabase по всем таблицам ----
+async function findExistingAppealByPhone(normalizedPhone) {
+  for (const table of TABLES_TO_CHECK) {
+    const { data, error } = await supabase
+      .from(table)
+      .select("*")
+      .eq("phone", normalizedPhone)
+      .limit(1);
+    if (error) continue;
+    if (data && data.length > 0) {
+      return { table, info: data[0] };
+    }
+  }
+  return null;
+}
+
 // ---- Работа с Supabase ----
 async function getFreeAppealId() {
   console.log("[getFreeAppealId] — Ищу свободный appeal_id...");
@@ -140,27 +151,6 @@ async function markAppealIdUsed(appeal_id) {
   }
 }
 
-async function phoneExistsInAnyTable(normalizedPhone) {
-  console.log(`[phoneExistsInAnyTable] Проверяю наличие телефона ${normalizedPhone} в таблицах...`);
-  for (const table of TABLES_TO_CHECK) {
-    const { data, error } = await supabase
-      .from(table)
-      .select("phone")
-      .limit(1)
-      .eq("phone", normalizedPhone);
-    if (error) {
-      console.error(`[phoneExistsInAnyTable] Ошибка запроса к таблице ${table}:`, error);
-      continue;
-    }
-    if (data && data.length > 0) {
-      console.log(`[phoneExistsInAnyTable] Найден дубликат в таблице ${table}:`, data[0]);
-      return true;
-    }
-  }
-  console.log(`[phoneExistsInAnyTable] Телефон ${normalizedPhone} не найден в указанных таблицах.`);
-  return false;
-}
-
 // ---- Вставка заявки ----
 async function insertAppealFromEmail(emailText) {
   const phone = extractPhone(emailText);
@@ -181,8 +171,23 @@ async function insertAppealFromEmail(emailText) {
     return "Клиент найден в завершённых договорах";
   }
 
-  const isDuplicate = await phoneExistsInAnyTable(normalizedPhone);
-  if (isDuplicate) return "Уже есть такая заявка";
+  // === Поиск по базе Supabase ===
+  const existing = await findExistingAppealByPhone(normalizedPhone);
+  if (existing) {
+    if (TELEGRAM_BOT) {
+      let msg = `📨 <b>Почтовая заявка с этим номером уже есть в базе</b>\n`;
+      msg += `Таблица: <b>${existing.table}</b>\n`;
+      msg += `ID: <b>${existing.info.appeal_id || existing.info.appeal_number || ''}</b>\n`;
+      msg += `Клиент: <b>${existing.info.client_name || ''}</b>\n`;
+      msg += `Телефон: <b>${normalizedPhone}</b>\n`;
+      msg += `Город: <b>${existing.info.city || ''}</b>\n`;
+      msg += `Продукт: <b>${existing.info.product_type || ''}</b>\n`;
+      msg += `Исходное письмо:\n<pre>${emailText.substring(0, 1000)}</pre>`;
+      await TELEGRAM_BOT.sendMessage(TELEGRAM_CHAT_ID, msg, { parse_mode: "HTML" });
+    }
+    return "Уже есть такая заявка";
+  }
+
   const name = extractName(emailText);
   const city = extractCity(emailText);
   const product_type = extractProduct(emailText);
@@ -192,7 +197,7 @@ async function insertAppealFromEmail(emailText) {
   const appeal = {
     appeal_number: appeal_id,
     client_name: name,
-    phone: normalizedPhone, // только формат 8(XXX)XXX-XX-XX
+    phone: normalizedPhone,
     city,
     source: "Почта",
     manager: "Ян",
@@ -224,6 +229,8 @@ async function insertAppealFromEmail(emailText) {
 // ---- Проверка новых писем ----
 async function checkNewEmails() {
   try {
+    const now = new Date();
+    console.log(`[${now.toISOString()}] Проверка почты выполнена`);
     const today = new Date();
     const formattedDate = `${today.getFullYear()}/${today.getMonth() + 1}/${today.getDate()}`;
     let cache = { date: '', emailIds: [] };
@@ -268,8 +275,9 @@ async function checkNewEmails() {
 async function startEmailChecker(telegramBot) {
   TELEGRAM_BOT = telegramBot;
   await initGmailClient();
-  schedule.scheduleJob('*/30 * * * * *', checkNewEmails); // каждые 30 секунд
-  console.log('Автопроверка заявок с почты каждые 30 сек ЗАПУЩЕНА!');
+  // Каждые 30 секунд, только с 9:00 до 21:59 по Москве (UTC+3)
+  schedule.scheduleJob('*/30 * 6-18 * * *', checkNewEmails);
+  console.log('Автопроверка заявок с почты каждые 30 сек (9-21 MSK) ЗАПУЩЕНА!');
 }
 
 module.exports = { insertAppealFromEmail, startEmailChecker };
