@@ -1,8 +1,8 @@
-// emailAppealHandler.js
 const { createClient } = require("@supabase/supabase-js");
 const { google } = require("googleapis");
 const fs = require("fs");
 const path = require("path");
+const schedule = require("node-schedule");
 
 const TELEGRAM_CHAT_ID = -1002582438853;
 const TELEGRAM_BOT = require("./telegramBot");
@@ -12,52 +12,37 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const TABLES_TO_CHECK = [
-  "appeals",
-  "appealsotkaz",
-  "dobivashki",
-  "dogovornew",
-  "eventsnew",
-  "zamerotkaz",
-  "contractsfinalnew"
+  "appeals", "appealsotkaz", "dobivashki",
+  "dogovornew", "eventsnew", "zamerotkaz", "contractsfinalnew"
 ];
 
 const PRODUCT_KEYWORDS = [
-  "Рулонные шторы",
-  "Римские шторы",
-  "Жалюзи",
-  "Москитные сетки"
+  "Рулонные шторы", "Римские шторы", "Жалюзи", "Москитные сетки"
 ];
 
-// Gmail API config
 const SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"];
 const TOKEN_PATH = path.join(__dirname, "data", "gmail-token.json");
 const CREDENTIALS_PATH = path.join(__dirname, "data", "gmail-credentials.json");
+const CACHE_PATH = path.join(__dirname, "data", "postamailsCache.json");
+
 let gmailClient = null;
 let oAuth2Client = null;
 
+// ---- Gmail API ----
 async function initGmailClient() {
-  try {
-    if (!fs.existsSync(CREDENTIALS_PATH)) {
-      console.log("Gmail credentials file not found.");
-      return;
-    }
-    const credentials = JSON.parse(fs.readFileSync(CREDENTIALS_PATH, "utf8"));
-    const { client_secret, client_id, redirect_uris } = credentials.installed || credentials.web;
-    oAuth2Client = new google.auth.OAuth2(client_id, client_secret, redirect_uris[0]);
-
-    if (fs.existsSync(TOKEN_PATH)) {
-      const token = JSON.parse(fs.readFileSync(TOKEN_PATH, "utf8"));
-      oAuth2Client.setCredentials(token);
-      gmailClient = google.gmail({ version: "v1", auth: oAuth2Client });
-      console.log("Gmail API client initialized.");
-    } else {
-      console.log("No Gmail token found. Please authorize first.");
-    }
-  } catch (error) {
-    console.error("Error initializing Gmail client:", error);
-  }
+  if (!fs.existsSync(CREDENTIALS_PATH)) throw new Error("Gmail credentials file not found.");
+  const credentials = JSON.parse(fs.readFileSync(CREDENTIALS_PATH, "utf8"));
+  const { client_secret, client_id, redirect_uris } = credentials.installed || credentials.web;
+  oAuth2Client = new google.auth.OAuth2(client_id, client_secret, redirect_uris[0]);
+  if (!fs.existsSync(TOKEN_PATH)) throw new Error("No Gmail token found. Please authorize first.");
+  const token = JSON.parse(fs.readFileSync(TOKEN_PATH, "utf8"));
+  oAuth2Client.setCredentials(token);
+  gmailClient = google.gmail({ version: "v1", auth: oAuth2Client });
+  if (!fs.existsSync(CACHE_PATH)) fs.writeFileSync(CACHE_PATH, JSON.stringify({ date: '', emailIds: [] }, null, 2));
+  console.log("Gmail API client initialized.");
 }
 
+// ---- Извлечение данных из текста ----
 function extractPhone(text) {
   const match = text.match(/\+7\s*\(?\d{3}\)?[-\s]?\d{3}[-\s]?\d{2}[-\s]?\d{2}/);
   if (!match) return null;
@@ -92,6 +77,7 @@ function extractProduct(text) {
   return found || "Продукт не указан";
 }
 
+// ---- Работа с Supabase ----
 async function getFreeAppealId() {
   const { data, error } = await supabase
     .from("ids")
@@ -122,6 +108,7 @@ async function phoneExistsInAnyTable(normalizedPhone) {
   return false;
 }
 
+// ---- Вставка заявки ----
 async function insertAppealFromEmail(emailText) {
   const phone = extractPhone(emailText);
   if (!phone) throw new Error("Телефон не найден");
@@ -170,6 +157,54 @@ async function insertAppealFromEmail(emailText) {
   return "Заявка создана";
 }
 
-initGmailClient();
+// ---- Проверка новых писем ----
+async function checkNewEmails() {
+  try {
+    const today = new Date();
+    const formattedDate = `${today.getFullYear()}/${today.getMonth() + 1}/${today.getDate()}`;
+    let cache = { date: '', emailIds: [] };
+    if (fs.existsSync(CACHE_PATH)) cache = JSON.parse(fs.readFileSync(CACHE_PATH, "utf8"));
+    if (cache.date !== formattedDate) {
+      cache = { date: formattedDate, emailIds: [] };
+    }
+    const res = await gmailClient.users.messages.list({
+      userId: 'me',
+      q: `label:"Заявки Sunray" after:${formattedDate}`,
+      maxResults: 20
+    });
+    const ids = (res.data.messages || []).map(m => m.id);
+    const newIds = ids.filter(id => !cache.emailIds.includes(id));
+    if (newIds.length === 0) return;
+
+    for (const id of newIds) {
+      try {
+        const details = await gmailClient.users.messages.get({ userId: 'me', id, format: 'full' });
+        let body = '';
+        if (details.data.payload.parts) {
+          const textPart = details.data.payload.parts.find(p => p.mimeType === 'text/plain') ||
+                           details.data.payload.parts.find(p => p.mimeType === 'text/html');
+          if (textPart && textPart.body.data) body = Buffer.from(textPart.body.data, 'base64').toString('utf8');
+        } else if (details.data.payload.body && details.data.payload.body.data) {
+          body = Buffer.from(details.data.payload.body.data, 'base64').toString('utf8');
+        }
+        await insertAppealFromEmail(body);
+      } catch (err) {
+        console.error("Ошибка обработки письма:", err.message);
+      }
+    }
+    cache.emailIds = [...cache.emailIds, ...newIds];
+    cache.date = formattedDate;
+    fs.writeFileSync(CACHE_PATH, JSON.stringify(cache, null, 2));
+  } catch (err) {
+    console.error("Ошибка проверки почты:", err.message);
+  }
+}
+
+// ---- Запуск ----
+(async () => {
+  await initGmailClient();
+  schedule.scheduleJob('*/30 * * * * *', checkNewEmails); // каждые 30 секунд
+  console.log('Автопроверка заявок с почты каждые 30 сек ЗАПУЩЕНА!');
+})();
 
 module.exports = { insertAppealFromEmail };
