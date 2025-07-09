@@ -29,6 +29,10 @@ const { registerReadinessRoute } = require("./readiness");
 // --- Импорт функции для удаления дубликатов (только импорт, не запуск) --- //
 const removeDuplicates = require("./remove_duplicates"); // пусть будет, даже если сейчас не вызывается
 
+// --- Импорт и запуск обработчика почты --- //
+const { startEmailChecker } = require("./postamails");
+startEmailChecker(telegramBot); // <-- Передаём бота, если требуется в твоём модуле
+
 // --- CORS, чтобы фронт мог делать запросы! --- //
 fastify.register(require('@fastify/cors'), {
   origin: '*', // или укажи свой домен для безопасности
