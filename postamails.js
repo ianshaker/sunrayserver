@@ -1,5 +1,9 @@
 // emailAppealHandler.js
 const { createClient } = require("@supabase/supabase-js");
+const { google } = require("googleapis");
+const fs = require("fs");
+const path = require("path");
+
 const TELEGRAM_CHAT_ID = -1002582438853;
 const TELEGRAM_BOT = require("./telegramBot");
 
@@ -23,6 +27,36 @@ const PRODUCT_KEYWORDS = [
   "Жалюзи",
   "Москитные сетки"
 ];
+
+// Gmail API config
+const SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"];
+const TOKEN_PATH = path.join(__dirname, "data", "gmail-token.json");
+const CREDENTIALS_PATH = path.join(__dirname, "data", "gmail-credentials.json");
+let gmailClient = null;
+let oAuth2Client = null;
+
+async function initGmailClient() {
+  try {
+    if (!fs.existsSync(CREDENTIALS_PATH)) {
+      console.log("Gmail credentials file not found.");
+      return;
+    }
+    const credentials = JSON.parse(fs.readFileSync(CREDENTIALS_PATH, "utf8"));
+    const { client_secret, client_id, redirect_uris } = credentials.installed || credentials.web;
+    oAuth2Client = new google.auth.OAuth2(client_id, client_secret, redirect_uris[0]);
+
+    if (fs.existsSync(TOKEN_PATH)) {
+      const token = JSON.parse(fs.readFileSync(TOKEN_PATH, "utf8"));
+      oAuth2Client.setCredentials(token);
+      gmailClient = google.gmail({ version: "v1", auth: oAuth2Client });
+      console.log("Gmail API client initialized.");
+    } else {
+      console.log("No Gmail token found. Please authorize first.");
+    }
+  } catch (error) {
+    console.error("Error initializing Gmail client:", error);
+  }
+}
 
 function extractPhone(text) {
   const match = text.match(/\+7\s*\(?\d{3}\)?[-\s]?\d{3}[-\s]?\d{2}[-\s]?\d{2}/);
@@ -135,5 +169,7 @@ async function insertAppealFromEmail(emailText) {
 
   return "Заявка создана";
 }
+
+initGmailClient();
 
 module.exports = { insertAppealFromEmail };
