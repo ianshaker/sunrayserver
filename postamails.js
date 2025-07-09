@@ -5,7 +5,6 @@ const path = require("path");
 const schedule = require("node-schedule");
 
 const TELEGRAM_CHAT_ID = -1002582438853;
-const TELEGRAM_BOT = require("./telegramBot");
 
 const SUPABASE_URL = "https://xyzkneqhggpxstxqbqhs.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzIiwicmVmIjoieHl6a25lcWhnZ3B4c3R4cWJxaHMiLCJyb2xlIjoiYW5vbiIsImlhdCI6MTc0NjU1MTUzMiwiZXhwIjoyMDYyMTI3NTMyfQ.HmkcuxviENuQbiYgyQh0MBPr5zYlk88YLnRBlTXaKUU";
