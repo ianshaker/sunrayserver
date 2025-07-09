@@ -82,32 +82,61 @@ function extractProduct(text) {
 
 // ---- Работа с Supabase ----
 async function getFreeAppealId() {
+  // Логируем начало запроса
+  console.log("[getFreeAppealId] — Ищу свободный appeal_id...");
+
+  // Делаем запрос, но теперь выбираем все ключевые поля для отладки
   const { data, error } = await supabase
     .from("ids")
-    .select("appeal_id")
+    .select("id, appeal_id, is_used, used_at")
     .eq("is_used", false)
     .is("used_at", null)
     .order("id", { ascending: true })
-    .limit(1);
-  if (error || !data || data.length === 0) throw new Error("Нет свободных ID");
+    .limit(10);
+
+  // Подробный лог результата
+  if (error) console.error("[getFreeAppealId] Ошибка запроса:", error);
+  if (!data || data.length === 0) {
+    console.warn("[getFreeAppealId] Нет свободных ID! DATA:", data);
+    throw new Error("Нет свободных ID");
+  }
+
+  console.log("[getFreeAppealId] Найдено свободных:", data.length, "Первый:", data[0]);
+
+  // Возвращаем первый свободный appeal_id
   return data[0].appeal_id;
 }
 
 async function markAppealIdUsed(appeal_id) {
   const used_at = new Date().toISOString();
-  await supabase.from("ids").update({ is_used: true, used_at }).eq("appeal_id", appeal_id);
+  // Логируем попытку обновления
+  console.log(`[markAppealIdUsed] Отмечаю appeal_id ${appeal_id} как is_used=true, used_at=${used_at}`);
+  const { error } = await supabase.from("ids").update({ is_used: true, used_at }).eq("appeal_id", appeal_id);
+  if (error) {
+    console.error(`[markAppealIdUsed] Ошибка при обновлении appeal_id ${appeal_id}:`, error);
+  } else {
+    console.log(`[markAppealIdUsed] appeal_id ${appeal_id} успешно обновлен.`);
+  }
 }
 
 async function phoneExistsInAnyTable(normalizedPhone) {
+  console.log(`[phoneExistsInAnyTable] Проверяю наличие телефона ${normalizedPhone} в таблицах...`);
   for (const table of TABLES_TO_CHECK) {
     const { data, error } = await supabase
       .from(table)
       .select("phone")
       .limit(1)
       .eq("phone", normalizedPhone);
-    if (error) continue;
-    if (data && data.length > 0) return true;
+    if (error) {
+      console.error(`[phoneExistsInAnyTable] Ошибка запроса к таблице ${table}:`, error);
+      continue;
+    }
+    if (data && data.length > 0) {
+      console.log(`[phoneExistsInAnyTable] Найден дубликат в таблице ${table}:`, data[0]);
+      return true;
+    }
   }
+  console.log(`[phoneExistsInAnyTable] Телефон ${normalizedPhone} не найден в указанных таблицах.`);
   return false;
 }
 
