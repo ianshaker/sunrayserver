@@ -45,24 +45,38 @@ async function initGmailClient() {
   console.log("Gmail API client initialized.");
 }
 
-// ---- Извлечение данных из текста ----
+// ---- Универсальная функция для формата телефона ----
+function formatPhoneClassic(digits) {
+  // digits: только цифры, 10 или 11 знаков
+  if (!digits) return "";
+  // если +7 или 8, убираем первую цифру
+  digits = digits.replace(/^(\+7|7|8)/, "");
+  if (digits.length !== 10) return digits; // fallback на случай сбоя
+  return `8(${digits.substring(0, 3)})${digits.substring(3, 6)}-${digits.substring(6, 8)}-${digits.substring(8, 10)}`;
+}
+
+// ---- Извлечение номера из текста, перевод к формату базы ----
 function extractPhone(text) {
   const match = text.match(/\+7\s*\(?\d{3}\)?[-\s]?\d{3}[-\s]?\d{2}[-\s]?\d{2}/);
   if (!match) return null;
   const digits = match[0].replace(/\D/g, "");
-  return `8(${digits.substring(1, 4)})${digits.substring(4, 7)}-${digits.substring(7, 9)}-${digits.substring(9, 11)}`;
+  // Приводим к виду "8(915)141-87-21"
+  return formatPhoneClassic(digits);
 }
 
+// ---- Нормализация: всегда формат как в базе! ----
 function normalizePhone(phone) {
   if (!phone) return null;
+  // Оставить только цифры, далее привести к нужному формату
   const digits = phone.replace(/\D/g, "");
-  if (digits.length === 11 && (digits[0] === '7' || digits[0] === '8')) {
-    return digits.substring(1);
+  if (digits.length === 11) {
+    // если начинается с 7 или 8, убрать первую цифру
+    return formatPhoneClassic(digits);
   }
   if (digits.length === 10) {
-    return digits;
+    return formatPhoneClassic('8' + digits); // добавить ведущую 8
   }
-  return null;
+  return phone;
 }
 
 function extractName(text) {
@@ -82,10 +96,7 @@ function extractProduct(text) {
 
 // ---- Работа с Supabase ----
 async function getFreeAppealId() {
-  // Логируем начало запроса
   console.log("[getFreeAppealId] — Ищу свободный appeal_id...");
-
-  // Делаем запрос, но теперь выбираем все ключевые поля для отладки
   const { data, error } = await supabase
     .from("ids")
     .select("id, appeal_id, is_used, used_at")
@@ -93,23 +104,17 @@ async function getFreeAppealId() {
     .is("used_at", null)
     .order("id", { ascending: true })
     .limit(10);
-
-  // Подробный лог результата
   if (error) console.error("[getFreeAppealId] Ошибка запроса:", error);
   if (!data || data.length === 0) {
     console.warn("[getFreeAppealId] Нет свободных ID! DATA:", data);
     throw new Error("Нет свободных ID");
   }
-
   console.log("[getFreeAppealId] Найдено свободных:", data.length, "Первый:", data[0]);
-
-  // Возвращаем первый свободный appeal_id
   return data[0].appeal_id;
 }
 
 async function markAppealIdUsed(appeal_id) {
   const used_at = new Date().toISOString();
-  // Логируем попытку обновления
   console.log(`[markAppealIdUsed] Отмечаю appeal_id ${appeal_id} как is_used=true, used_at=${used_at}`);
   const { error } = await supabase.from("ids").update({ is_used: true, used_at }).eq("appeal_id", appeal_id);
   if (error) {
@@ -144,24 +149,20 @@ async function phoneExistsInAnyTable(normalizedPhone) {
 async function insertAppealFromEmail(emailText) {
   const phone = extractPhone(emailText);
   if (!phone) throw new Error("Телефон не найден");
-
   const normalizedPhone = normalizePhone(phone);
   if (!normalizedPhone) throw new Error("Невалидный номер");
-
   const isDuplicate = await phoneExistsInAnyTable(normalizedPhone);
   if (isDuplicate) return "Уже есть такая заявка";
-
   const name = extractName(emailText);
   const city = extractCity(emailText);
   const product_type = extractProduct(emailText);
-
   const appeal_id = await getFreeAppealId();
   await markAppealIdUsed(appeal_id);
 
   const appeal = {
     appeal_number: appeal_id,
     client_name: name,
-    phone: normalizedPhone,
+    phone: normalizedPhone, // только формат 8(XXX)XXX-XX-XX
     city,
     source: "Почта",
     manager: "Ян",
@@ -177,15 +178,13 @@ async function insertAppealFromEmail(emailText) {
     updated_at: new Date().toISOString(),
   };
 
-  // Отправка в БД
   const { error: insertError } = await supabase.from("appeals").insert([appeal]);
   if (insertError) throw insertError;
 
-  // Уведомление в Telegram
   if (TELEGRAM_BOT) {
     await TELEGRAM_BOT.sendMessage(
       TELEGRAM_CHAT_ID,
-      `📨 <b>НОВАЯ ЗАЯВКА С ПОЧТЫ</b>\nНомер: <b>${appeal_id}</b>\nКлиент: <b>${name}</b>\nТелефон: <b>${phone}</b>\nГород: <b>${city}</b>\nПродукт: <b>${product_type}</b>`,
+      `📨 <b>НОВАЯ ЗАЯВКА С ПОЧТЫ</b>\nНомер: <b>${appeal_id}</b>\nКлиент: <b>${name}</b>\nТелефон: <b>${normalizedPhone}</b>\nГород: <b>${city}</b>\nПродукт: <b>${product_type}</b>`,
       { parse_mode: "HTML" }
     );
   }
