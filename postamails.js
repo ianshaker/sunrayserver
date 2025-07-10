@@ -228,9 +228,14 @@ async function insertAppealFromEmail(emailText) {
 
 // ---- Проверка новых писем ----
 async function checkNewEmails() {
+  const now = new Date();
+  const hourMsk = (now.getUTCHours() + 3) % 24; // Москва = UTC+3
+  if (hourMsk < 9 || hourMsk > 21) {
+    console.log(`[${now.toISOString()}] Проверка почты не выполняется — не рабочее время (МСК: ${hourMsk}:00)`);
+    return;
+  }
   try {
-    const now = new Date();
-    console.log(`[${now.toISOString()}] Проверка почты выполнена`);
+    console.log(`[${now.toISOString()}] Проверка почты выполнена (МСК: ${hourMsk}:00)`);
     const today = new Date();
     const formattedDate = `${today.getFullYear()}/${today.getMonth() + 1}/${today.getDate()}`;
     let cache = { date: '', emailIds: [] };
