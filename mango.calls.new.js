@@ -13,7 +13,6 @@ const TABLES_TO_CHECK = [
   "appeals",
   "appealsotkaz",
   "dobivashki",
-  // "dogovorfinished",   // УБРАЛИ!
   "dogovornew",
   "eventsnew",
   "zamerotkaz"
@@ -23,13 +22,11 @@ const TABLE_NAMES = {
     appeals: 'ВХОДЯЩИЕ',
     appealsotkaz: 'ВХОДЯЩИЕ ОТКАЗ',
     dobivashki: 'ДОБИВАШКИ',
-    // dogovorfinished: 'ДОГОВОРЫ ЗАВЕРШЕННЫЕ',
     dogovornew: 'ДОГОВОРЫ АКТИВНЫЕ',
     eventsnew: 'СОБЫТИЯ',
     zamerotkaz: 'ЗАМЕР ОТКАЗ',
     contractsfinalnew: 'ДОГОВОРЫ ЗАВЕРШЕННЫЕ'
 };
-
 
 const MANAGERS = {
     '79933686717': 'Даша',
@@ -112,8 +109,12 @@ function findContractByPhoneFromFile(phone) {
         // ищем строго по совпадению (лучше сравнивать "чистый" номер без лишних символов)
         const clearPhone = phone.replace(/\D/g, '');
         return contracts.find(contract => {
-            const contractPhone = (contract.phone || '').replace(/\D/g, '');
-            return contractPhone && contractPhone === clearPhone;
+            // ищем по каждому номеру из ячейки с разделителями
+            if (!contract.phone) return false;
+            return contract.phone
+                .split(/[,\.]/)
+                .map(p => p.replace(/\s/g, '').replace(/\D/g, ''))
+                .some(num => num === clearPhone);
         }) || null;
     } catch (e) {
         return null;
@@ -122,6 +123,7 @@ function findContractByPhoneFromFile(phone) {
 
 // === 2. Обычный поиск в Supabase (кроме dogovorfinished) === //
 async function findClientInfoByPhone(phone) {
+    // Для поиска по строке с запятыми, используем ILIKE '%номер%'
     for (const table of TABLES_TO_CHECK) {
         let fields = [];
         switch (table) {
@@ -144,14 +146,27 @@ async function findClientInfoByPhone(phone) {
             default:
                 continue;
         }
+        // форматируем как стандартный номер для поиска
+        const searchNumber = phone.trim();
         const { data, error } = await supabase
             .from(table)
             .select(fields.join(","))
-            .eq("phone", phone)
+            .ilike('phone', `%${searchNumber}%`)
             .limit(1);
         if (error) continue;
         if (data && data.length > 0) {
-            return { table, info: data[0] };
+            // дополнительно проверяем по каждому номеру из ячейки
+            const clearSearch = searchNumber.replace(/\D/g, '');
+            const foundRow = data.find(row => {
+                return row.phone &&
+                    row.phone
+                        .split(/[,\.]/)
+                        .map(p => p.replace(/\s/g, '').replace(/\D/g, ''))
+                        .some(num => num === clearSearch);
+            });
+            if (foundRow) {
+                return { table, info: foundRow };
+            }
         }
     }
     return null;
@@ -548,6 +563,5 @@ async function handleMangoWebhook(request, reply, telegramBot) {
 
     return reply.send({ status: "not_handled" });
 }
-
 
 module.exports = { handleMangoWebhook };
