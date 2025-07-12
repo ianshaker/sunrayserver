@@ -35,12 +35,15 @@ let oAuth2Client = null;
 let lastTokenErrorSentAt = 0;
 const TOKEN_ERROR_INTERVAL_MS = 2 * 60 * 60 * 1000; // 2 часа
 
+// === Для поддержки авторизации через /gmail_code ===
+let pendingOAuth2Client = null;
+
 function getGmailAuthUrl() {
   if (!fs.existsSync(CREDENTIALS_PATH)) return null;
   const credentials = JSON.parse(fs.readFileSync(CREDENTIALS_PATH, "utf8"));
   const { client_secret, client_id, redirect_uris } = credentials.installed || credentials.web;
-  const oAuth2Client = new google.auth.OAuth2(client_id, client_secret, redirect_uris[0]);
-  return oAuth2Client.generateAuthUrl({
+  pendingOAuth2Client = new google.auth.OAuth2(client_id, client_secret, redirect_uris[0]);
+  return pendingOAuth2Client.generateAuthUrl({
     access_type: 'offline',
     scope: SCOPES,
     prompt: 'consent'
@@ -322,6 +325,36 @@ async function startEmailChecker(telegramBot) {
   // Каждые 30 секунд, только с 9:00 до 21:59 по Москве (UTC+3)
   schedule.scheduleJob('*/30 * 6-18 * * *', checkNewEmails);
   console.log('Автопроверка заявок с почты каждые 30 сек (9-21 MSK) ЗАПУЩЕНА!');
+
+  // === Обработчик команды /gmail_code ===
+  TELEGRAM_BOT.onText(/\/gmail_code\s+(.+)/, async (msg, match) => {
+    const code = match[1].trim();
+
+    if (!pendingOAuth2Client) {
+      TELEGRAM_BOT.sendMessage(
+        msg.chat.id,
+        "Нет ожидающей авторизации. Сначала запросите ссылку для авторизации!"
+      );
+      return;
+    }
+
+    try {
+      const { tokens } = await pendingOAuth2Client.getToken(code);
+      pendingOAuth2Client.setCredentials(tokens);
+      fs.writeFileSync(TOKEN_PATH, JSON.stringify(tokens, null, 2));
+      TELEGRAM_BOT.sendMessage(
+        msg.chat.id,
+        "✅ Gmail API: Авторизация прошла успешно! Доступ к почте восстановлен."
+      );
+      pendingOAuth2Client = null;
+      await initGmailClient();
+    } catch (error) {
+      TELEGRAM_BOT.sendMessage(
+        msg.chat.id,
+        "❌ Ошибка авторизации: " + error.message
+      );
+    }
+  });
 }
 
 module.exports = { insertAppealFromEmail, startEmailChecker };
