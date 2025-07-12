@@ -31,6 +31,22 @@ const CACHE_PATH = path.join(__dirname, "data", "postamailsCache.json");
 let gmailClient = null;
 let oAuth2Client = null;
 
+// === Новый блок для отслеживания отправки уведомлений ===
+let lastTokenErrorSentAt = 0;
+const TOKEN_ERROR_INTERVAL_MS = 2 * 60 * 60 * 1000; // 2 часа
+
+function getGmailAuthUrl() {
+  if (!fs.existsSync(CREDENTIALS_PATH)) return null;
+  const credentials = JSON.parse(fs.readFileSync(CREDENTIALS_PATH, "utf8"));
+  const { client_secret, client_id, redirect_uris } = credentials.installed || credentials.web;
+  const oAuth2Client = new google.auth.OAuth2(client_id, client_secret, redirect_uris[0]);
+  return oAuth2Client.generateAuthUrl({
+    access_type: 'offline',
+    scope: SCOPES,
+    prompt: 'consent'
+  });
+}
+
 // ---- Gmail API ----
 async function initGmailClient() {
   if (!fs.existsSync(CREDENTIALS_PATH)) throw new Error("Gmail credentials file not found.");
@@ -273,6 +289,29 @@ async function checkNewEmails() {
     fs.writeFileSync(CACHE_PATH, JSON.stringify(cache, null, 2));
   } catch (err) {
     console.error("Ошибка проверки почты:", err.message);
+
+    // === Новая логика для invalid_grant/expired token ===
+    if (err.message && (
+      err.message.includes('invalid_grant') ||
+      err.message.includes('Token has been expired or revoked')
+    )) {
+      if (Date.now() - lastTokenErrorSentAt > TOKEN_ERROR_INTERVAL_MS) {
+        lastTokenErrorSentAt = Date.now();
+        const authUrl = getGmailAuthUrl();
+        if (TELEGRAM_BOT && authUrl) {
+          TELEGRAM_BOT.sendMessage(
+            TELEGRAM_CHAT_ID,
+            `⚠️ *ВНИМАНИЕ! Токен Gmail API требует обновления!*\n\n` +
+            `Для продолжения работы с почтой требуется переавторизация Google API.\n\n` +
+            `[Перейдите по ссылке для авторизации](${authUrl})\n\n` +
+            `После авторизации скопируйте код и отправьте его боту командой:\n/gmail_code ВАШ_КОД`,
+            { parse_mode: "Markdown", disable_web_page_preview: false }
+          );
+        }
+      } else {
+        console.log('Уведомление о просроченном токене уже отправлялось недавно.');
+      }
+    }
   }
 }
 
