@@ -5,7 +5,7 @@ const fastify = require("fastify")({ logger: true });
 // --- ИНТЕГРАЦИЯ TELEGRAM-БОТА --- //
 const TelegramBot = require('node-telegram-bot-api');
 const TELEGRAM_TOKEN = '7866133715:AAH2lSoDsDnmpQhEjSghjNb23ezp98IZW4g';
-const telegramBot = new TelegramBot(TELEGRAM_TOKEN, { polling: false });
+const telegramBot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
 
 // --- Импорт обработчика манго (прокидываем telegramBot) --- //
 const { handleMangoWebhook } = require("./mango.calls.new");
