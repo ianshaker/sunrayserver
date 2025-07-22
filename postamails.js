@@ -323,7 +323,7 @@ async function startEmailChecker(telegramBot) {
   TELEGRAM_BOT = telegramBot;
   await initGmailClient();
   // Каждые 30 секунд, только с 9:00 до 21:59 по Москве (UTC+3)
-  schedule.scheduleJob('*/30 * 6-18 * * *', checkNewEmails);
+  schedule.scheduleJob('0 * 6-18 * * *', checkNewEmails);
   console.log('Автопроверка заявок с почты каждые 30 сек (9-21 MSK) ЗАПУЩЕНА!');
 
   // === Обработчик команды /gmail_code ===
