@@ -40,10 +40,16 @@ fastify.register(require('@fastify/cors'), {
 });
 
 // --- СТАТИКА И ФОРМЫ --- //
-fastify.register(require("@fastify/static"), {
-  root: path.join(__dirname, "public"),
-  prefix: "/",
-});
+// Регистрируем статику только если папка существует
+const publicPath = path.join(__dirname, "public");
+if (fs.existsSync(publicPath)) {
+  fastify.register(require("@fastify/static"), {
+    root: publicPath,
+    prefix: "/",
+  });
+} else {
+  console.log("Папка 'public' не найдена, статические файлы не будут обслуживаться");
+}
 fastify.register(require("@fastify/formbody"));
 fastify.register(require("@fastify/view"), {
   engine: { handlebars: require("handlebars") },
