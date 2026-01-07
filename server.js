@@ -5,7 +5,55 @@ const fastify = require("fastify")({ logger: true });
 // --- ИНТЕГРАЦИЯ TELEGRAM-БОТА --- //
 const TelegramBot = require('node-telegram-bot-api');
 const TELEGRAM_TOKEN = '7866133715:AAH2lSoDsDnmpQhEjSghjNb23ezp98IZW4g';
-const telegramBot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
+
+// Создаем бота с обработкой ошибок polling
+const telegramBot = new TelegramBot(TELEGRAM_TOKEN, { 
+  polling: {
+    interval: 1000, // интервал опроса в мс
+    autoStart: false // не запускаем автоматически
+  }
+});
+
+// Обработка ошибок polling
+telegramBot.on('polling_error', (error) => {
+  const errorMessage = error.message || String(error);
+  console.error('❌ Ошибка polling Telegram бота:', errorMessage);
+  
+  // Проверяем разные варианты ошибки 409 (конфликт polling)
+  const isConflictError = 
+    errorMessage.includes('409') || 
+    errorMessage.includes('Conflict') || 
+    errorMessage.includes('terminated by other getUpdates') ||
+    (error.code === 'ETELEGRAM' && errorMessage.includes('409'));
+  
+  if (isConflictError) {
+    console.warn('⚠️ ВНИМАНИЕ: Другой экземпляр бота уже использует polling (ошибка 409).');
+    console.warn('⚠️ Останавливаем polling на этом сервере. Бот будет работать только для отправки сообщений.');
+    console.warn('⚠️ Команды /gmail_code не будут обрабатываться на этом сервере.');
+    // Останавливаем polling, но не падаем - бот продолжит работать для отправки сообщений
+    telegramBot.stopPolling().catch(() => {});
+  } else {
+    // Для других ошибок - логируем и пытаемся продолжить работу
+    console.log('⚠️ Ошибка polling (не критичная), продолжаем работу...');
+  }
+});
+
+// Запускаем polling с обработкой ошибок
+telegramBot.startPolling().catch((error) => {
+  const errorMessage = error.message || String(error);
+  const isConflictError = 
+    errorMessage.includes('409') || 
+    errorMessage.includes('Conflict') || 
+    errorMessage.includes('terminated by other getUpdates');
+  
+  if (isConflictError) {
+    console.warn('⚠️ Polling уже используется другим экземпляром бота (ошибка 409).');
+    console.warn('⚠️ Бот будет работать только для отправки сообщений. Команды /gmail_code не будут обрабатываться.');
+  } else {
+    console.error('❌ Не удалось запустить polling:', errorMessage);
+    console.log('⚠️ Бот будет работать только для отправки сообщений.');
+  }
+});
 
 // --- Импорт обработчика манго (прокидываем telegramBot) --- //
 const { handleMangoWebhook } = require("./mango.calls.new");
