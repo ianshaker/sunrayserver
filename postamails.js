@@ -249,7 +249,7 @@ async function insertAppealFromEmail(emailText) {
 async function checkNewEmails() {
   const now = new Date();
   const hourMsk = (now.getUTCHours() + 3) % 24; // Москва = UTC+3
-  if (hourMsk < 9 || hourMsk > 21) {
+  if (hourMsk < 8 || hourMsk > 21) {
     console.log(`[${now.toISOString()}] Проверка почты не выполняется — не рабочее время (МСК: ${hourMsk}:00)`);
     return;
   }
@@ -307,7 +307,7 @@ async function checkNewEmails() {
             `⚠️ *ВНИМАНИЕ! Токен Gmail API требует обновления!*\n\n` +
             `Для продолжения работы с почтой требуется переавторизация Google API.\n\n` +
             `[Перейдите по ссылке для авторизации](${authUrl})\n\n` +
-            `После авторизации скопируйте код и отправьте его боту командой:\n/gmail_code ВАШ_КОД`,
+            `После авторизации скопируйте код и отправьте его боту командой:\n\`/gmail_code ВАШ_КОД\``,
             { parse_mode: "Markdown", disable_web_page_preview: false }
           );
         }
@@ -322,9 +322,9 @@ async function checkNewEmails() {
 async function startEmailChecker(telegramBot) {
   TELEGRAM_BOT = telegramBot;
   await initGmailClient();
-  // Каждые 30 секунд, только с 9:00 до 21:59 по Москве (UTC+3)
-  schedule.scheduleJob('0 * 6-18 * * *', checkNewEmails);
-  console.log('Автопроверка заявок с почты каждые 30 сек (9-21 MSK) ЗАПУЩЕНА!');
+  // Каждый час, только с 8:00 до 21:59 по Москве (UTC+3) - запускается в 5:00-18:00 UTC
+  schedule.scheduleJob('0 * 5-18 * * *', checkNewEmails);
+  console.log('Автопроверка заявок с почты каждый час (8-21 MSK) ЗАПУЩЕНА!');
 
   // === Обработчик команды /gmail_code ===
   TELEGRAM_BOT.onText(/\/gmail_code\s+(.+)/, async (msg, match) => {
