@@ -11,7 +11,7 @@ function formatReadinessMessage(data) {
     contractHeader += ` (${appealNumber})`;
   }
   
-  return `🔔 КЛИЕНТ ИНТЕРЕСУЕТСЯ ГОТОВНОСТЬЮ:
+  return `🔔 ЗАПРОС ГОТОВНОСТИ:
 
 Договор ${contractHeader}
 ___
