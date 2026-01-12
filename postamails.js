@@ -248,31 +248,61 @@ async function insertAppealFromEmail(emailText) {
 // ---- Проверка новых писем ----
 async function checkNewEmails() {
   const now = new Date();
-  const hourMsk = (now.getUTCHours() + 3) % 24; // Москва = UTC+3
+  const utcHours = now.getUTCHours();
+  const hourMsk = (utcHours + 3) % 24; // Москва = UTC+3
+  
+  console.log(`[${now.toISOString()}] 🔍 ЗАПУСК checkNewEmails | UTC: ${utcHours}:${now.getUTCMinutes()}:${now.getUTCSeconds()} | МСК: ${hourMsk}:${now.getMinutes()}:${now.getSeconds()}`);
+  
   if (hourMsk < 8 || hourMsk > 21) {
-    console.log(`[${now.toISOString()}] Проверка почты не выполняется — не рабочее время (МСК: ${hourMsk}:00)`);
+    console.log(`[${now.toISOString()}] ⏸️ Проверка почты не выполняется — не рабочее время (МСК: ${hourMsk}:00, UTC: ${utcHours}:00)`);
     return;
   }
+  
+  console.log(`[${now.toISOString()}] ✅ Время рабочее, продолжаем проверку (МСК: ${hourMsk}:${now.getMinutes()}, UTC: ${utcHours}:${now.getUTCMinutes()})`);
+  
   try {
-    console.log(`[${now.toISOString()}] Проверка почты выполнена (МСК: ${hourMsk}:00)`);
+    console.log(`[${now.toISOString()}] 📧 Начинаем проверку почты Gmail API...`);
     const today = new Date();
     const formattedDate = `${today.getFullYear()}/${today.getMonth() + 1}/${today.getDate()}`;
+    console.log(`[${now.toISOString()}] 📅 Ищем письма после: ${formattedDate}`);
+    
     let cache = { date: '', emailIds: [] };
-    if (fs.existsSync(CACHE_PATH)) cache = JSON.parse(fs.readFileSync(CACHE_PATH, "utf8"));
+    if (fs.existsSync(CACHE_PATH)) {
+      cache = JSON.parse(fs.readFileSync(CACHE_PATH, "utf8"));
+      console.log(`[${now.toISOString()}] 💾 Кэш загружен: дата=${cache.date}, писем в кэше=${cache.emailIds.length}`);
+    } else {
+      console.log(`[${now.toISOString()}] 💾 Кэш не найден, создаем новый`);
+    }
+    
     if (cache.date !== formattedDate) {
+      console.log(`[${now.toISOString()}] 📆 Новая дата, очищаем кэш (было: ${cache.date}, стало: ${formattedDate})`);
       cache = { date: formattedDate, emailIds: [] };
     }
+    
+    console.log(`[${now.toISOString()}] 🔎 Запрос к Gmail API: label:"Заявки Sunray" after:${formattedDate}`);
     const res = await gmailClient.users.messages.list({
       userId: 'me',
       q: `label:"Заявки Sunray" after:${formattedDate}`,
       maxResults: 20
     });
+    
+    console.log(`[${now.toISOString()}] 📬 Gmail API ответил: найдено писем=${res.data.messages?.length || 0}`);
+    
     const ids = (res.data.messages || []).map(m => m.id);
     const newIds = ids.filter(id => !cache.emailIds.includes(id));
-    if (newIds.length === 0) return;
+    
+    console.log(`[${now.toISOString()}] 🔍 Новых писем (не в кэше): ${newIds.length} из ${ids.length}`);
+    
+    if (newIds.length === 0) {
+      console.log(`[${now.toISOString()}] ✅ Новых писем нет, завершаем проверку`);
+      return;
+    }
+    
+    console.log(`[${now.toISOString()}] 📨 Обрабатываем ${newIds.length} новых писем...`);
 
     for (const id of newIds) {
       try {
+        console.log(`[${now.toISOString()}] 📧 Обрабатываем письмо ID: ${id}`);
         const details = await gmailClient.users.messages.get({ userId: 'me', id, format: 'full' });
         let body = '';
         if (details.data.payload.parts) {
@@ -282,16 +312,21 @@ async function checkNewEmails() {
         } else if (details.data.payload.body && details.data.payload.body.data) {
           body = Buffer.from(details.data.payload.body.data, 'base64').toString('utf8');
         }
+        console.log(`[${now.toISOString()}] ✅ Письмо ${id} обработано, создаем заявку...`);
         await insertAppealFromEmail(body);
+        console.log(`[${now.toISOString()}] ✅ Заявка из письма ${id} создана успешно`);
       } catch (err) {
-        console.error("Ошибка обработки письма:", err.message);
+        console.error(`[${now.toISOString()}] ❌ Ошибка обработки письма ${id}:`, err.message);
       }
     }
     cache.emailIds = [...cache.emailIds, ...newIds];
     cache.date = formattedDate;
     fs.writeFileSync(CACHE_PATH, JSON.stringify(cache, null, 2));
+    console.log(`[${now.toISOString()}] 💾 Кэш обновлен: всего писем в кэше=${cache.emailIds.length}`);
+    console.log(`[${now.toISOString()}] ✅ Проверка почты завершена успешно`);
   } catch (err) {
-    console.error("Ошибка проверки почты:", err.message);
+    console.error(`[${now.toISOString()}] ❌ ОШИБКА проверки почты:`, err.message);
+    console.error(`[${now.toISOString()}] ❌ Стек ошибки:`, err.stack);
 
     // === Новая логика для invalid_grant/expired token ===
     if (err.message && (
@@ -321,10 +356,22 @@ async function checkNewEmails() {
 // ---- Запуск автопроверки ----
 async function startEmailChecker(telegramBot) {
   TELEGRAM_BOT = telegramBot;
+  console.log('🚀 Инициализация проверки почты...');
   await initGmailClient();
-  // Каждый час, только с 8:00 до 21:59 по Москве (UTC+3) - запускается в 5:00-18:00 UTC
-  schedule.scheduleJob('0 * 5-18 * * *', checkNewEmails);
-  console.log('Автопроверка заявок с почты каждый час (8-21 MSK) ЗАПУЩЕНА!');
+  
+  // Cron: каждую минуту в 0 секунд, в часы с 5:00 до 18:00 UTC (8:00-21:00 МСК)
+  const cronPattern = '0 * 5-18 * * *';
+  console.log(`⏰ Настраиваем cron расписание: "${cronPattern}"`);
+  console.log(`⏰ Это означает: каждую минуту в 0 секунд, в часы 5-18 UTC (8-21 МСК)`);
+  
+  schedule.scheduleJob(cronPattern, checkNewEmails);
+  
+  const now = new Date();
+  const utcHours = now.getUTCHours();
+  const hourMsk = (utcHours + 3) % 24;
+  console.log(`✅ Автопроверка заявок с почты ЗАПУЩЕНА!`);
+  console.log(`📊 Текущее время: UTC ${utcHours}:${now.getUTCMinutes()}, МСК ${hourMsk}:${now.getMinutes()}`);
+  console.log(`⏰ Проверка будет выполняться каждую минуту в 0 секунд, с 8:00 до 21:59 МСК`);
 
   // === Обработчик команды /gmail_code ===
   TELEGRAM_BOT.onText(/\/gmail_code\s+(.+)/, async (msg, match) => {
