@@ -3,7 +3,7 @@
 const READINESS_CHAT_ID = '-1001865267052'; // Замените на ваш chat_id
 
 function formatReadinessMessage(data) {
-  const { contractNumber, contractDate, clientName, phone, factorySummary, appealNumber } = data;
+  const { contractNumber, contractDate, clientName, phone, city, factorySummary, appealNumber } = data;
   
   // Формируем заголовок с номером договора и ID обращения
   let contractHeader = `<b>${contractNumber}</b>`;
@@ -18,6 +18,7 @@ ___
 Дата договора: ${contractDate}
 Клиент: ${clientName}
 ${phone}
+Город: ${city || '—'}
 ___
 Сводка по фабрикам:
 ${factorySummary}`;
@@ -33,6 +34,7 @@ function registerReadinessRoute(fastify, telegramBot) {
         contractDate,
         clientName,
         phone,
+        city,
         factorySummary,
         appealNumber
       } = request.body;
@@ -49,6 +51,7 @@ function registerReadinessRoute(fastify, telegramBot) {
         contractDate,
         clientName,
         phone,
+        city,
         factorySummary,
         appealNumber
       });
