@@ -99,9 +99,26 @@ fastify.get("/", async (request, reply) => {
   return { status: "ok", msg: "Hello from Fastify + Supabase!" };
 });
 
-// --- Маршруты для вебхуков Mango Office (прокидываем telegramBot) --- //
-fastify.post("/events/call", (req, res) => handleMangoWebhook(req, res, telegramBot));
-fastify.post("/events/summary", (req, res) => handleMangoWebhook(req, res, telegramBot));
+// --- Проверка IP: только Selectel-прокси может слать вебхуки Манго --- //
+const SELECTEL_IP = '135.106.155.17';
+
+async function checkSelectelIP(req, reply) {
+  const ip =
+    req.headers['x-forwarded-for']?.split(',')[0].trim() ||
+    req.ip ||
+    req.socket?.remoteAddress;
+
+  const cleanIp = ip?.replace('::ffff:', '');
+
+  if (cleanIp !== SELECTEL_IP) {
+    req.log.warn(`Mango webhook rejected from IP: ${cleanIp}`);
+    return reply.code(403).send({ error: 'Forbidden' });
+  }
+}
+
+// --- Маршруты для вебхуков Mango Office (только с Selectel) --- //
+fastify.post("/events/call", { preHandler: checkSelectelIP }, (req, res) => handleMangoWebhook(req, res, telegramBot));
+fastify.post("/events/summary", { preHandler: checkSelectelIP }, (req, res) => handleMangoWebhook(req, res, telegramBot));
 
 // --- Новый endpoint для назначения замера --- //
 registerZamerRoute(fastify, telegramBot);
