@@ -55,10 +55,6 @@ const { registerZamerRoute } = require("./infonazamer");
 // --- Импорт модуля push-уведомлений --- //
 const { registerPushRoutes } = require("./pushmodul");
 
-// --- Импорт функции для обновления contractsfinalnew.json --- //
-const { registerContractsUpdateRoute } = require("./contractsfinalupd");
-registerContractsUpdateRoute(fastify);
-
 // --- Импорт новой функции для задач --- //
 const { registerTaskRoute } = require("./infozadachi");
 

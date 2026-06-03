@@ -1,6 +1,4 @@
 const { createClient } = require("@supabase/supabase-js");
-const fs = require("fs");
-const path = require("path");
 
 // --- КОНСТАНТЫ И СПРАВОЧНИКИ ---
 const TELEGRAM_CHAT_ID = -1002582438853;
@@ -9,18 +7,14 @@ const SUPABASE_URL = "https://xyzkneqhggpxstxqbqhs.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inh5emtuZXFoZ2dweHN0eHFicWhzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDY1NTE1MzIsImV4cCI6MjA2MjEyNzUzMn0.HmkcuxviENuQbiYgyQh0MBPr5zYlk88YLnRBlTXaKUU";
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-// --- ПЕРЕКЛЮЧАТЕЛЬ: true = искать завершённые договоры через Supabase ---
-// --- false = старая логика через локальный файл contractsfinalnew.json ---
-const USE_SUPABASE_FOR_CONTRACTS = true;
-
 const TABLES_TO_CHECK = [
-  "dogovorfinished", // первый приоритет — завершённый договор
-  "appeals",
-  "appealsotkaz",
-  "dobivashki",
-  "dogovornew",
-  "eventsnew",
-  "zamerotkaz"
+  "dogovorfinished",  // завершённые контракты — высший приоритет
+  "dogovornew",       // активные договоры
+  "appealsotkaz",     // входящие отказ
+  "zamerotkaz",       // замер отказ
+  "dobivashki",       // добивашки
+  "eventsnew",        // события
+  "appeals",          // входящие заявки
 ];
 
 const TABLE_NAMES = {
@@ -30,7 +24,6 @@ const TABLE_NAMES = {
     dogovornew: 'ДОГОВОРЫ АКТИВНЫЕ',
     eventsnew: 'СОБЫТИЯ',
     zamerotkaz: 'ЗАМЕР ОТКАЗ',
-    contractsfinalnew: 'ДОГОВОРЫ ЗАВЕРШЕННЫЕ',
     dogovorfinished: 'ДОГОВОРЫ ЗАВЕРШЕННЫЕ'
 };
 
@@ -108,157 +101,129 @@ function formatDuration(seconds) {
     return min > 0 ? `${min}:${sec.toString().padStart(2, '0')} мин` : `${sec} сек`;
 }
 
-// === 1. Новый поиск в файле contractsfinalnew.json === //
-function findContractByPhoneFromFile(phone) {
-    try {
-        const filePath = path.join(__dirname, "contractsfinalnew.json");
-        if (!fs.existsSync(filePath)) return null;
-        const contracts = JSON.parse(fs.readFileSync(filePath, "utf8"));
-        // ищем строго по совпадению (лучше сравнивать "чистый" номер без лишних символов)
-        const clearPhone = phone.replace(/\D/g, '');
-        return contracts.find(contract => {
-            // ищем по каждому номеру из ячейки с разделителями
-            if (!contract.phone) return false;
-            return contract.phone
-                .split(/[,\.]/)
-                .map(p => p.replace(/\s/g, '').replace(/\D/g, ''))
-                .some(num => num === clearPhone);
-        }) || null;
-    } catch (e) {
-        return null;
-    }
-}
+// === Поиск клиента во ВСЕХ таблицах, возвращает массив всех совпадений === //
+async function findAllClientInfoByPhone(phone) {
+    const results = [];
+    const searchNumber = phone.trim();
+    const clearSearch = searchNumber.replace(/\D/g, '');
 
-// === 2. Обычный поиск в Supabase (кроме dogovorfinished) === //
-async function findClientInfoByPhone(phone) {
-    // Для поиска по строке с запятыми, используем ILIKE '%номер%'
     for (const table of TABLES_TO_CHECK) {
         let fields = [];
         switch (table) {
             case "dogovorfinished":
-                if (!USE_SUPABASE_FOR_CONTRACTS) continue;
+            case "dogovornew":
                 fields = ["appeal_id", "dogovor_date", "dogovor_number", "city", "client_name", "phone", "total_numbers"];
                 break;
             case "appeals":
             case "appealsotkaz":
             case "dobivashki":
-                fields = ["appeal_number", "client_name", "phone", "city", "dialog"];
-                break;
-            case "dogovornew":
-                fields = ["appeal_id", "dogovor_date", "dogovor_number", "city", "client_name", "phone", "total_numbers"];
-                break;
-            case "eventsnew":
-                fields = [
-                    "appeal_number", "type", "client_name", "phone", "city", "dialog", "master", "date", "start_time", "end_time"
-                ];
-                break;
             case "zamerotkaz":
                 fields = ["appeal_number", "client_name", "phone", "city", "dialog"];
+                break;
+            case "eventsnew":
+                fields = ["appeal_number", "type", "client_name", "phone", "city", "dialog", "master", "date", "start_time", "end_time"];
                 break;
             default:
                 continue;
         }
-        // форматируем как стандартный номер для поиска
-        const searchNumber = phone.trim();
+
         const { data, error } = await supabase
             .from(table)
             .select(fields.join(","))
             .ilike('phone', `%${searchNumber}%`)
             .limit(1);
+
         if (error) continue;
-        if (data && data.length > 0) {
-            // дополнительно проверяем по каждому номеру из ячейки
-            const clearSearch = searchNumber.replace(/\D/g, '');
-            const foundRow = data.find(row => {
-                return row.phone &&
-                    row.phone
-                        .split(/[,\.]/)
-                        .map(p => p.replace(/\s/g, '').replace(/\D/g, ''))
-                        .some(num => num === clearSearch);
-            });
-            if (foundRow) {
-                return { table, info: foundRow };
-            }
-        }
+        if (!data || data.length === 0) continue;
+
+        const foundRow = data.find(row =>
+            row.phone &&
+            row.phone
+                .split(/[,\.]/)
+                .map(p => p.replace(/\s/g, '').replace(/\D/g, ''))
+                .some(num => num === clearSearch)
+        );
+
+        if (foundRow) results.push({ table, info: foundRow });
     }
-    return null;
+
+    return results;
 }
 
-// === НОВАЯ ФУНКЦИЯ: Создание итогового сообщения ===
-function createFinalCallMessage(callData, foundInfo, duration, createdAppealId) {
+// === Построение текста карточки найденной записи (используется и при звонке, и в саммари) === //
+function buildFoundInfoMessage(found) {
+    const sectionName = TABLE_NAMES[found.table] || found.table;
+    let msg = `ℹ️ <b>${sectionName}</b>\n`;
+
+    switch (found.table) {
+        case "dogovorfinished":
+        case "dogovornew":
+            msg +=
+                `ID обращения: <b>${found.info.appeal_id}</b>\n` +
+                `Номер договора: <b>${found.info.dogovor_number || ""}</b>\n` +
+                `Дата договора: <b>${found.info.dogovor_date || ""}</b>\n` +
+                `Клиент: <b>${found.info.client_name || ""}</b>\n` +
+                `Город: <b>${found.info.city || ""}</b>\n` +
+                (found.info.total_numbers ? `Изделий: <b>${found.info.total_numbers}</b>\n` : '');
+            break;
+        case "appeals":
+        case "appealsotkaz":
+        case "dobivashki":
+        case "zamerotkaz":
+            msg +=
+                `Номер: <b>${found.info.appeal_number}</b>\n` +
+                `Клиент: <b>${found.info.client_name || ""}</b>\n` +
+                `Город: <b>${found.info.city || ""}</b>\n` +
+                (found.info.dialog ? `Диалог: <i>${found.info.dialog}</i>\n` : '');
+            break;
+        case "eventsnew":
+            msg +=
+                `Номер: <b>${found.info.appeal_number}</b>\n` +
+                `Тип: <b>${found.info.type || ""}</b>\n` +
+                `Клиент: <b>${found.info.client_name || ""}</b>\n` +
+                `Город: <b>${found.info.city || ""}</b>\n` +
+                `Мастер: <b>${found.info.master || ""}</b>\n` +
+                `Дата: <b>${found.info.date || ""}</b>\n` +
+                `Время: <b>${found.info.start_time || ""}-${found.info.end_time || ""}</b>\n` +
+                (found.info.dialog ? `Диалог: <i>${found.info.dialog}</i>\n` : '');
+            break;
+        default:
+            msg += "(нет данных)\n";
+    }
+
+    return msg;
+}
+
+// === Создание итогового сообщения (принимает массив всех найденных записей) === //
+function createFinalCallMessage(callData, foundInfoList, duration, createdAppealId) {
     const { formattedFromNumber, lineName, managers, acceptedManager } = callData;
-    
+
     let finalMsg = `📞 <b>ЗАВЕРШЕННЫЙ ЗВОНОК</b>\n`;
     finalMsg += `Абонент: <b>${formattedFromNumber}</b>\n`;
     finalMsg += `${lineName}\n`;
-    
-    // Показываем всех менеджеров, кому звонили
+
     if (managers && managers.length > 0) {
-        if (managers.length === 1) {
-            finalMsg += `Звонок менеджеру: <b>${managers[0]}</b>\n`;
-        } else {
-            finalMsg += `Дозвон: <b>${managers.join(' → ')}</b>\n`;
-        }
+        finalMsg += managers.length === 1
+            ? `Звонок менеджеру: <b>${managers[0]}</b>\n`
+            : `Дозвон: <b>${managers.join(' → ')}</b>\n`;
     }
-    
-    // Показываем кто принял
-    if (acceptedManager) {
-        finalMsg += `Принял: <b>${acceptedManager}</b> (${formatDuration(duration)})\n\n`;
-    } else {
-        finalMsg += `Не принят (${formatDuration(duration)})\n\n`;
-    }
-    
-    if (foundInfo) {
-        const sectionName = TABLE_NAMES[foundInfo.table] || foundInfo.table;
-        finalMsg += `📋 <b>Найдено в базе: ${sectionName}</b>\n`;
-        
-        switch (foundInfo.table) {
-            case "appeals":
-            case "appealsotkaz":
-            case "dobivashki":
-            case "zamerotkaz":
-                finalMsg += `Номер: <b>${foundInfo.info.appeal_number}</b>\n`;
-                finalMsg += `Клиент: <b>${foundInfo.info.client_name || ""}</b>\n`;
-                finalMsg += `Город: <b>${foundInfo.info.city || ""}</b>\n`;
-                if (foundInfo.info.dialog) finalMsg += `Диалог: <i>${foundInfo.info.dialog}</i>\n`;
-                break;
-            case "dogovornew":
-                finalMsg += `ID обращения: <b>${foundInfo.info.appeal_id}</b>\n`;
-                finalMsg += `Номер договора: <b>${foundInfo.info.dogovor_number || ""}</b>\n`;
-                finalMsg += `Дата договора: <b>${foundInfo.info.dogovor_date || ""}</b>\n`;
-                finalMsg += `Клиент: <b>${foundInfo.info.client_name || ""}</b>\n`;
-                finalMsg += `Город: <b>${foundInfo.info.city || ""}</b>\n`;
-                if (foundInfo.info.total_numbers) finalMsg += `Изделий: <b>${foundInfo.info.total_numbers}</b>\n`;
-                break;
-            case "eventsnew":
-                finalMsg += `Номер: <b>${foundInfo.info.appeal_number}</b>\n`;
-                finalMsg += `Тип: <b>${foundInfo.info.type || ""}</b>\n`;
-                finalMsg += `Клиент: <b>${foundInfo.info.client_name || ""}</b>\n`;
-                finalMsg += `Город: <b>${foundInfo.info.city || ""}</b>\n`;
-                finalMsg += `Мастер: <b>${foundInfo.info.master || ""}</b>\n`;
-                finalMsg += `Дата: <b>${foundInfo.info.date || ""}</b>\n`;
-                finalMsg += `Время: <b>${foundInfo.info.start_time || ""}-${foundInfo.info.end_time || ""}</b>\n`;
-                if (foundInfo.info.dialog) finalMsg += `Диалог: <i>${foundInfo.info.dialog}</i>\n`;
-                break;
-            case "contractsfinalnew":
-            case "dogovorfinished":
-                finalMsg += `ID обращения: <b>${foundInfo.info.appeal_id}</b>\n`;
-                finalMsg += `Номер договора: <b>${foundInfo.info.dogovor_number || ""}</b>\n`;
-                finalMsg += `Дата договора: <b>${foundInfo.info.dogovor_date || ""}</b>\n`;
-                finalMsg += `Клиент: <b>${foundInfo.info.client_name || ""}</b>\n`;
-                finalMsg += `Город: <b>${foundInfo.info.city || ""}</b>\n`;
-                if (foundInfo.info.total_numbers) finalMsg += `Изделий: <b>${foundInfo.info.total_numbers}</b>\n`;
-                break;
-            default:
-                finalMsg += "(нет данных)\n";
+
+    finalMsg += acceptedManager
+        ? `Принял: <b>${acceptedManager}</b> (${formatDuration(duration)})\n`
+        : `Не принят (${formatDuration(duration)})\n`;
+
+    if (foundInfoList && foundInfoList.length > 0) {
+        finalMsg += `\n📋 <b>История клиента (${foundInfoList.length} запис${foundInfoList.length === 1 ? 'ь' : 'и'}):</b>\n`;
+        for (const found of foundInfoList) {
+            finalMsg += `\n` + buildFoundInfoMessage(found);
         }
     } else {
-        finalMsg += `📋 <b>Создана новая заявка</b>\n`;
+        finalMsg += `\n📋 <b>Создана новая заявка</b>\n`;
         if (createdAppealId) {
             finalMsg += `Номер заявки: <b>${createdAppealId}</b>\n`;
         }
     }
-    
+
     return finalMsg;
 }
 
@@ -289,29 +254,23 @@ async function handleMangoWebhook(request, reply, telegramBot) {
         const messageData = callMessages[formattedFromNumber];
         
         if (messageData) {
-            // Удаляем предыдущие сообщения
+            // Удаляем все промежуточные сообщения
             try {
-                if (messageData.incomingMessageId) {
-                    await telegramBot.deleteMessage(TELEGRAM_CHAT_ID, messageData.incomingMessageId);
-                }
-                if (messageData.foundMessageId) {
-                    await telegramBot.deleteMessage(TELEGRAM_CHAT_ID, messageData.foundMessageId);
-                }
-                if (messageData.connectedMessageId) {
-                    await telegramBot.deleteMessage(TELEGRAM_CHAT_ID, messageData.connectedMessageId);
-                }
-                // Удаляем все сообщения о дозвонах
-                if (messageData.dialoutMessageIds && messageData.dialoutMessageIds.length > 0) {
-                    for (const msgId of messageData.dialoutMessageIds) {
-                        await telegramBot.deleteMessage(TELEGRAM_CHAT_ID, msgId);
-                    }
+                const toDelete = [
+                    messageData.incomingMessageId,
+                    messageData.connectedMessageId,
+                    ...(messageData.foundMessageIds || []),
+                    ...(messageData.dialoutMessageIds || []),
+                ];
+                for (const msgId of toDelete) {
+                    if (msgId) await telegramBot.deleteMessage(TELEGRAM_CHAT_ID, msgId);
                 }
             } catch (e) {
                 console.log("Ошибка при удалении сообщений:", e.message);
             }
-            
-            // Создаем итоговое сообщение
-            const finalMessage = createFinalCallMessage(messageData.callData, messageData.foundInfo, duration, messageData.createdAppealId);
+
+            // Создаем итоговое сообщение со всей историей клиента
+            const finalMessage = createFinalCallMessage(messageData.callData, messageData.foundInfoList, duration, messageData.createdAppealId);
             await telegramBot.sendMessage(TELEGRAM_CHAT_ID, finalMessage, { parse_mode: "HTML" });
             
             // Удаляем данные из памяти
@@ -373,10 +332,10 @@ async function handleMangoWebhook(request, reply, telegramBot) {
         // === ИНИЦИАЛИЗИРУЕМ ДАННЫЕ В ПАМЯТИ ===
         callMessages[formattedFromNumber] = {
             incomingMessageId: incomingMessage.message_id,
-            foundMessageId: null,
+            foundMessageIds: [],       // все ID сообщений с найденными записями
             connectedMessageId: null,
             dialoutMessageIds: [],
-            foundInfo: null,
+            foundInfoList: [],         // все найденные записи по всем таблицам
             createdAppealId: null,
             callData: {
                 formattedFromNumber,
@@ -386,91 +345,19 @@ async function handleMangoWebhook(request, reply, telegramBot) {
             }
         };
 
-        // === ПОИСК В contractsfinalnew.json (старая логика, активна если USE_SUPABASE_FOR_CONTRACTS = false) ===
-        if (!USE_SUPABASE_FOR_CONTRACTS) {
-            const foundContract = findContractByPhoneFromFile(formattedFromNumber);
-            if (foundContract) {
-                let replyMsg = `ℹ️ <b>${TABLE_NAMES['contractsfinalnew']}</b>\n`;
-                replyMsg +=
-                    `ID обращения: <b>${foundContract.appeal_id}</b>\n` +
-                    `Номер договора: <b>${foundContract.dogovor_number || ""}</b>\n` +
-                    `Дата договора: <b>${foundContract.dogovor_date || ""}</b>\n` +
-                    `Клиент: <b>${foundContract.client_name || ""}</b>\n` +
-                    `Город: <b>${foundContract.city || ""}</b>\n` +
-                    `Телефон: <b>${foundContract.phone || ""}</b>\n` +
-                    (foundContract.total_numbers ? `Изделий: <b>${foundContract.total_numbers}</b>\n` : '');
+        // === Поиск во ВСЕХ таблицах, отправляем каждую находку сразу === //
+        const foundList = await findAllClientInfoByPhone(formattedFromNumber);
 
+        if (foundList.length > 0) {
+            for (const found of foundList) {
+                const replyMsg = buildFoundInfoMessage(found);
                 const foundMessage = await telegramBot.sendMessage(TELEGRAM_CHAT_ID, replyMsg, { parse_mode: "HTML" });
-
-                callMessages[formattedFromNumber].foundMessageId = foundMessage.message_id;
-                callMessages[formattedFromNumber].foundInfo = {
-                    table: 'contractsfinalnew',
-                    info: foundContract
-                };
-
-                return reply.send({ status: "appeared_processed", source: "contractsfinalnew.json" });
+                callMessages[formattedFromNumber].foundMessageIds.push(foundMessage.message_id);
             }
-        }
+            callMessages[formattedFromNumber].foundInfoList = foundList;
 
-        // === Поиск в Supabase (contractsfinalnew первым если USE_SUPABASE_FOR_CONTRACTS = true, затем остальные таблицы) ===
-        const found = await findClientInfoByPhone(formattedFromNumber);
-        if (found) {
-            const sectionName = TABLE_NAMES[found.table] || found.table;
-            let replyMsg = `ℹ️ <b>${sectionName}</b>\n`;
-            switch (found.table) {
-                case "appeals":
-                case "appealsotkaz":
-                case "dobivashki":
-                case "zamerotkaz":
-                    replyMsg +=
-                        `Номер: <b>${found.info.appeal_number}</b>\n` +
-                        `Клиент: <b>${found.info.client_name || ""}</b>\n` +
-                        `Город: <b>${found.info.city || ""}</b>\n` +
-                        (found.info.dialog ? `Диалог: <i>${found.info.dialog}</i>\n` : '');
-                    break;
-                case "dogovornew":
-                    replyMsg +=
-                        `ID обращения: <b>${found.info.appeal_id}</b>\n` +
-                        `Номер договора: <b>${found.info.dogovor_number || ""}</b>\n` +
-                        `Дата договора: <b>${found.info.dogovor_date || ""}</b>\n` +
-                        `Клиент: <b>${found.info.client_name || ""}</b>\n` +
-                        `Город: <b>${found.info.city || ""}</b>\n` +
-                        `Телефон: <b>${found.info.phone || ""}</b>\n` +
-                        (found.info.total_numbers ? `Изделий: <b>${found.info.total_numbers}</b>\n` : '');
-                    break;
-                case "dogovorfinished":
-                case "contractsfinalnew":
-                    replyMsg +=
-                        `ID обращения: <b>${found.info.appeal_id}</b>\n` +
-                        `Номер договора: <b>${found.info.dogovor_number || ""}</b>\n` +
-                        `Дата договора: <b>${found.info.dogovor_date || ""}</b>\n` +
-                        `Клиент: <b>${found.info.client_name || ""}</b>\n` +
-                        `Город: <b>${found.info.city || ""}</b>\n` +
-                        (found.info.total_numbers ? `Изделий: <b>${found.info.total_numbers}</b>\n` : '');
-                    break;
-                case "eventsnew":
-                    replyMsg +=
-                        `Номер: <b>${found.info.appeal_number}</b>\n` +
-                        `Тип: <b>${found.info.type || ""}</b>\n` +
-                        `Клиент: <b>${found.info.client_name || ""}</b>\n` +
-                        `Город: <b>${found.info.city || ""}</b>\n` +
-                        `Мастер: <b>${found.info.master || ""}</b>\n` +
-                        `Дата: <b>${found.info.date || ""}</b>\n` +
-                        `Время: <b>${found.info.start_time || ""}-${found.info.end_time || ""}</b>\n` +
-                        (found.info.dialog ? `Диалог: <i>${found.info.dialog}</i>\n` : '');
-                    break;
-                default:
-                    replyMsg += "(нет данных)\n";
-            }
-            
-            const foundMessage = await telegramBot.sendMessage(TELEGRAM_CHAT_ID, replyMsg, { parse_mode: "HTML" });
-            
-            // === СОХРАНЯЕМ ДАННЫЕ О НАЙДЕННОЙ ИНФОРМАЦИИ ===
-            callMessages[formattedFromNumber].foundMessageId = foundMessage.message_id;
-            callMessages[formattedFromNumber].foundInfo = found;
-            
         } else {
-            // ЛОГИКА создания новой заявки (оставь как есть)
+            // Клиент не найден нигде — создаём новую заявку
             let appeal_id = null;
             try {
                 const { data: ids, error: idError } = await supabase
@@ -489,10 +376,7 @@ async function handleMangoWebhook(request, reply, telegramBot) {
                     `❌ <b>Ошибка при получении айди</b>\n${e.message}`,
                     { parse_mode: "HTML" }
                 );
-                
-                // === СОХРАНЯЕМ ID СООБЩЕНИЯ ОБ ОШИБКЕ ===
-                callMessages[formattedFromNumber].foundMessageId = errorMessage.message_id;
-                
+                callMessages[formattedFromNumber].foundMessageIds.push(errorMessage.message_id);
                 return reply.code(500).send({ error: "id_error" });
             }
 
@@ -528,27 +412,22 @@ async function handleMangoWebhook(request, reply, telegramBot) {
             try {
                 const { data, error } = await supabase.from("appeals").insert([newAppeal]);
                 console.log("Результат вставки в appeals:", { data, error });
-                
+
                 const successMessage = await telegramBot.sendMessage(
                     TELEGRAM_CHAT_ID,
                     `✅ <b>Заявка успешно создана</b>\n${formattedFromNumber}\nНомер заявки: <b>${appeal_id}</b>`,
                     { parse_mode: "HTML" }
                 );
-                
-                // === СОХРАНЯЕМ ID СООБЩЕНИЯ О СОЗДАНИИ ЗАЯВКИ И НОМЕР ЗАЯВКИ ===
-                callMessages[formattedFromNumber].foundMessageId = successMessage.message_id;
+                callMessages[formattedFromNumber].foundMessageIds.push(successMessage.message_id);
                 callMessages[formattedFromNumber].createdAppealId = appeal_id;
-                
+
             } catch (e) {
                 const errorMessage = await telegramBot.sendMessage(
                     TELEGRAM_CHAT_ID,
                     `❌ <b>Ошибка создания заявки</b>\n${formattedFromNumber}\n${e.message}`,
                     { parse_mode: "HTML" }
                 );
-                
-                // === СОХРАНЯЕМ ID СООБЩЕНИЯ ОБ ОШИБКЕ ===
-                callMessages[formattedFromNumber].foundMessageId = errorMessage.message_id;
-                
+                callMessages[formattedFromNumber].foundMessageIds.push(errorMessage.message_id);
                 return reply.code(500).send({ error: "insert_error" });
             }
         }
