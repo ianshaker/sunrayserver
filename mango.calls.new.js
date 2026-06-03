@@ -150,10 +150,16 @@ async function findAllClientInfoByPhone(phone) {
     return results;
 }
 
-// === Построение текста карточки найденной записи (используется и при звонке, и в саммари) === //
-function buildFoundInfoMessage(found) {
+const NUMBER_EMOJI = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣'];
+
+// === Построение текста карточки найденной записи === //
+// index + phone передаются при звонке (Appeared), не передаются в саммари
+function buildFoundInfoMessage(found, index = null, phone = null) {
     const sectionName = TABLE_NAMES[found.table] || found.table;
-    let msg = `ℹ️ <b>${sectionName}</b>\n`;
+    const emoji = index !== null ? (NUMBER_EMOJI[index] || `${index + 1}.`) : 'ℹ️';
+    let msg = index !== null
+        ? `${emoji} Соответствие к <b>${phone}</b>\n<b>${sectionName}</b>\n`
+        : `ℹ️ <b>${sectionName}</b>\n`;
 
     switch (found.table) {
         case "dogovorfinished":
@@ -258,6 +264,8 @@ async function handleMangoWebhook(request, reply, telegramBot) {
             try {
                 const toDelete = [
                     messageData.incomingMessageId,
+                    messageData.aiSearchMessageId,
+                    messageData.aiEndMessageId,
                     messageData.connectedMessageId,
                     ...(messageData.foundMessageIds || []),
                     ...(messageData.dialoutMessageIds || []),
@@ -326,16 +334,21 @@ async function handleMangoWebhook(request, reply, telegramBot) {
         const lineName = getCompanyLineName(lineNumber);
 
         // === ОТПРАВЛЯЕМ ПЕРВОЕ СООБЩЕНИЕ И СОХРАНЯЕМ ЕГО ID ===
-        let msg = `📞 <b>ВХОДЯЩИЙ ЗВОНОК</b>\nАбонент: <b>${formattedFromNumber}</b>\n${lineName}\nЗвонок менеджеру: ${formattedToNumber} (${managerName})\n\n🔍 Проверка в базе...`;
-        const incomingMessage = await telegramBot.sendMessage(TELEGRAM_CHAT_ID, msg, { parse_mode: "HTML" });
-        
+        const incomingMessage = await telegramBot.sendMessage(
+            TELEGRAM_CHAT_ID,
+            `📞 <b>ВХОДЯЩИЙ ЗВОНОК</b>\nАбонент: <b>${formattedFromNumber}</b>\n${lineName}\nЗвонок менеджеру: ${formattedToNumber} (${managerName})`,
+            { parse_mode: "HTML" }
+        );
+
         // === ИНИЦИАЛИЗИРУЕМ ДАННЫЕ В ПАМЯТИ ===
         callMessages[formattedFromNumber] = {
             incomingMessageId: incomingMessage.message_id,
-            foundMessageIds: [],       // все ID сообщений с найденными записями
+            aiSearchMessageId: null,   // "Ищу в базе..."
+            aiEndMessageId: null,      // "Это всё что нашёл" / "Ничего не нашёл"
+            foundMessageIds: [],
             connectedMessageId: null,
             dialoutMessageIds: [],
-            foundInfoList: [],         // все найденные записи по всем таблицам
+            foundInfoList: [],
             createdAppealId: null,
             callData: {
                 formattedFromNumber,
@@ -345,18 +358,44 @@ async function handleMangoWebhook(request, reply, telegramBot) {
             }
         };
 
+        // === AI-имитация: сообщение о начале поиска ===
+        const searchMsg = await telegramBot.sendMessage(
+            TELEGRAM_CHAT_ID,
+            `🔍 Ищу <b>${formattedFromNumber}</b> по базам данных...`,
+            { parse_mode: "HTML" }
+        );
+        callMessages[formattedFromNumber].aiSearchMessageId = searchMsg.message_id;
+
         // === Поиск во ВСЕХ таблицах, отправляем каждую находку сразу === //
         const foundList = await findAllClientInfoByPhone(formattedFromNumber);
 
         if (foundList.length > 0) {
-            for (const found of foundList) {
-                const replyMsg = buildFoundInfoMessage(found);
+            for (let i = 0; i < foundList.length; i++) {
+                const replyMsg = buildFoundInfoMessage(foundList[i], i, formattedFromNumber);
                 const foundMessage = await telegramBot.sendMessage(TELEGRAM_CHAT_ID, replyMsg, { parse_mode: "HTML" });
                 callMessages[formattedFromNumber].foundMessageIds.push(foundMessage.message_id);
+                if (i < foundList.length - 1) await new Promise(r => setTimeout(r, 400));
             }
             callMessages[formattedFromNumber].foundInfoList = foundList;
 
+            // AI: итог поиска
+            const n = foundList.length;
+            const endMsg = await telegramBot.sendMessage(
+                TELEGRAM_CHAT_ID,
+                `✅ Это всё что нашёл по клиенту — <b>${n}</b> ${n === 1 ? 'запись' : 'записи'}`,
+                { parse_mode: "HTML" }
+            );
+            callMessages[formattedFromNumber].aiEndMessageId = endMsg.message_id;
+
         } else {
+            // AI: ничего не нашёл, сообщаем до создания заявки
+            const endMsg = await telegramBot.sendMessage(
+                TELEGRAM_CHAT_ID,
+                `📝 По номеру <b>${formattedFromNumber}</b> ничего не нашёл. Создаю новую заявку...`,
+                { parse_mode: "HTML" }
+            );
+            callMessages[formattedFromNumber].aiEndMessageId = endMsg.message_id;
+
             // Клиент не найден нигде — создаём новую заявку
             let appeal_id = null;
             try {
