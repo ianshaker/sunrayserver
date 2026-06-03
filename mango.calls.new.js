@@ -438,6 +438,16 @@ async function handleMangoWebhook(request, reply, telegramBot) {
                         `Телефон: <b>${found.info.phone || ""}</b>\n` +
                         (found.info.total_numbers ? `Изделий: <b>${found.info.total_numbers}</b>\n` : '');
                     break;
+                case "dogovorfinished":
+                case "contractsfinalnew":
+                    replyMsg +=
+                        `ID обращения: <b>${found.info.appeal_id}</b>\n` +
+                        `Номер договора: <b>${found.info.dogovor_number || ""}</b>\n` +
+                        `Дата договора: <b>${found.info.dogovor_date || ""}</b>\n` +
+                        `Клиент: <b>${found.info.client_name || ""}</b>\n` +
+                        `Город: <b>${found.info.city || ""}</b>\n` +
+                        (found.info.total_numbers ? `Изделий: <b>${found.info.total_numbers}</b>\n` : '');
+                    break;
                 case "eventsnew":
                     replyMsg +=
                         `Номер: <b>${found.info.appeal_number}</b>\n` +
