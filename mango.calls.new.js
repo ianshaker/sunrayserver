@@ -101,53 +101,57 @@ function formatDuration(seconds) {
     return min > 0 ? `${min}:${sec.toString().padStart(2, '0')} мин` : `${sec} сек`;
 }
 
-// === Поиск клиента во ВСЕХ таблицах, возвращает массив всех совпадений === //
+// === Поиск в одной таблице === //
+async function searchInTable(table, searchNumber, clearSearch) {
+    let fields = [];
+    switch (table) {
+        case "dogovorfinished":
+        case "dogovornew":
+            fields = ["appeal_id", "dogovor_date", "dogovor_number", "city", "client_name", "phone", "total_numbers"];
+            break;
+        case "appeals":
+        case "appealsotkaz":
+        case "dobivashki":
+        case "zamerotkaz":
+            fields = ["appeal_number", "client_name", "phone", "city", "dialog"];
+            break;
+        case "eventsnew":
+            fields = ["appeal_number", "type", "client_name", "phone", "city", "dialog", "master", "date", "start_time", "end_time"];
+            break;
+        default:
+            return null;
+    }
+
+    const { data, error } = await supabase
+        .from(table)
+        .select(fields.join(","))
+        .ilike('phone', `%${searchNumber}%`)
+        .limit(1);
+
+    if (error || !data || data.length === 0) return null;
+
+    const foundRow = data.find(row =>
+        row.phone &&
+        row.phone
+            .split(/[,\.]/)
+            .map(p => p.replace(/\s/g, '').replace(/\D/g, ''))
+            .some(num => num === clearSearch)
+    );
+
+    return foundRow ? { table, info: foundRow } : null;
+}
+
+// === Поиск во ВСЕХ таблицах параллельно, возвращает массив всех совпадений === //
 async function findAllClientInfoByPhone(phone) {
-    const results = [];
     const searchNumber = phone.trim();
     const clearSearch = searchNumber.replace(/\D/g, '');
 
-    for (const table of TABLES_TO_CHECK) {
-        let fields = [];
-        switch (table) {
-            case "dogovorfinished":
-            case "dogovornew":
-                fields = ["appeal_id", "dogovor_date", "dogovor_number", "city", "client_name", "phone", "total_numbers"];
-                break;
-            case "appeals":
-            case "appealsotkaz":
-            case "dobivashki":
-            case "zamerotkaz":
-                fields = ["appeal_number", "client_name", "phone", "city", "dialog"];
-                break;
-            case "eventsnew":
-                fields = ["appeal_number", "type", "client_name", "phone", "city", "dialog", "master", "date", "start_time", "end_time"];
-                break;
-            default:
-                continue;
-        }
+    const rawResults = await Promise.all(
+        TABLES_TO_CHECK.map(table => searchInTable(table, searchNumber, clearSearch))
+    );
 
-        const { data, error } = await supabase
-            .from(table)
-            .select(fields.join(","))
-            .ilike('phone', `%${searchNumber}%`)
-            .limit(1);
-
-        if (error) continue;
-        if (!data || data.length === 0) continue;
-
-        const foundRow = data.find(row =>
-            row.phone &&
-            row.phone
-                .split(/[,\.]/)
-                .map(p => p.replace(/\s/g, '').replace(/\D/g, ''))
-                .some(num => num === clearSearch)
-        );
-
-        if (foundRow) results.push({ table, info: foundRow });
-    }
-
-    return results;
+    // фильтруем null и сохраняем оригинальный порядок таблиц
+    return rawResults.filter(r => r !== null);
 }
 
 const NUMBER_EMOJI = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣'];
