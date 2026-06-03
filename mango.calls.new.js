@@ -14,7 +14,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const USE_SUPABASE_FOR_CONTRACTS = true;
 
 const TABLES_TO_CHECK = [
-  "contractsfinalnew", // первый приоритет — завершённый договор
+  "dogovorfinished", // первый приоритет — завершённый договор
   "appeals",
   "appealsotkaz",
   "dobivashki",
@@ -30,7 +30,8 @@ const TABLE_NAMES = {
     dogovornew: 'ДОГОВОРЫ АКТИВНЫЕ',
     eventsnew: 'СОБЫТИЯ',
     zamerotkaz: 'ЗАМЕР ОТКАЗ',
-    contractsfinalnew: 'ДОГОВОРЫ ЗАВЕРШЕННЫЕ'
+    contractsfinalnew: 'ДОГОВОРЫ ЗАВЕРШЕННЫЕ',
+    dogovorfinished: 'ДОГОВОРЫ ЗАВЕРШЕННЫЕ'
 };
 
 const MANAGERS = {
@@ -134,7 +135,7 @@ async function findClientInfoByPhone(phone) {
     for (const table of TABLES_TO_CHECK) {
         let fields = [];
         switch (table) {
-            case "contractsfinalnew":
+            case "dogovorfinished":
                 if (!USE_SUPABASE_FOR_CONTRACTS) continue;
                 fields = ["appeal_id", "dogovor_date", "dogovor_number", "city", "client_name", "phone", "total_numbers"];
                 break;
@@ -240,6 +241,7 @@ function createFinalCallMessage(callData, foundInfo, duration, createdAppealId) 
                 if (foundInfo.info.dialog) finalMsg += `Диалог: <i>${foundInfo.info.dialog}</i>\n`;
                 break;
             case "contractsfinalnew":
+            case "dogovorfinished":
                 finalMsg += `ID обращения: <b>${foundInfo.info.appeal_id}</b>\n`;
                 finalMsg += `Номер договора: <b>${foundInfo.info.dogovor_number || ""}</b>\n`;
                 finalMsg += `Дата договора: <b>${foundInfo.info.dogovor_date || ""}</b>\n`;
