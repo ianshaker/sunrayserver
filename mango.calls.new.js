@@ -9,7 +9,12 @@ const SUPABASE_URL = "https://xyzkneqhggpxstxqbqhs.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inh5emtuZXFoZ2dweHN0eHFicWhzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDY1NTE1MzIsImV4cCI6MjA2MjEyNzUzMn0.HmkcuxviENuQbiYgyQh0MBPr5zYlk88YLnRBlTXaKUU";
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+// --- ПЕРЕКЛЮЧАТЕЛЬ: true = искать завершённые договоры через Supabase ---
+// --- false = старая логика через локальный файл contractsfinalnew.json ---
+const USE_SUPABASE_FOR_CONTRACTS = true;
+
 const TABLES_TO_CHECK = [
+  "contractsfinalnew", // первый приоритет — завершённый договор
   "appeals",
   "appealsotkaz",
   "dobivashki",
@@ -129,6 +134,10 @@ async function findClientInfoByPhone(phone) {
     for (const table of TABLES_TO_CHECK) {
         let fields = [];
         switch (table) {
+            case "contractsfinalnew":
+                if (!USE_SUPABASE_FOR_CONTRACTS) continue;
+                fields = ["appeal_id", "dogovor_date", "dogovor_number", "city", "client_name", "phone", "total_numbers"];
+                break;
             case "appeals":
             case "appealsotkaz":
             case "dobivashki":
@@ -375,33 +384,33 @@ async function handleMangoWebhook(request, reply, telegramBot) {
             }
         };
 
-        // === ПОИСК СНАЧАЛА В contractsfinalnew.json ===
-        const foundContract = findContractByPhoneFromFile(formattedFromNumber);
-        if (foundContract) {
-            // Шаблон для файла
-            let replyMsg = `ℹ️ <b>${TABLE_NAMES['contractsfinalnew']}</b>\n`;
-            replyMsg +=
-                `ID обращения: <b>${foundContract.appeal_id}</b>\n` +
-                `Номер договора: <b>${foundContract.dogovor_number || ""}</b>\n` +
-                `Дата договора: <b>${foundContract.dogovor_date || ""}</b>\n` +
-                `Клиент: <b>${foundContract.client_name || ""}</b>\n` +
-                `Город: <b>${foundContract.city || ""}</b>\n` +
-                `Телефон: <b>${foundContract.phone || ""}</b>\n` +
-                (foundContract.total_numbers ? `Изделий: <b>${foundContract.total_numbers}</b>\n` : '');
-            
-            const foundMessage = await telegramBot.sendMessage(TELEGRAM_CHAT_ID, replyMsg, { parse_mode: "HTML" });
-            
-            // === СОХРАНЯЕМ ДАННЫЕ О НАЙДЕННОЙ ИНФОРМАЦИИ ===
-            callMessages[formattedFromNumber].foundMessageId = foundMessage.message_id;
-            callMessages[formattedFromNumber].foundInfo = {
-                table: 'contractsfinalnew',
-                info: foundContract
-            };
-            
-            return reply.send({ status: "appeared_processed", source: "contractsfinalnew.json" });
+        // === ПОИСК В contractsfinalnew.json (старая логика, активна если USE_SUPABASE_FOR_CONTRACTS = false) ===
+        if (!USE_SUPABASE_FOR_CONTRACTS) {
+            const foundContract = findContractByPhoneFromFile(formattedFromNumber);
+            if (foundContract) {
+                let replyMsg = `ℹ️ <b>${TABLE_NAMES['contractsfinalnew']}</b>\n`;
+                replyMsg +=
+                    `ID обращения: <b>${foundContract.appeal_id}</b>\n` +
+                    `Номер договора: <b>${foundContract.dogovor_number || ""}</b>\n` +
+                    `Дата договора: <b>${foundContract.dogovor_date || ""}</b>\n` +
+                    `Клиент: <b>${foundContract.client_name || ""}</b>\n` +
+                    `Город: <b>${foundContract.city || ""}</b>\n` +
+                    `Телефон: <b>${foundContract.phone || ""}</b>\n` +
+                    (foundContract.total_numbers ? `Изделий: <b>${foundContract.total_numbers}</b>\n` : '');
+
+                const foundMessage = await telegramBot.sendMessage(TELEGRAM_CHAT_ID, replyMsg, { parse_mode: "HTML" });
+
+                callMessages[formattedFromNumber].foundMessageId = foundMessage.message_id;
+                callMessages[formattedFromNumber].foundInfo = {
+                    table: 'contractsfinalnew',
+                    info: foundContract
+                };
+
+                return reply.send({ status: "appeared_processed", source: "contractsfinalnew.json" });
+            }
         }
 
-        // === Если НЕ найден — ищем в Supabase ===
+        // === Поиск в Supabase (contractsfinalnew первым если USE_SUPABASE_FOR_CONTRACTS = true, затем остальные таблицы) ===
         const found = await findClientInfoByPhone(formattedFromNumber);
         if (found) {
             const sectionName = TABLE_NAMES[found.table] || found.table;
