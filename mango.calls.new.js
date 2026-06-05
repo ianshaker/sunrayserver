@@ -1,4 +1,63 @@
+const fs = require("fs");
+const path = require("path");
 const { createClient } = require("@supabase/supabase-js");
+
+const MANGO_DEBUG_LOG = process.env.MANGO_DEBUG_LOG !== "false";
+const MANGO_LOG_FILE = path.join(__dirname, "mango_webhook_debug.jsonl");
+
+function classifyMangoEvent(body) {
+    if (body.call_state) {
+        return `call → ${body.call_state} @ ${body.location || "?"}`;
+    }
+    if (body.call_direction !== undefined && body.from && body.to) {
+        const dir = body.call_direction === 1 ? "входящий" : body.call_direction === 2 ? "исходящий" : body.call_direction;
+        return `summary → ${dir}`;
+    }
+    return "unknown";
+}
+
+function redactSecrets(obj) {
+    if (!obj || typeof obj !== "object") return obj;
+    const copy = { ...obj };
+    if (copy.vpbx_api_key) copy.vpbx_api_key = "[скрыт]";
+    if (copy.sign) copy.sign = "[скрыт]";
+    return copy;
+}
+
+function logMangoWebhook(request, rawBody, parsedBody) {
+    if (!MANGO_DEBUG_LOG) return;
+
+    const eventType = classifyMangoEvent(parsedBody);
+    const time = new Date().toISOString();
+    const divider = "═".repeat(72);
+
+    const logEntry = {
+        time,
+        path: request.url,
+        event: eventType,
+        call_id: parsedBody.call_id || parsedBody.entry_id || null,
+        raw: rawBody,
+        parsed: parsedBody,
+    };
+
+    console.log(`\n${divider}`);
+    console.log(`🍋 MANGO WEBHOOK  ${time}`);
+    console.log(`   URL:    ${request.url}`);
+    console.log(`   Тип:    ${eventType}`);
+    if (logEntry.call_id) console.log(`   call_id: ${logEntry.call_id}`);
+    console.log(`${divider}`);
+    console.log("📦 RAW (как пришло от Mango):");
+    console.log(JSON.stringify(redactSecrets(rawBody), null, 2));
+    console.log("📋 PARSED (распарсенный json):");
+    console.log(JSON.stringify(redactSecrets(parsedBody), null, 2));
+    console.log(`${divider}\n`);
+
+    try {
+        fs.appendFileSync(MANGO_LOG_FILE, JSON.stringify(logEntry) + "\n");
+    } catch (e) {
+        console.log("⚠️ Не удалось записать mango_webhook_debug.jsonl:", e.message);
+    }
+}
 
 // --- КОНСТАНТЫ И СПРАВОЧНИКИ ---
 const TELEGRAM_CHAT_ID = -1002582438853;
@@ -38,6 +97,7 @@ const MANAGERS = {
     '79309435755': 'Гена',
     'gleb@vpbx400311913.mangosip.ru': 'Мякинина',
     'gleb': 'Мякинина',
+    '79789855708': 'Мякинина',
     '79891930450': 'Юля',
     'elena@vpbx400311913.mangosip.ru': 'Настя',
     'elena': 'Настя',
@@ -46,7 +106,7 @@ const MANAGERS = {
 };
 
 const COMPANY_LINES = {
-    '79585382001': '🟢 SUNRAY',
+    '79585382001': '☀️ SUNRAY',
     '79852194439': '🔶 DESIGN-SUN',
     '79852196418': '🔵 СЕТКИ'
 };
@@ -238,15 +298,19 @@ function createFinalCallMessage(callData, foundInfoList, duration, createdAppeal
 }
 
 async function handleMangoWebhook(request, reply, telegramBot) {
-    let body = request.body || {};
+    const rawBody = request.body ? { ...request.body } : {};
+    let body = { ...rawBody };
 
     if (typeof body.json === "string") {
         try {
             body = { ...body, ...JSON.parse(body.json) };
         } catch (e) {
+            logMangoWebhook(request, rawBody, { parse_error: e.message });
             return reply.code(400).send({ error: "Bad json" });
         }
     }
+
+    logMangoWebhook(request, rawBody, body);
 
     // === ИТОГ ЗВОНКА (когда звонок завершился) ===
     if (body.hasOwnProperty('call_direction') && body.hasOwnProperty('from') && body.hasOwnProperty('to')) {
