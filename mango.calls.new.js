@@ -111,7 +111,134 @@ const COMPANY_LINES = {
     '79852196418': '🔵 СЕТКИ'
 };
 
+// Полный справочник кодов Mango Office VPBX API (результаты вызовов и команд).
+// Источник: документация API Mango / коды завершения вызовов.
+// Для входящих: вызывающий = клиент, вызываемый = менеджер.
+const DISCONNECT_REASONS = {
+    1000: 'действие успешно выполнено',
+    1100: 'завершён в нормальном режиме',
+    1110: 'трубку положил клиент',
+    1111: 'клиент не дождался ответа',
+    1120: 'трубку положил менеджер',
+    1121: 'занято',
+    1122: 'менеджер отклонил звонок',
+    1123: 'сигнал «не беспокоить»',
+    1124: 'менеджер недоступен',
+    1130: 'ограничения для номера менеджера',
+    1131: 'номер менеджера недоступен',
+    1132: 'номер менеджера не обслуживается',
+    1133: 'номер менеджера не существует',
+    1134: 'превышено число переадресаций',
+    1140: 'вызовы на регион запрещены настройками АТС',
+    1150: 'ограничения для номера клиента',
+    1151: 'клиент в чёрном списке',
+    1152: 'клиент не в белом списке',
+    1160: 'дозвон по группе не удался',
+    1161: 'удержание запрещено настройками АТС',
+    1162: 'очередь удержания заполнена',
+    1163: 'истекло время ожидания в очереди',
+    1164: 'все операторы недоступны',
+    1170: 'завершён по схеме переадресации',
+    1171: 'неверно настроена схема переадресации',
+    1180: 'завершён командой пользователя',
+    1181: 'завершён командой внешней системы',
+    1182: 'завершён перехватом на другого оператора',
+    1183: 'назначен новый оператор (перевод)',
+    1190: 'менеджер неактивен или нерабочее расписание',
+    1191: 'менеджер неактивен (снят флаг в ЛК)',
+    1192: 'менеджер неактивен по расписанию',
+    1200: 'ошибка сессий контакт-центра',
+    1201: 'достигнут лимит подключений',
+    1202: 'данные сессии не найдены',
+    1210: 'сервер КЦ не может принять подключение',
+    1211: 'режим обслуживания',
+    1212: 'сервер отключён от БД',
+    1230: 'сессия КЦ завершена по системным причинам',
+    1231: 'перезагрузка сервера КЦ',
+    1232: 'сессия завершена администратором',
+    1233: 'сессия завершена администратором (рекомендовано восстановление)',
+    1234: 'сессия завершена администратором (рекомендован оффлайн)',
+    1235: 'сервер отключился от БД (переход в БРТ)',
+    1236: 'изменены критичные данные сессии',
+    2000: 'ограничение биллинговой системы',
+    2100: 'доступ к счёту невозможен',
+    2110: 'счёт заблокирован',
+    2120: 'счёт закрыт',
+    2130: 'счёт не обслуживается (frozen)',
+    2140: 'счёт недействителен',
+    2200: 'доступ к счёту ограничен',
+    2210: 'доступ ограничен периодом использования',
+    2211: 'достигнут дневной лимит услуги',
+    2212: 'достигнут месячный лимит услуги',
+    2220: 'ограничено число одновременных вызовов',
+    2230: 'услуга недоступна',
+    2240: 'недостаточно средств на счёте',
+    2250: 'ограничение на число использований услуги',
+    2300: 'направление заблокировано',
+    2400: 'ошибка биллинга',
+    3000: 'неверный запрос',
+    3100: 'переданы неверные параметры команды',
+    3101: 'запрос не через POST',
+    3102: 'неверная подпись запроса',
+    3103: 'отсутствует обязательный параметр',
+    3104: 'параметр в неправильном формате',
+    3105: 'неверный ключ доступа',
+    3200: 'неверно указан номер абонента',
+    3300: 'объект не существует',
+    3310: 'вызов не найден',
+    3320: 'запись разговора не найдена',
+    3330: 'номер не найден у АТС или сотрудника',
+    3340: 'файл не найден',
+    4000: 'действие не может быть выполнено',
+    4001: 'команда не поддерживается',
+    4002: 'запись слишком короткая, не сохранена',
+    4100: 'команду выполнить невозможно по логике АТС',
+    4101: 'вызов завершён или не существует',
+    4102: 'запись разговора уже идёт',
+    4200: 'связаться с абонентом сейчас невозможно',
+    4300: 'SMS не удалось отправить',
+    4301: 'SMS устарело',
+    4391: 'SMS утеряно оператором',
+    4392: 'SMS отклонено оператором',
+    4393: 'SMS отменено оператором',
+    4400: 'не удалось добавить участника в конференцию',
+    4401: 'аппаратная ошибка',
+    4402: 'сервис недоступен',
+    4403: 'недостаточно ресурсов',
+    4404: 'превышен лимит участников конференции',
+    4405: 'подключение запрещено настройками конференции',
+    4500: 'ограничения системы безопасности',
+    4501: 'ограничение частоты звонков',
+    4502: 'номер в чёрном списке входящих',
+    4503: 'превышен максимальный размер файла',
+    4504: 'не удалось определить размер файла',
+    4505: 'формат файла не разрешён',
+    5000: 'ошибка сервера',
+    5001: 'перезапуск коммутатора (ограничение канала)',
+    5002: 'перезапуск коммутатора по команде администратора',
+    5003: 'технические проблемы коммутатора',
+    5004: 'проблемы доступа к БД коммутатора',
+    5007: 'ошибка или недоступность внешней системы',
+    5101: 'нет продукта контакт-центр',
+    5102: 'превышен лимит активных кампаний',
+    5103: 'указанный сотрудник не существует',
+    5105: 'неподходящий статус кампании',
+    5106: 'не удалось вставить задания кампании',
+    5107: 'превышен лимит заданий кампании (10 000)',
+    5212: 'нет активных номеров',
+    6000: 'доставка факса не выполнялась',
+    6010: 'технические проблемы сервиса факсов',
+    6011: 'номер факса недоступен в течение часа',
+    6012: 'номер факса не существует',
+    6013: 'на номере не установлен факс-аппарат',
+    6014: 'адресат отказался принимать факс',
+    6100: 'ошибка при преобразовании факса',
+    6101: 'превышен размер файла факса (10 МБ)',
+    6102: 'превышено число страниц факса (30)',
+};
+
 const activeCalls = {}; // call_id: инфо о звонке
+const entryCallMeta = {}; // entry_id: данные с этапа IVR (номер линии до дозвона)
 
 // === НОВОЕ: Хранение сообщений в памяти ===
 const callMessages = {}; // структура: { phoneNumber: { incomingMessageId: number, foundMessageId: number, connectedMessageId: number, dialoutMessageIds: [], managers: [], acceptedManager: null, callData: object, createdAppealId: null } }
@@ -131,7 +258,69 @@ function formatPhoneNumber(phone) {
 
 function getCompanyLineName(phone) {
     if (!phone) return 'Неизвестная линия';
-    return COMPANY_LINES[phone] ? `Линия сайта ${COMPANY_LINES[phone]}` : `Линия ${phone}`;
+    const digits = String(phone).replace(/\D/g, '');
+    if (COMPANY_LINES[digits]) return `Линия сайта ${COMPANY_LINES[digits]}`;
+    if (COMPANY_LINES[phone]) return `Линия сайта ${COMPANY_LINES[phone]}`;
+    return `Линия ${formatPhoneNumber(phone)}`;
+}
+
+function resolveLineNumber(body, fallbackEntryId) {
+    const fromIvr = fallbackEntryId && entryCallMeta[fallbackEntryId]?.lineNumber;
+    return body.line_number
+        || body.to?.line_number
+        || body.from?.line_number
+        || fromIvr
+        || body.to?.number;
+}
+
+function getDisconnectLabel(code) {
+    if (!code) return null;
+    const n = Number(code);
+    if (DISCONNECT_REASONS[n]) return DISCONNECT_REASONS[n];
+    // Mango: подкод наследует описание класса (2219 → 2210, 1090 → 1000)
+    const classCode = Math.floor(n / 10) * 10;
+    if (DISCONNECT_REASONS[classCode]) return DISCONNECT_REASONS[classCode];
+    const majorCode = Math.floor(n / 100) * 100;
+    if (DISCONNECT_REASONS[majorCode]) return DISCONNECT_REASONS[majorCode];
+    return `неизвестный код ${code}`;
+}
+
+function buildCallTiming(summary) {
+    const create = summary.create_time || 0;
+    const forward = summary.forward_time || 0;
+    const talk = summary.talk_time || 0;
+    const end = summary.end_time || 0;
+    const answered = summary.entry_result === 1 && talk > 0;
+
+    return {
+        waitSeconds: forward && create ? Math.max(0, forward - create) : 0,
+        ringSeconds: talk && forward ? Math.max(0, talk - forward) : 0,
+        talkSeconds: talk && end ? Math.max(0, end - talk) : 0,
+        totalSeconds: end && create ? Math.max(0, end - create) : 0,
+        answered,
+        missed: !answered,
+    };
+}
+
+function formatCallStatusBlock(callData) {
+    const { acceptedManager, managers, timing, disconnectLabel } = callData;
+    let block = '';
+
+    if (timing?.answered && acceptedManager) {
+        block += `\n<b>Принят</b> — ${acceptedManager}`;
+        if (timing.waitSeconds > 0) block += `\nОжидание в очереди: ${formatDuration(timing.waitSeconds)}`;
+        if (timing.ringSeconds > 0) block += `\nДозвон менеджеру: ${formatDuration(timing.ringSeconds)}`;
+        if (timing.talkSeconds > 0) block += `\nРазговор: ${formatDuration(timing.talkSeconds)}`;
+        if (timing.totalSeconds > 0) block += `\nВсего: ${formatDuration(timing.totalSeconds)}`;
+    } else {
+        block += `\n<b>Пропущен</b>`;
+        if (timing?.waitSeconds > 0) block += `\nОжидание в очереди: ${formatDuration(timing.waitSeconds)}`;
+        if (timing?.ringSeconds > 0) block += `\nДозвон менеджеру: ${formatDuration(timing.ringSeconds)}`;
+        if (timing?.totalSeconds > 0) block += `\nВсего: ${formatDuration(timing.totalSeconds)}`;
+    }
+
+    if (disconnectLabel) block += `\nЗавершение: ${disconnectLabel}`;
+    return block;
 }
 
 function isManager(phone) {
@@ -214,7 +403,7 @@ async function findAllClientInfoByPhone(phone) {
     return rawResults.filter(r => r !== null);
 }
 
-const NUMBER_EMOJI = ['1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣'];
+const NUMBER_EMOJI = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣'];
 
 // === Построение текста карточки найденной записи === //
 // index + phone передаются при звонке (Appeared), не передаются в саммари
@@ -264,34 +453,33 @@ function buildFoundInfoMessage(found, index = null, phone = null) {
     return msg;
 }
 
-// === Создание итогового сообщения (принимает массив всех найденных записей) === //
-function createFinalCallMessage(callData, foundInfoList, duration, createdAppealId) {
-    const { formattedFromNumber, lineName, managers, acceptedManager } = callData;
+// === Итоговое сообщение (всё собирается сюда) === //
+function createFinalCallMessage(callData, foundInfoList, createdAppealId) {
+    const { formattedFromNumber, lineName, managers } = callData;
 
-    let finalMsg = `📞 <b>ЗАВЕРШЕННЫЙ ЗВОНОК</b>\n`;
+    let finalMsg = `📞 <b>ЗАВЕРШЁННЫЙ ЗВОНОК</b>\n`;
     finalMsg += `Абонент: <b>${formattedFromNumber}</b>\n`;
     finalMsg += `${lineName}\n`;
 
-    if (managers && managers.length > 0) {
-        finalMsg += managers.length === 1
-            ? `Звонок менеджеру: <b>${managers[0]}</b>\n`
-            : `Дозвон: <b>${managers.join(' → ')}</b>\n`;
+    if (managers?.length === 1) {
+        finalMsg += `Маршрут: <b>${managers[0]}</b>`;
+    } else if (managers?.length > 1) {
+        finalMsg += `Маршрут: <b>${managers.join(' → ')}</b>`;
     }
 
-    finalMsg += acceptedManager
-        ? `Принял: <b>${acceptedManager}</b> (${formatDuration(duration)})\n`
-        : `Не принят (${formatDuration(duration)})\n`;
+    finalMsg += formatCallStatusBlock(callData);
 
-    if (foundInfoList && foundInfoList.length > 0) {
-        finalMsg += `\n📋 <b>История клиента (${foundInfoList.length} запис${foundInfoList.length === 1 ? 'ь' : 'и'}):</b>\n`;
+    if (foundInfoList?.length > 0) {
+        const n = foundInfoList.length;
+        const word = n === 1 ? 'запись' : n < 5 ? 'записи' : 'записей';
+        finalMsg += `\n\n📋 <b>История клиента (${n} ${word})</b>\n`;
         for (const found of foundInfoList) {
             finalMsg += `\n` + buildFoundInfoMessage(found);
         }
-    } else {
-        finalMsg += `\n📋 <b>Создана новая заявка</b>\n`;
-        if (createdAppealId) {
-            finalMsg += `Номер заявки: <b>${createdAppealId}</b>\n`;
-        }
+    } else if (createdAppealId) {
+        finalMsg += `\n\n📋 <b>Создана новая заявка</b>\nНомер заявки: <b>${createdAppealId}</b>`;
+    } else if (callData.timing?.missed) {
+        finalMsg += `\n\n<i>Клиент не найден в базе, заявка не создавалась</i>`;
     }
 
     return finalMsg;
@@ -318,17 +506,34 @@ async function handleMangoWebhook(request, reply, telegramBot) {
 
         const fromNumber = body.from?.number;
         const toNumber = body.to?.number;
-        const lineNumber = body.line_number;
-        const talkTime = body.talk_time || 0;
-        const endTime = body.end_time || 0;
-        const duration = talkTime && endTime ? endTime - talkTime : 0;
+        const entryId = body.entry_id;
+        const lineNumber = resolveLineNumber(body, entryId);
         const formattedFromNumber = formatPhoneNumber(fromNumber);
+        const timing = buildCallTiming(body);
+        const disconnectLabel = getDisconnectLabel(body.disconnect_reason);
+        const managerName = getManagerName(toNumber);
 
-        // === НОВАЯ ЛОГИКА: Проверяем есть ли сохраненные сообщения для этого номера ===
+        if (entryId) delete entryCallMeta[entryId];
+
         const messageData = callMessages[formattedFromNumber];
-        
+
+        const callData = messageData?.callData || {
+            formattedFromNumber,
+            lineName: getCompanyLineName(lineNumber),
+            managers: [managerName],
+            acceptedManager: timing.answered ? managerName : null,
+        };
+
+        callData.timing = timing;
+        callData.disconnectLabel = disconnectLabel;
+        if (!callData.lineName || callData.lineName.includes('не определена')) {
+            callData.lineName = getCompanyLineName(lineNumber);
+        }
+        if (timing.answered && !callData.acceptedManager) {
+            callData.acceptedManager = managerName;
+        }
+
         if (messageData) {
-            // Удаляем все промежуточные сообщения
             try {
                 const toDelete = [
                     messageData.incomingMessageId,
@@ -345,21 +550,24 @@ async function handleMangoWebhook(request, reply, telegramBot) {
                 console.log("Ошибка при удалении сообщений:", e.message);
             }
 
-            // Создаем итоговое сообщение со всей историей клиента
-            const finalMessage = createFinalCallMessage(messageData.callData, messageData.foundInfoList, duration, messageData.createdAppealId);
+            callData.formattedFromNumber = messageData.callData.formattedFromNumber;
+            callData.lineName = messageData.callData.lineName || callData.lineName;
+            callData.managers = messageData.callData.managers;
+            callData.acceptedManager = messageData.callData.acceptedManager
+                || (timing.answered ? managerName : null);
+            callData.timing = timing;
+            callData.disconnectLabel = disconnectLabel;
+
+            const finalMessage = createFinalCallMessage(
+                callData,
+                messageData.foundInfoList,
+                messageData.createdAppealId
+            );
             await telegramBot.sendMessage(TELEGRAM_CHAT_ID, finalMessage, { parse_mode: "HTML" });
-            
-            // Удаляем данные из памяти
             delete callMessages[formattedFromNumber];
         } else {
-            // Если нет сохраненных данных, отправляем стандартное сообщение
-            const lineName = getCompanyLineName(lineNumber);
-            let managerName = getManagerName(toNumber);
-            await telegramBot.sendMessage(
-                TELEGRAM_CHAT_ID,
-                `✅ <b>ИТОГ ЗВОНКА</b> ${formattedFromNumber}\n${lineName}\nМенеджер: <b>${managerName}</b> (${formatDuration(duration)})`,
-                { parse_mode: "HTML" }
-            );
+            const finalMessage = createFinalCallMessage(callData, [], null);
+            await telegramBot.sendMessage(TELEGRAM_CHAT_ID, finalMessage, { parse_mode: "HTML" });
         }
 
         return reply.send({ status: "summary_sent" });
@@ -367,21 +575,31 @@ async function handleMangoWebhook(request, reply, telegramBot) {
 
     const callState = body.call_state;
     const callId = body.call_id || body.entry_id;
+    const entryId = body.entry_id;
     const fromNumber = body.from?.number;
     const toNumber = body.to?.number;
-    const lineNumber = body.to?.line_number;
     const location = body.location;
-    const seq = body.seq;
 
-    // Appeared — новый входящий звонок или дозвон
+    // IVR — звонок поступил на номер компании (фиксируем линию заранее)
+    if (callState === "Appeared" && location === "ivr" && !isManager(fromNumber)) {
+        const lineNum = body.to?.line_number || body.to?.number;
+        entryCallMeta[entryId] = {
+            formattedFromNumber: formatPhoneNumber(fromNumber),
+            lineNumber: lineNum,
+            lineName: getCompanyLineName(lineNum),
+        };
+        return reply.send({ status: "ivr_registered" });
+    }
+
+    const lineNumber = resolveLineNumber(body, entryId);
+
+    // Appeared — дозвон менеджеру (новый звонок или переадресация)
     if (callState === "Appeared" && location === "abonent" && !isManager(fromNumber)) {
         const formattedFromNumber = formatPhoneNumber(fromNumber);
-        const formattedToNumber = formatPhoneNumber(toNumber);
         const managerName = getManagerName(toNumber);
 
         // === ПРОВЕРЯЕМ: это новый звонок или дозвон? ===
         if (callMessages[formattedFromNumber]) {
-            // Это дозвон к другому менеджеру
             const dialoutMessage = await telegramBot.sendMessage(
                 TELEGRAM_CHAT_ID,
                 `Дозвон менеджеру ${managerName}`,
@@ -399,12 +617,12 @@ async function handleMangoWebhook(request, reply, telegramBot) {
         if (activeCalls[callId]) return reply.send({ status: "already_appeared" });
         activeCalls[callId] = true;
 
-        const lineName = getCompanyLineName(lineNumber);
+        const ivrMeta = entryId && entryCallMeta[entryId];
+        const lineName = ivrMeta?.lineName || getCompanyLineName(lineNumber);
 
-        // === ОТПРАВЛЯЕМ ПЕРВОЕ СООБЩЕНИЕ И СОХРАНЯЕМ ЕГО ID ===
         const incomingMessage = await telegramBot.sendMessage(
             TELEGRAM_CHAT_ID,
-            `📞 <b>ВХОДЯЩИЙ ЗВОНОК</b>\nАбонент: <b>${formattedFromNumber}</b>\n${lineName}\nЗвонок менеджеру: ${formattedToNumber} (${managerName})`,
+            `📞 <b>ВХОДЯЩИЙ ЗВОНОК</b>\nАбонент: <b>${formattedFromNumber}</b>\n${lineName}\nЗвонок менеджеру: <b>${managerName}</b>`,
             { parse_mode: "HTML" }
         );
 
