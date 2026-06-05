@@ -308,18 +308,18 @@ function formatCallStatusBlock(callData) {
 
     if (timing?.answered && acceptedManager) {
         block += `\n<b>Принят</b> — ${acceptedManager}`;
-        if (timing.waitSeconds > 0) block += `\nОжидание в очереди: ${formatDuration(timing.waitSeconds)}`;
-        if (timing.ringSeconds > 0) block += `\nДозвон менеджеру: ${formatDuration(timing.ringSeconds)}`;
+        if (timing.waitSeconds > 0) block += `\nОбработка АТС до звонка менеджеру: ${formatDuration(timing.waitSeconds)}`;
+        if (timing.ringSeconds > 0) block += `\nМенеджер поднял трубку за: ${formatDuration(timing.ringSeconds)}`;
         if (timing.talkSeconds > 0) block += `\nРазговор: ${formatDuration(timing.talkSeconds)}`;
         if (timing.totalSeconds > 0) block += `\nВсего: ${formatDuration(timing.totalSeconds)}`;
     } else {
         block += `\n<b>Пропущен</b>`;
-        if (timing?.waitSeconds > 0) block += `\nОжидание в очереди: ${formatDuration(timing.waitSeconds)}`;
-        if (timing?.ringSeconds > 0) block += `\nДозвон менеджеру: ${formatDuration(timing.ringSeconds)}`;
+        if (timing?.waitSeconds > 0) block += `\nОбработка АТС до звонка менеджеру: ${formatDuration(timing.waitSeconds)}`;
+        if (timing?.ringSeconds > 0) block += `\nМенеджер не ответил (звонили ${formatDuration(timing.ringSeconds)})`;
         if (timing?.totalSeconds > 0) block += `\nВсего: ${formatDuration(timing.totalSeconds)}`;
     }
 
-    if (disconnectLabel) block += `\nЗавершение: ${disconnectLabel}`;
+    if (disconnectLabel) block += `\nЗавершение: <b>${disconnectLabel}</b>`;
     return block;
 }
 
