@@ -69,7 +69,8 @@ const { startEmailChecker } = require("./postamails");
 startEmailChecker(telegramBot); // <-- Передаём бота, если требуется в твоём модуле
 
 // --- Обработка звонков: расшифровка (Google STT) + саммари (Gemini) --- //
-const { startCallAiWorkers, triggerTranscription } = require("./call-ai");
+const { startCallAiWorkers, triggerTranscription, setTelegramBot } = require("./call-ai");
+setTelegramBot(telegramBot);
 startCallAiWorkers();
 
 // --- CORS, чтобы фронт мог делать запросы! --- //

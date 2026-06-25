@@ -10,6 +10,7 @@ const { supabase } = require("./supabaseClient");
 const { hasCredentials, getCredentials, getAuthClient } = require("./googleAuth");
 const { SUMMARY } = require("./config");
 const { CALL_SUMMARY_SYSTEM_PROMPT } = require("./prompts");
+const { sendSummaryToTelegram, pollTelegramBacklog } = require("./telegramSummary");
 
 const { POLL_MS, BATCH_LIMIT, STALE_MIN, VERTEX_LOCATION, MODEL: GEMINI_MODEL } = SUMMARY;
 
@@ -17,7 +18,7 @@ let isCycleRunning = false;
 
 // Поля, нужные для саммари
 const SELECT_FIELDS =
-  "id, entry_id, direction, manager_name, client_phone, transcript, transcript_status, summary_status";
+  "id, entry_id, direction, manager_name, client_phone, call_started_at, call_answered_at, transcript, transcript_status, summary, summary_status, summary_telegram_sent_at";
 
 // Контекст конкретного звонка + расшифровка → user prompt.
 function buildUserPrompt(row) {
@@ -134,6 +135,10 @@ async function summarizeRow(row) {
       .eq("id", id);
 
     console.log(`📝 Саммари готово: ${entry_id} (${text.length} симв.)`);
+
+    sendSummaryToTelegram({ ...row, summary: text, summary_status: "done" }).catch((e) =>
+      console.error(`⚠️ Telegram после саммари ${entry_id}:`, e.message)
+    );
   } catch (e) {
     const msg = e.response?.data ? JSON.stringify(e.response.data).slice(0, 500) : String(e.message);
     console.error(`❌ Саммари ${entry_id}:`, msg);
@@ -182,6 +187,8 @@ async function pollOnce() {
       }
       await summarizeRow(row);
     }
+
+    await pollTelegramBacklog();
   } catch (e) {
     console.error("⚠️ Цикл саммари упал:", e.message);
   } finally {
@@ -206,7 +213,10 @@ async function triggerSummary(entryId) {
   }
   if (!data) return { status: "not_found" };
   if (data.transcript_status !== "done") return { status: "transcript_not_ready" };
-  if (data.summary_status === "done") return { status: "already_done" };
+  if (data.summary_status === "done") {
+    sendSummaryToTelegram({ ...data, summary: data.summary }).catch(() => {});
+    return { status: "already_done" };
+  }
   if (data.summary_status === "processing") return { status: "already_processing" };
 
   if (!data.transcript || !data.transcript.trim()) {

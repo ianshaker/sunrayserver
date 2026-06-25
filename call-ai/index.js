@@ -5,14 +5,14 @@
 //
 // Поток:
 //   запись готова (Selectel) → triggerTranscription → STT → transcript
-//     → (цепочка) triggerSummary → Gemini → summary
+//     → (цепочка) triggerSummary → Gemini → summary → Telegram (чат входящих)
 //   fallback: оба воркера раз в минуту добирают очередь из БД.
 // ============================================================================
 
 const { startTranscriptionWorker, triggerTranscription } = require("./transcription");
 const { startSummarizationWorker, triggerSummary } = require("./summarization");
+const { setTelegramBot } = require("./telegramSummary");
 
-// Запустить оба фоновых воркера.
 function startCallAiWorkers() {
   startTranscriptionWorker();
   startSummarizationWorker();
@@ -24,4 +24,5 @@ module.exports = {
   triggerTranscription,
   startSummarizationWorker,
   triggerSummary,
+  setTelegramBot,
 };
