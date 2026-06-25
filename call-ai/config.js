@@ -21,7 +21,9 @@ module.exports = {
     POLL_MS: 60000, // fallback poll (основной путь — цепочка после STT)
     BATCH_LIMIT: 3,
     STALE_MIN: 15,
+    // Agent Platform (июнь 2026): gemini-2.0-flash снят с regional endpoints.
+    // Для us-central1: gemini-2.5-flash. Переопределение: GEMINI_MODEL, VERTEX_LOCATION.
     VERTEX_LOCATION: process.env.VERTEX_LOCATION || "us-central1",
-    MODEL: process.env.GEMINI_MODEL || "gemini-2.0-flash",
+    MODEL: process.env.GEMINI_MODEL || "gemini-2.5-flash",
   },
 };

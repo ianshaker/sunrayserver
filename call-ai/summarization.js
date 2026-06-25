@@ -36,14 +36,22 @@ function buildUserPrompt(row) {
   return lines.join("\n");
 }
 
+// URL generateContent: regional (us-central1) или global (aiplatform.googleapis.com без префикса).
+function buildGeminiUrl(projectId, location, model) {
+  const path =
+    `/v1/projects/${projectId}/locations/${location}/publishers/google/models/${model}:generateContent`;
+  if (location === "global") {
+    return `https://aiplatform.googleapis.com${path}`;
+  }
+  return `https://${location}-aiplatform.googleapis.com${path}`;
+}
+
 // Запрос к Gemini, возвращает текст саммари.
 async function generateSummary(row) {
   const client = await getAuthClient();
   const projectId = getCredentials().project_id;
 
-  const url =
-    `https://${VERTEX_LOCATION}-aiplatform.googleapis.com/v1/projects/${projectId}` +
-    `/locations/${VERTEX_LOCATION}/publishers/google/models/${GEMINI_MODEL}:generateContent`;
+  const url = buildGeminiUrl(projectId, VERTEX_LOCATION, GEMINI_MODEL);
 
   const body = {
     systemInstruction: { parts: [{ text: CALL_SUMMARY_SYSTEM_PROMPT }] },
