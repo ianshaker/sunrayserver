@@ -47,7 +47,7 @@ telegramBot.on('polling_error', (error) => {
 });
 
 // --- Импорт обработчика манго (прокидываем telegramBot) --- //
-const { handleMangoWebhook } = require("./mango.calls.new");
+const { handleMangoWebhook, handleMangoRecording } = require("./mango.calls.new");
 
 // --- Импорт новой функции для отправки замера --- //
 const { registerZamerRoute } = require("./infonazamer");
@@ -115,6 +115,10 @@ async function checkSelectelIP(req, reply) {
 // --- Маршруты для вебхуков Mango Office (только с Selectel) --- //
 fastify.post("/events/call", { preHandler: checkSelectelIP }, (req, res) => handleMangoWebhook(req, res, telegramBot));
 fastify.post("/events/summary", { preHandler: checkSelectelIP }, (req, res) => handleMangoWebhook(req, res, telegramBot));
+
+// --- Вебхуки записей разговоров Mango (статус + готовый файл) --- //
+fastify.post("/events/recording", { preHandler: checkSelectelIP }, (req, res) => handleMangoRecording(req, res));
+fastify.post("/events/record/added", { preHandler: checkSelectelIP }, (req, res) => handleMangoRecording(req, res));
 
 // --- Новый endpoint для назначения замера --- //
 registerZamerRoute(fastify, telegramBot);
