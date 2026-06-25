@@ -23,7 +23,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 const CALL_RECORDINGS_BUCKET = "call-recordings";
 
 // --- Параметры расшифровки ---
-const POLL_MS = 20000;            // как часто проверять очередь
+const POLL_MS = 60000;            // fallback: если ping с Selectel не дошёл
 const BATCH_LIMIT = 3;            // сколько записей за один цикл
 const STALE_MIN = 15;            // через сколько минут "processing" считать зависшим
 const OP_TIMEOUT_MS = 180000;     // макс. ожидание ответа Google на одну запись
@@ -187,17 +187,47 @@ async function pollOnce() {
   }
 }
 
+// Мгновенный запуск расшифровки по entry_id (вызов с Selectel после сохранения mp3).
+async function triggerTranscription(entryId) {
+  if (!entryId) return { status: 'no_entry_id' };
+  if (!process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON) {
+    return { status: 'disabled' };
+  }
+
+  const { data, error } = await supabase
+    .from('mango_calls')
+    .select('id, entry_id, storage_bucket, storage_path, transcript_status, recording_status')
+    .eq('entry_id', entryId)
+    .maybeSingle();
+
+  if (error) {
+    console.error('⚠️ triggerTranscription select error:', error.message);
+    return { status: 'error', message: error.message };
+  }
+  if (!data) return { status: 'not_found' };
+  if (data.recording_status !== 'ready' || !data.storage_path) {
+    return { status: 'recording_not_ready' };
+  }
+  if (data.transcript_status === 'done') return { status: 'already_done' };
+  if (data.transcript_status === 'processing') return { status: 'already_processing' };
+
+  await transcribeRow(data);
+  return { status: 'started', entry_id: entryId };
+}
+
 function startTranscriptionWorker() {
   if (!process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON) {
-    console.warn("⚠️ Расшифровка ВЫКЛ: нет GOOGLE_APPLICATION_CREDENTIALS_JSON в env");
+    console.warn('⚠️ Расшифровка ВЫКЛ: нет GOOGLE_APPLICATION_CREDENTIALS_JSON в env');
     return;
   }
   console.log(
-    `🎙️ Воркер расшифровки запущен: модель=${STT_MODEL}, poll=${POLL_MS / 1000}с`
+    `🎙️ Воркер расшифровки: push от Selectel + fallback poll ${POLL_MS / 1000}с, модель=${STT_MODEL}`
   );
+  // fallback poll + подхват очереди при старте
+  pollOnce().catch((e) => console.error('⚠️ pollOnce:', e.message));
   setInterval(() => {
-    pollOnce().catch((e) => console.error("⚠️ pollOnce:", e.message));
+    pollOnce().catch((e) => console.error('⚠️ pollOnce:', e.message));
   }, POLL_MS);
 }
 
-module.exports = { startTranscriptionWorker, pollOnce };
+module.exports = { startTranscriptionWorker, pollOnce, triggerTranscription };

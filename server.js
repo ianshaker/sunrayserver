@@ -69,7 +69,7 @@ const { startEmailChecker } = require("./postamails");
 startEmailChecker(telegramBot); // <-- Передаём бота, если требуется в твоём модуле
 
 // --- Воркер расшифровки записей разговоров (Google STT) --- //
-const { startTranscriptionWorker } = require("./transcription");
+const { startTranscriptionWorker, triggerTranscription } = require("./transcription");
 startTranscriptionWorker();
 
 // --- CORS, чтобы фронт мог делать запросы! --- //
@@ -121,6 +121,14 @@ fastify.post("/events/call", { preHandler: checkSelectelIP }, (req, res) => hand
 fastify.post("/events/summary", { preHandler: checkSelectelIP }, (req, res) => handleMangoWebhook(req, res, telegramBot));
 // Записи разговоров (/events/recording, /events/record/added) обрабатываются
 // на mango-proxy (Selectel, RU): Render из US не может скачать файл у Mango.
+
+// Selectel пингует сюда сразу после сохранения mp3 в Supabase → мгновенная расшифровка.
+fastify.post("/internal/transcribe-ready", { preHandler: checkSelectelIP }, async (req, reply) => {
+  const entryId = req.body?.entry_id;
+  req.log.info({ entry_id: entryId }, "transcribe-ready от Selectel");
+  const result = await triggerTranscription(entryId);
+  return reply.send(result);
+});
 
 // --- Новый endpoint для назначения замера --- //
 registerZamerRoute(fastify, telegramBot);
