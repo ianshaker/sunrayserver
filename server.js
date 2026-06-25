@@ -47,7 +47,7 @@ telegramBot.on('polling_error', (error) => {
 });
 
 // --- Импорт обработчика манго (прокидываем telegramBot) --- //
-const { handleMangoWebhook, handleMangoRecording } = require("./mango.calls.new");
+const { handleMangoWebhook } = require("./mango.calls.new");
 
 // --- Импорт новой функции для отправки замера --- //
 const { registerZamerRoute } = require("./infonazamer");
@@ -67,6 +67,10 @@ const removeDuplicates = require("./remove_duplicates"); // пусть буде�
 // --- Импорт и запуск обработчика почты --- //
 const { startEmailChecker } = require("./postamails");
 startEmailChecker(telegramBot); // <-- Передаём бота, если требуется в твоём модуле
+
+// --- Воркер расшифровки записей разговоров (Google STT) --- //
+const { startTranscriptionWorker } = require("./transcription");
+startTranscriptionWorker();
 
 // --- CORS, чтобы фронт мог делать запросы! --- //
 fastify.register(require('@fastify/cors'), {
@@ -115,10 +119,8 @@ async function checkSelectelIP(req, reply) {
 // --- Маршруты для вебхуков Mango Office (только с Selectel) --- //
 fastify.post("/events/call", { preHandler: checkSelectelIP }, (req, res) => handleMangoWebhook(req, res, telegramBot));
 fastify.post("/events/summary", { preHandler: checkSelectelIP }, (req, res) => handleMangoWebhook(req, res, telegramBot));
-
-// --- Вебхуки записей разговоров Mango (статус + готовый файл) --- //
-fastify.post("/events/recording", { preHandler: checkSelectelIP }, (req, res) => handleMangoRecording(req, res));
-fastify.post("/events/record/added", { preHandler: checkSelectelIP }, (req, res) => handleMangoRecording(req, res));
+// Записи разговоров (/events/recording, /events/record/added) обрабатываются
+// на mango-proxy (Selectel, RU): Render из US не может скачать файл у Mango.
 
 // --- Новый endpoint для назначения замера --- //
 registerZamerRoute(fastify, telegramBot);
