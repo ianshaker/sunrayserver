@@ -11,6 +11,7 @@ const { supabase } = require("./supabaseClient");
 const { hasCredentials, getSpeechClient } = require("./googleAuth");
 const { CALL_RECORDINGS_BUCKET, STT } = require("./config");
 const { detectMp3SampleRate } = require("./mp3SampleRate");
+const { getBucketName, ensureBucket, uploadObject, deleteObject } = require("./gcsStorage");
 
 const {
   POLL_MS,
@@ -64,22 +65,7 @@ function collectTranscript(response) {
   return { text, segments: results.length, billed };
 }
 
-// Длинное распознавание + поллинг операции.
-async function recognize(audioBuffer) {
-  const speechApi = getSpeechClient();
-
-  const detectedRate = STT_SAMPLE_RATE || detectMp3SampleRate(audioBuffer) || 8000;
-  const config = buildRecognitionConfig(detectedRate);
-
-  const requestBody = {
-    config,
-    audio: { content: audioBuffer.toString("base64") },
-  };
-
-  const start = await speechApi.speech.longrunningrecognize({ requestBody });
-  const opName = start.data.name;
-  if (!opName) throw new Error("Google не вернул имя операции");
-
+async function pollOperation(speechApi, opName, detectedRate) {
   const startedAt = Date.now();
   while (Date.now() - startedAt < OP_TIMEOUT_MS) {
     await sleep(3000);
@@ -95,8 +81,31 @@ async function recognize(audioBuffer) {
       return text;
     }
   }
-
   throw new Error("Таймаут ожидания ответа Google STT");
+}
+
+// Распознавание через GCS URI: inline-аудио у Google ограничено 60 сек,
+// поэтому грузим mp3 во временный бакет и передаём gs:// (до 480 мин).
+async function recognize(audioBuffer, objectName) {
+  const speechApi = getSpeechClient();
+  const detectedRate = STT_SAMPLE_RATE || detectMp3SampleRate(audioBuffer) || 8000;
+  const config = buildRecognitionConfig(detectedRate);
+
+  const bucket = getBucketName();
+  await ensureBucket(bucket);
+  const gcsUri = await uploadObject(bucket, objectName, audioBuffer, "audio/mpeg");
+
+  try {
+    const start = await speechApi.speech.longrunningrecognize({
+      requestBody: { config, audio: { uri: gcsUri } },
+    });
+    const opName = start.data.name;
+    if (!opName) throw new Error("Google не вернул имя операции");
+
+    return await pollOperation(speechApi, opName, detectedRate);
+  } finally {
+    await deleteObject(bucket, objectName);
+  }
 }
 
 // Расшифровываем одну строку звонка.
@@ -110,7 +119,8 @@ async function transcribeRow(row) {
 
   try {
     const buffer = await downloadAudio(storage_bucket, storage_path);
-    const text = await recognize(buffer);
+    const objectName = `stt/${String(entry_id).replace(/[^A-Za-z0-9._-]/g, "_")}-${Date.now()}.mp3`;
+    const text = await recognize(buffer, objectName);
 
     await supabase
       .from("mango_calls")
