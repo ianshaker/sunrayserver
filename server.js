@@ -69,7 +69,7 @@ const { startEmailChecker } = require("./postamails");
 startEmailChecker(telegramBot); // <-- Передаём бота, если требуется в твоём модуле
 
 // --- Обработка звонков: расшифровка (Google STT) + саммари (Gemini) --- //
-const { startCallAiWorkers, triggerTranscription, setTelegramBot } = require("./call-ai");
+const { startCallAiWorkers, triggerTranscription, setTelegramBot, registerAskRoute } = require("./call-ai");
 setTelegramBot(telegramBot);
 startCallAiWorkers();
 
@@ -142,6 +142,9 @@ registerReadinessRoute(fastify, telegramBot);
 
 // --- Подключаем push-маршруты (ВАЖНО: после объявления fastify, до listen!) --- //
 registerPushRoutes(fastify);
+
+// --- AI: вопрос по истории звонков клиента (CRM) --- //
+registerAskRoute(fastify);
 
 // --- Тестовый пинг --- //
 fastify.get("/ping", async (req, reply) => {
