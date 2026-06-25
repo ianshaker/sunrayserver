@@ -1,63 +1,21 @@
 // ============================================================================
 // Расшифровка записей разговоров через Google Speech-to-Text.
 //
-// Работает как фоновый воркер на Render (US): связь US → Google стабильна.
-// Раз в POLL_MS секунд берёт из mango_calls звонки, у которых запись готова
-// (recording_status='ready'), а расшифровки ещё нет (transcript_status='pending'),
-// скачивает mp3 из Supabase Storage, шлёт в Google STT и пишет текст обратно.
-//
-// Авторизация Google — через уже установленный пакет `googleapis` (как Gmail),
-// чтобы не тащить тяжёлый @google-cloud/speech и не рисковать версией Node.
+// Работает на Render (US): связь US → Google стабильна.
+// Берёт звонки, у которых запись готова (recording_status='ready'),
+// а расшифровки ещё нет (transcript_status='pending'), скачивает mp3 из
+// Supabase Storage, шлёт в Google STT и пишет текст обратно.
 // ============================================================================
 
-const { google } = require("googleapis");
-const { createClient } = require("@supabase/supabase-js");
+const { supabase } = require("./supabaseClient");
+const { hasCredentials, getSpeechClient } = require("./googleAuth");
+const { CALL_RECORDINGS_BUCKET, STT } = require("./config");
 
-// --- Supabase (тот же проект и ключ, что в mango.calls.new.js) ---
-const SUPABASE_URL = "https://xyzkneqhggpxstxqbqhs.supabase.co";
-const SUPABASE_ANON_KEY =
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inh5emtuZXFoZ2dweHN0eHFicWhzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDY1NTE1MzIsImV4cCI6MjA2MjEyNzUzMn0.HmkcuxviENuQbiYgyQh0MBPr5zYlk88YLnRBlTXaKUU";
-const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY;
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
-
-const CALL_RECORDINGS_BUCKET = "call-recordings";
-
-// --- Параметры расшифровки ---
-const POLL_MS = 60000;            // fallback: если ping с Selectel не дошёл
-const BATCH_LIMIT = 3;            // сколько записей за один цикл
-const STALE_MIN = 15;            // через сколько минут "processing" считать зависшим
-const OP_TIMEOUT_MS = 180000;     // макс. ожидание ответа Google на одну запись
-const LANGUAGE_CODE = "ru-RU";
-const STT_MODEL = process.env.GOOGLE_STT_MODEL || "latest_long";
+const { POLL_MS, BATCH_LIMIT, STALE_MIN, OP_TIMEOUT_MS, LANGUAGE_CODE, MODEL: STT_MODEL } = STT;
 const MODEL_LABEL = `google-stt-v1-${STT_MODEL}-${LANGUAGE_CODE}`;
 
 let isCycleRunning = false;
-let speechClient = null;
-
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-// Ленивая инициализация Google Speech-клиента из JSON сервис-аккаунта в env.
-function getSpeechClient() {
-  if (speechClient) return speechClient;
-
-  const raw = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
-  if (!raw) throw new Error("GOOGLE_APPLICATION_CREDENTIALS_JSON не задан");
-
-  let credentials;
-  try {
-    credentials = JSON.parse(raw);
-  } catch (e) {
-    throw new Error("GOOGLE_APPLICATION_CREDENTIALS_JSON: невалидный JSON");
-  }
-
-  const auth = new google.auth.GoogleAuth({
-    credentials,
-    scopes: ["https://www.googleapis.com/auth/cloud-platform"],
-  });
-
-  speechClient = google.speech({ version: "v1", auth });
-  return speechClient;
-}
 
 // Скачиваем mp3 из Supabase Storage → base64.
 async function downloadAudioBase64(bucket, path) {
@@ -73,7 +31,7 @@ async function downloadAudioBase64(bucket, path) {
   return Buffer.from(arrayBuf).toString("base64");
 }
 
-// Запускаем длинное распознавание и ждём результат (поллинг операции).
+// Длинное распознавание + поллинг операции.
 async function recognize(audioBase64) {
   const speechApi = getSpeechClient();
 
@@ -136,6 +94,16 @@ async function transcribeRow(row) {
       .eq("id", id);
 
     console.log(`✅ Расшифровка готова: ${entry_id} (${text.length} симв.)`);
+
+    // Вторая ступень: сразу причёсываем в саммари (ленивый require — без циклической зависимости).
+    if (text) {
+      try {
+        const { triggerSummary } = require("./summarization");
+        triggerSummary(entry_id).catch((e) => console.error("⚠️ triggerSummary:", e.message));
+      } catch (e) {
+        console.error("⚠️ summary chain:", e.message);
+      }
+    }
   } catch (e) {
     console.error(`❌ Расшифровка ${entry_id}:`, e.message);
     await supabase
@@ -148,13 +116,12 @@ async function transcribeRow(row) {
   }
 }
 
-// Один цикл: вернуть зависшие в очередь и обработать пачку pending.
+// Fallback-поллинг очереди.
 async function pollOnce() {
   if (isCycleRunning) return;
   isCycleRunning = true;
 
   try {
-    // вернуть "залипшие" processing обратно в pending
     const staleIso = new Date(Date.now() - STALE_MIN * 60 * 1000).toISOString();
     await supabase
       .from("mango_calls")
@@ -187,47 +154,44 @@ async function pollOnce() {
   }
 }
 
-// Мгновенный запуск расшифровки по entry_id (вызов с Selectel после сохранения mp3).
+// Мгновенный запуск расшифровки по entry_id (push с Selectel после сохранения mp3).
 async function triggerTranscription(entryId) {
-  if (!entryId) return { status: 'no_entry_id' };
-  if (!process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON) {
-    return { status: 'disabled' };
-  }
+  if (!entryId) return { status: "no_entry_id" };
+  if (!hasCredentials()) return { status: "disabled" };
 
   const { data, error } = await supabase
-    .from('mango_calls')
-    .select('id, entry_id, storage_bucket, storage_path, transcript_status, recording_status')
-    .eq('entry_id', entryId)
+    .from("mango_calls")
+    .select("id, entry_id, storage_bucket, storage_path, transcript_status, recording_status")
+    .eq("entry_id", entryId)
     .maybeSingle();
 
   if (error) {
-    console.error('⚠️ triggerTranscription select error:', error.message);
-    return { status: 'error', message: error.message };
+    console.error("⚠️ triggerTranscription select error:", error.message);
+    return { status: "error", message: error.message };
   }
-  if (!data) return { status: 'not_found' };
-  if (data.recording_status !== 'ready' || !data.storage_path) {
-    return { status: 'recording_not_ready' };
+  if (!data) return { status: "not_found" };
+  if (data.recording_status !== "ready" || !data.storage_path) {
+    return { status: "recording_not_ready" };
   }
-  if (data.transcript_status === 'done') return { status: 'already_done' };
-  if (data.transcript_status === 'processing') return { status: 'already_processing' };
+  if (data.transcript_status === "done") return { status: "already_done" };
+  if (data.transcript_status === "processing") return { status: "already_processing" };
 
   await transcribeRow(data);
-  return { status: 'started', entry_id: entryId };
+  return { status: "started", entry_id: entryId };
 }
 
 function startTranscriptionWorker() {
-  if (!process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON) {
-    console.warn('⚠️ Расшифровка ВЫКЛ: нет GOOGLE_APPLICATION_CREDENTIALS_JSON в env');
+  if (!hasCredentials()) {
+    console.warn("⚠️ Расшифровка ВЫКЛ: нет GOOGLE_APPLICATION_CREDENTIALS_JSON в env");
     return;
   }
   console.log(
     `🎙️ Воркер расшифровки: push от Selectel + fallback poll ${POLL_MS / 1000}с, модель=${STT_MODEL}`
   );
-  // fallback poll + подхват очереди при старте
-  pollOnce().catch((e) => console.error('⚠️ pollOnce:', e.message));
+  pollOnce().catch((e) => console.error("⚠️ pollOnce:", e.message));
   setInterval(() => {
-    pollOnce().catch((e) => console.error('⚠️ pollOnce:', e.message));
+    pollOnce().catch((e) => console.error("⚠️ pollOnce:", e.message));
   }, POLL_MS);
 }
 
-module.exports = { startTranscriptionWorker, pollOnce, triggerTranscription };
+module.exports = { startTranscriptionWorker, pollOnce, triggerTranscription, transcribeRow };
