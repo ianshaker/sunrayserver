@@ -46,6 +46,29 @@ function buildGeminiUrl(projectId, location, model) {
   return `https://${location}-aiplatform.googleapis.com${path}`;
 }
 
+// Gemini 2.5 Flash: thinking-токены считаются в maxOutputTokens → обрезанный текст.
+// Для простого саммари thinking не нужен.
+function looksIncompleteSummary(text, transcript) {
+  const t = (text || "").trim();
+  if (t.length < 80) return true;
+  if (!/[.!?]$/.test(t)) return true;
+  const src = transcript || "";
+  const hasSizes = /\d{2,4}\s*[x×х]\s*\d{2,4}|\d{2,4}\s+\d{2,4}/i.test(src);
+  const hasProduct = /штор|жалюз|рулон|римск|карниз/i.test(src);
+  if (hasSizes && !/размер|\d{2,4}/i.test(t)) return true;
+  if (hasProduct && !/штор|жалюз|рулон|карниз/i.test(t)) return true;
+  if (src.length > 120 && !t.includes("Детали:")) return true;
+  return false;
+}
+
+function extractSummaryText(resp) {
+  const cand = resp.data?.candidates?.[0];
+  const text = cand?.content?.parts?.map((p) => p.text || "").join("").trim();
+  const finishReason = cand?.finishReason || null;
+  const usage = resp.data?.usageMetadata || {};
+  return { text: text || "", finishReason, usage };
+}
+
 // Запрос к Gemini, возвращает текст саммари.
 async function generateSummary(row) {
   const client = await getAuthClient();
@@ -56,13 +79,25 @@ async function generateSummary(row) {
   const body = {
     systemInstruction: { parts: [{ text: CALL_SUMMARY_SYSTEM_PROMPT }] },
     contents: [{ role: "user", parts: [{ text: buildUserPrompt(row) }] }],
-    generationConfig: { temperature: 0.2, maxOutputTokens: 700, topP: 0.9 },
+    generationConfig: {
+      temperature: 0.2,
+      maxOutputTokens: 1024,
+      topP: 0.9,
+      thinkingConfig: { thinkingBudget: 0 },
+    },
   };
 
   const resp = await client.request({ url, method: "POST", data: body, timeout: 60000 });
-  const cand = resp.data?.candidates?.[0];
-  const text = cand?.content?.parts?.map((p) => p.text || "").join("").trim();
-  return text || "";
+  const { text, finishReason, usage } = extractSummaryText(resp);
+
+  if (finishReason === "MAX_TOKENS" || looksIncompleteSummary(text, row.transcript)) {
+    console.warn(
+      `⚠️ Саммари ${row.entry_id}: неполный ответ (finish=${finishReason}, ${text.length} симв., thoughts=${usage.thoughtsTokenCount || 0})`
+    );
+    return { text: "", finishReason, usage };
+  }
+
+  return { text, finishReason, usage };
 }
 
 // Саммари одной строки.
@@ -75,7 +110,18 @@ async function summarizeRow(row) {
     .eq("id", id);
 
   try {
-    const text = await generateSummary(row);
+    const { text, finishReason } = await generateSummary(row);
+
+    if (!text) {
+      await supabase
+        .from("mango_calls")
+        .update({
+          summary_status: "failed",
+          summary_error: finishReason === "MAX_TOKENS" ? "обрезано лимитом токенов" : "неполный или пустой ответ",
+        })
+        .eq("id", id);
+      return;
+    }
 
     await supabase
       .from("mango_calls")
