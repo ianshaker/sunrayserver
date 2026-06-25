@@ -13,7 +13,12 @@ module.exports = {
     STALE_MIN: 15, // через сколько минут "processing" вернуть в pending
     OP_TIMEOUT_MS: 180000, // макс. ожидание ответа Google на одну запись
     LANGUAGE_CODE: "ru-RU",
-    MODEL: process.env.GOOGLE_STT_MODEL || "latest_long",
+    // telephony — для записей с телефонии (Mango 8 kHz). Переопределение: GOOGLE_STT_MODEL.
+    MODEL: process.env.GOOGLE_STT_MODEL || "telephony",
+    // Если задан — жёстко; иначе читаем из MP3-заголовка.
+    SAMPLE_RATE_HERTZ: process.env.GOOGLE_STT_SAMPLE_RATE
+      ? parseInt(process.env.GOOGLE_STT_SAMPLE_RATE, 10)
+      : null,
   },
 
   // --- Саммари (Gemini / Vertex AI) ---

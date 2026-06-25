@@ -10,15 +10,24 @@
 const { supabase } = require("./supabaseClient");
 const { hasCredentials, getSpeechClient } = require("./googleAuth");
 const { CALL_RECORDINGS_BUCKET, STT } = require("./config");
+const { detectMp3SampleRate } = require("./mp3SampleRate");
 
-const { POLL_MS, BATCH_LIMIT, STALE_MIN, OP_TIMEOUT_MS, LANGUAGE_CODE, MODEL: STT_MODEL } = STT;
+const {
+  POLL_MS,
+  BATCH_LIMIT,
+  STALE_MIN,
+  OP_TIMEOUT_MS,
+  LANGUAGE_CODE,
+  MODEL: STT_MODEL,
+  SAMPLE_RATE_HERTZ: STT_SAMPLE_RATE,
+} = STT;
 const MODEL_LABEL = `google-stt-v1-${STT_MODEL}-${LANGUAGE_CODE}`;
 
 let isCycleRunning = false;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// Скачиваем mp3 из Supabase Storage → base64.
-async function downloadAudioBase64(bucket, path) {
+// Скачиваем mp3 из Supabase Storage.
+async function downloadAudio(bucket, path) {
   const { data, error } = await supabase.storage
     .from(bucket || CALL_RECORDINGS_BUCKET)
     .download(path);
@@ -28,23 +37,43 @@ async function downloadAudioBase64(bucket, path) {
   }
 
   const arrayBuf = await data.arrayBuffer();
-  return Buffer.from(arrayBuf).toString("base64");
+  const buffer = Buffer.from(arrayBuf);
+  return buffer;
+}
+
+function buildRecognitionConfig(sampleRateHertz) {
+  const config = {
+    encoding: "MP3",
+    audioChannelCount: 1,
+    languageCode: LANGUAGE_CODE,
+    model: STT_MODEL,
+    enableAutomaticPunctuation: true,
+  };
+  if (sampleRateHertz) config.sampleRateHertz = sampleRateHertz;
+  return config;
+}
+
+function collectTranscript(response) {
+  const results = response?.results || [];
+  const text = results
+    .map((r) => r.alternatives?.[0]?.transcript || "")
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+  const billed = response?.totalBilledTime || null;
+  return { text, segments: results.length, billed };
 }
 
 // Длинное распознавание + поллинг операции.
-async function recognize(audioBase64) {
+async function recognize(audioBuffer) {
   const speechApi = getSpeechClient();
 
+  const detectedRate = STT_SAMPLE_RATE || detectMp3SampleRate(audioBuffer) || 8000;
+  const config = buildRecognitionConfig(detectedRate);
+
   const requestBody = {
-    config: {
-      encoding: "MP3",
-      sampleRateHertz: 8000,
-      audioChannelCount: 1,
-      languageCode: LANGUAGE_CODE,
-      model: STT_MODEL,
-      enableAutomaticPunctuation: true,
-    },
-    audio: { content: audioBase64 },
+    config,
+    audio: { content: audioBuffer.toString("base64") },
   };
 
   const start = await speechApi.speech.longrunningrecognize({ requestBody });
@@ -59,11 +88,11 @@ async function recognize(audioBase64) {
       if (op.data.error) {
         throw new Error("Google STT: " + (op.data.error.message || "operation error"));
       }
-      const results = op.data.response?.results || [];
-      return results
-        .map((r) => r.alternatives?.[0]?.transcript || "")
-        .join(" ")
-        .trim();
+      const { text, segments, billed } = collectTranscript(op.data.response);
+      console.log(
+        `🎙️ STT: ${segments} сегм., billed=${billed || "?"}, rate=${detectedRate}Hz, model=${STT_MODEL}`
+      );
+      return text;
     }
   }
 
@@ -80,8 +109,8 @@ async function transcribeRow(row) {
     .eq("id", id);
 
   try {
-    const audioBase64 = await downloadAudioBase64(storage_bucket, storage_path);
-    const text = await recognize(audioBase64);
+    const buffer = await downloadAudio(storage_bucket, storage_path);
+    const text = await recognize(buffer);
 
     await supabase
       .from("mango_calls")

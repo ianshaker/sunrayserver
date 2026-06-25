@@ -41,10 +41,10 @@ function getGoogleAuth() {
   return cachedAuth;
 }
 
-// Клиент Speech-to-Text v1.
+// Клиент Speech-to-Text v1p1beta1 (MP3 надёжнее, чем в v1).
 function getSpeechClient() {
   if (cachedSpeech) return cachedSpeech;
-  cachedSpeech = google.speech({ version: "v1", auth: getGoogleAuth() });
+  cachedSpeech = google.speech({ version: "v1p1beta1", auth: getGoogleAuth() });
   return cachedSpeech;
 }
 
