@@ -11,7 +11,7 @@ module.exports = {
     POLL_MS: 60000, // fallback poll (основной путь — push от Selectel)
     BATCH_LIMIT: 3, // записей за цикл
     STALE_MIN: 15, // через сколько минут "processing" вернуть в pending
-    OP_TIMEOUT_MS: 180000, // макс. ожидание ответа Google на одну запись
+    OP_TIMEOUT_MS: parseInt(process.env.GOOGLE_STT_OP_TIMEOUT_MS || String(20 * 60 * 1000), 10), // 20 мин
     LANGUAGE_CODE: "ru-RU",
     // telephony — для записей с телефонии (Mango 8 kHz). Переопределение: GOOGLE_STT_MODEL.
     MODEL: process.env.GOOGLE_STT_MODEL || "telephony",
