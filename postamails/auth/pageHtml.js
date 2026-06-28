@@ -1,9 +1,5 @@
-const {
-  PUBLIC_BASE_URL,
-  SETUP_PATH,
-  START_PATH,
-  EXCHANGE_PATH,
-} = require("../config");
+const { PUBLIC_BASE_URL, EXCHANGE_PATH } = require("../config");
+const { appendSetupKey } = require("./guard");
 
 function escapeHtml(value) {
   return String(value)
@@ -14,8 +10,11 @@ function escapeHtml(value) {
 }
 
 function renderSetupPage({ key, message, messageType = "info" }) {
-  const startUrl = `${PUBLIC_BASE_URL}${START_PATH}?key=${encodeURIComponent(key)}`;
+  const startUrl = appendSetupKey("/gmail/start", key);
   const action = `${PUBLIC_BASE_URL}${EXCHANGE_PATH}`;
+  const keyField = key
+    ? `<input type="hidden" name="key" value="${escapeHtml(key)}" />`
+    : "";
 
   const alert =
     message &&
@@ -57,7 +56,7 @@ function renderSetupPage({ key, message, messageType = "info" }) {
     </ol>
     <a class="btn btn-google" href="${startUrl}">Перейти к авторизации Google</a>
     <form method="POST" action="${action}">
-      <input type="hidden" name="key" value="${escapeHtml(key)}" />
+      ${keyField}
       <label for="code">Код от Google</label>
       <input id="code" name="code" type="text" placeholder="4/0AfJoh..." required autocomplete="off" />
       <button class="btn-submit" type="submit">Активировать доступ</button>

@@ -3,7 +3,7 @@ const {
   START_PATH,
   EXCHANGE_PATH,
 } = require("../config");
-const { guardSetupAccess, extractSetupKey } = require("./guard");
+const { guardSetupAccess, extractSetupKey, appendSetupKey } = require("./guard");
 const { renderSetupPage } = require("./pageHtml");
 const { generateAuthUrl, exchangeCodeForTokens } = require("../gmail/oauth");
 const { writeToken } = require("../gmail/tokenStore");
@@ -67,7 +67,9 @@ function registerGmailAuthRoutes(fastify) {
       writeToken(tokens);
       await reloadGmailClientAfterTokenSave(tokens);
 
-      return reply.redirect(`${SETUP_PATH}?key=${encodeURIComponent(key)}&success=1`);
+      const successUrl = appendSetupKey(SETUP_PATH, key);
+      const sep = successUrl.includes("?") ? "&" : "?";
+      return reply.redirect(`${successUrl}${sep}success=1`);
     } catch (error) {
       return reply
         .type("text/html")

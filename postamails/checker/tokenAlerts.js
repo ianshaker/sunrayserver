@@ -4,13 +4,14 @@ const {
   SETUP_PATH,
   TOKEN_ERROR_INTERVAL_MS,
 } = require("../config");
-const { generateAuthUrl } = require("../gmail/oauth");
 const { notifyIncomingChatMarkdown } = require("../telegramNotify");
 
 let lastTokenErrorSentAt = 0;
 
-function buildSetupPageUrl(secretKey) {
-  return `${PUBLIC_BASE_URL}${SETUP_PATH}?key=${encodeURIComponent(secretKey)}`;
+function buildSetupPageUrl() {
+  const url = `${PUBLIC_BASE_URL}${SETUP_PATH}`;
+  if (!GMAIL_SETUP_SECRET) return url;
+  return `${url}?key=${encodeURIComponent(GMAIL_SETUP_SECRET)}`;
 }
 
 function isTokenExpiredError(message) {
@@ -39,23 +40,12 @@ async function notifyTokenRefreshNeeded() {
 
   lastTokenErrorSentAt = Date.now();
 
-  if (!GMAIL_SETUP_SECRET) {
-    console.warn(
-      "[postamails] GMAIL_SETUP_SECRET не задан — ссылка на страницу активации недоступна.",
-    );
-    await notifyIncomingChatMarkdown(
-      "⚠️ *Токен Gmail API требует обновления!*\n\n" +
-        "Задайте `GMAIL_SETUP_SECRET` на Render и откройте `/gmail/setup`.",
-    );
-    return;
-  }
-
-  const setupUrl = buildSetupPageUrl(GMAIL_SETUP_SECRET);
+  const setupUrl = buildSetupPageUrl();
 
   await notifyIncomingChatMarkdown(
     "⚠️ *ВНИМАНИЕ! Токен Gmail API требует обновления!*\n\n" +
       "Для продолжения работы с почтой нужна переавторизация Google.\n\n" +
-      `[Открыть страницу активации на сервере](${setupUrl})\n\n` +
+      `[Открыть страницу активации](${setupUrl})\n\n` +
       "На странице: перейдите в Google, скопируйте код и вставьте в форму.",
   );
 }
