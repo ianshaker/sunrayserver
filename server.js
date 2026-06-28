@@ -55,8 +55,8 @@ const { registerZamerRoute } = require("./infonazamer");
 // --- Импорт модуля push-уведомлений --- //
 const { registerPushRoutes } = require("./pushmodul");
 
-// --- Импорт новой функции для задач --- //
-const { registerTaskRoute } = require("./infozadachi");
+// --- Задачи менеджеров (CRM → Telegram) --- //
+const { registerTaskRoute } = require("./tasks");
 
 // --- Импорт функции для готовности --- //
 const { registerReadinessRoute } = require("./readiness");
