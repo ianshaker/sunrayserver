@@ -36,6 +36,9 @@ module.exports = {
 
   TOKEN_ERROR_INTERVAL_MS: 2 * 60 * 60 * 1000,
 
+  /** Задержка TG-алерта после listen — Render успевает поднять HTTP. */
+  TOKEN_ALERT_DELAY_MS: 8000,
+
   PUBLIC_BASE_URL:
     process.env.PUBLIC_BASE_URL || "https://sunrayserver.onrender.com",
   SETUP_PATH: "/gmail/setup",

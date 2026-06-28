@@ -5,6 +5,7 @@ const {
 } = require("../config");
 const { guardSetupAccess, extractSetupKey, appendSetupKey } = require("./guard");
 const { renderSetupPage } = require("./pageHtml");
+const { extractGoogleAuthCode } = require("./extractAuthCode");
 const { generateAuthUrl, exchangeCodeForTokens } = require("../gmail/oauth");
 const { writeToken } = require("../gmail/tokenStore");
 const { reloadGmailClientAfterTokenSave } = require("../gmail/client");
@@ -48,7 +49,8 @@ function registerGmailAuthRoutes(fastify) {
     if (blocked) return blocked;
 
     const key = extractSetupKey(request);
-    const code = (request.body?.code || "").trim();
+    const rawCode = (request.body?.code || "").trim();
+    const code = extractGoogleAuthCode(rawCode);
 
     if (!code) {
       return reply

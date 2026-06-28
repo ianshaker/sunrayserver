@@ -108,7 +108,6 @@ registerAskRoute(fastify);
 
 // --- Gmail OAuth (страница активации, без Telegram polling) --- //
 registerGmailAuthRoutes(fastify);
-startEmailChecker(telegramBot);
 
 // --- Тестовый пинг --- //
 fastify.get("/ping", async (req, reply) => {
@@ -124,5 +123,6 @@ fastify.listen(
       process.exit(1);
     }
     console.log(`Your app is listening on ${address}`);
+    startEmailChecker(telegramBot);
   }
 );

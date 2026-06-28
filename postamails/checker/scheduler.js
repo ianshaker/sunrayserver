@@ -1,5 +1,5 @@
 const schedule = require("node-schedule");
-const { CRON_PATTERN } = require("../config");
+const { CRON_PATTERN, TOKEN_ALERT_DELAY_MS } = require("../config");
 const { initGmailClient } = require("../gmail/client");
 const { setTelegramBot } = require("../telegramNotify");
 const { checkNewEmails } = require("./runCheck");
@@ -17,7 +17,12 @@ async function startEmailChecker(telegramBot) {
       "[postamails] После деплоя откройте /gmail/setup для авторизации.",
     );
     if (needsGmailAuthNotification(err.message)) {
-      await notifyTokenRefreshNeeded();
+      // TG только после полного старта сервера (listen), не во время boot Render.
+      setTimeout(() => {
+        notifyTokenRefreshNeeded().catch((e) => {
+          console.error("[postamails] Ошибка TG-уведомления:", e.message);
+        });
+      }, TOKEN_ALERT_DELAY_MS);
     }
   }
 
