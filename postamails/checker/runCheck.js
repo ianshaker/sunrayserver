@@ -3,7 +3,7 @@ const { getGmailClient } = require("../gmail/client");
 const { readCache, writeCache } = require("../gmail/tokenStore");
 const { extractEmailBodyFromPayload } = require("../parsing/emailFields");
 const { insertAppealFromEmail } = require("../appeals/insertFromEmail");
-const { isTokenExpiredError, notifyTokenRefreshNeeded } = require("./tokenAlerts");
+const { needsGmailAuthNotification, notifyTokenRefreshNeeded } = require("./tokenAlerts");
 
 function logTimePrefix(now = new Date()) {
   const utcHours = now.getUTCHours();
@@ -63,7 +63,7 @@ async function checkNewEmails() {
   } catch (err) {
     console.error(`${prefix} ошибка проверки почты:`, err.message);
 
-    if (isTokenExpiredError(err.message)) {
+    if (needsGmailAuthNotification(err.message)) {
       await notifyTokenRefreshNeeded();
     }
   }

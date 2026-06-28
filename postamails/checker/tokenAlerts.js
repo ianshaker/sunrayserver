@@ -21,6 +21,16 @@ function isTokenExpiredError(message) {
   );
 }
 
+/** Нет файла токена, клиент не поднят после деплоя, или refresh протух. */
+function needsGmailAuthNotification(message) {
+  if (!message) return false;
+  if (isTokenExpiredError(message)) return true;
+  return (
+    message.includes("No Gmail token found") ||
+    message.includes("Gmail client is not initialized")
+  );
+}
+
 async function notifyTokenRefreshNeeded() {
   if (Date.now() - lastTokenErrorSentAt <= TOKEN_ERROR_INTERVAL_MS) {
     console.log("[postamails] Уведомление о токене уже отправлялось недавно.");
@@ -52,6 +62,7 @@ async function notifyTokenRefreshNeeded() {
 
 module.exports = {
   isTokenExpiredError,
+  needsGmailAuthNotification,
   notifyTokenRefreshNeeded,
   buildSetupPageUrl,
 };

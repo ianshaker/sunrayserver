@@ -3,6 +3,7 @@ const { CRON_PATTERN } = require("../config");
 const { initGmailClient } = require("../gmail/client");
 const { setTelegramBot } = require("../telegramNotify");
 const { checkNewEmails } = require("./runCheck");
+const { needsGmailAuthNotification, notifyTokenRefreshNeeded } = require("./tokenAlerts");
 
 async function startEmailChecker(telegramBot) {
   setTelegramBot(telegramBot);
@@ -15,6 +16,9 @@ async function startEmailChecker(telegramBot) {
     console.error(
       "[postamails] После деплоя откройте /gmail/setup для авторизации.",
     );
+    if (needsGmailAuthNotification(err.message)) {
+      await notifyTokenRefreshNeeded();
+    }
   }
 
   schedule.scheduleJob(CRON_PATTERN, checkNewEmails);
