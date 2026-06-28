@@ -2,49 +2,10 @@ const path = require("path");
 const fs = require("fs");
 const fastify = require("fastify")({ logger: true });
 
-// --- ИНТЕГРАЦИЯ TELEGRAM-БОТА --- //
+// --- ИНТЕГРАЦИЯ TELEGRAM-БОТА (только исходящие сообщения, без polling) --- //
 const TelegramBot = require('node-telegram-bot-api');
 const TELEGRAM_TOKEN = '7866133715:AAH2lSoDsDnmpQhEjSghjNb23ezp98IZW4g';
-
-// Создаем бота с polling
-const telegramBot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
-
-// Обработка ошибок polling - пытаемся перезапустить при ошибке 409
-let pollingRestartAttempts = 0;
-const MAX_RESTART_ATTEMPTS = 5;
-
-telegramBot.on('polling_error', (error) => {
-  const errorMessage = error.message || String(error);
-  console.error('❌ Ошибка polling Telegram бота:', errorMessage);
-  
-  // Проверяем ошибку 409 (конфликт polling)
-  const isConflictError = 
-    errorMessage.includes('409') || 
-    errorMessage.includes('Conflict') || 
-    errorMessage.includes('terminated by other getUpdates');
-  
-  if (isConflictError && pollingRestartAttempts < MAX_RESTART_ATTEMPTS) {
-    pollingRestartAttempts++;
-    console.warn(`⚠️ Обнаружен конфликт polling (409). Попытка перезапуска ${pollingRestartAttempts}/${MAX_RESTART_ATTEMPTS}...`);
-    
-    // Пытаемся перезапустить polling через 10 секунд
-    setTimeout(() => {
-      telegramBot.stopPolling().then(() => {
-        console.log('🔄 Перезапуск polling...');
-        telegramBot.startPolling({ restart: true }).catch(err => {
-          console.error('❌ Не удалось перезапустить polling:', err.message);
-        });
-      }).catch(() => {
-        // Если не удалось остановить, пробуем просто запустить
-        telegramBot.startPolling({ restart: true }).catch(err => {
-          console.error('❌ Не удалось запустить polling:', err.message);
-        });
-      });
-    }, 10000); // 10 секунд задержка
-  } else if (isConflictError) {
-    console.warn('⚠️ Превышено количество попыток перезапуска polling. Проверьте другие экземпляры бота.');
-  }
-});
+const telegramBot = new TelegramBot(TELEGRAM_TOKEN, { polling: false });
 
 // --- Импорт обработчика манго (прокидываем telegramBot) --- //
 const { handleMangoWebhook } = require("./mango.calls.new");
@@ -64,9 +25,8 @@ const { registerReadinessRoute } = require("./readiness");
 // --- Импорт функции для удаления дубликатов (только импорт, не запуск) --- //
 const removeDuplicates = require("./remove_duplicates"); // пусть будет, даже если сейчас не вызывается
 
-// --- Импорт и запуск обработчика почты --- //
-const { startEmailChecker } = require("./postamails");
-startEmailChecker(telegramBot); // <-- Передаём бота, если требуется в твоём модуле
+// --- Почта Gmail → заявки в CRM --- //
+const { registerGmailAuthRoutes, startEmailChecker } = require("./postamails");
 
 // --- Обработка звонков: расшифровка (Google STT) + саммари (Gemini) --- //
 const { startCallAiWorkers, triggerTranscription, setTelegramBot, registerAskRoute } = require("./call-ai");
@@ -145,6 +105,10 @@ registerPushRoutes(fastify);
 
 // --- AI: вопрос по истории звонков клиента (CRM) --- //
 registerAskRoute(fastify);
+
+// --- Gmail OAuth (страница активации, без Telegram polling) --- //
+registerGmailAuthRoutes(fastify);
+startEmailChecker(telegramBot);
 
 // --- Тестовый пинг --- //
 fastify.get("/ping", async (req, reply) => {
