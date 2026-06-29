@@ -20,20 +20,20 @@ function parseModelJson(raw) {
   }
 }
 
-function clarification(message) {
-  return { status: "need_clarification", clarification: message };
+function rejection(reason) {
+  return { status: "rejected", reason };
 }
 
 /**
  * @returns {Promise<
  *   | { status: "ok", title, description, dueDateUtc, dueDateMskLocal }
- *   | { status: "need_clarification", clarification }
+ *   | { status: "rejected", reason }
  *   | { status: "error", error }
  * >}
  */
 async function parseTaskMessage(text) {
   if (!text || !text.trim()) {
-    return clarification("Пустое сообщение. Напишите, что и на когда напомнить.");
+    return rejection("Пустое сообщение — укажите, что сделать и на когда напомнить.");
   }
   if (!hasCredentials()) {
     console.log("[tasks/create/parser] AI недоступен (нет credentials)");
@@ -72,11 +72,12 @@ async function parseTaskMessage(text) {
     return { status: "error", error: "parse_failed" };
   }
 
-  if (parsed.status === "need_clarification") {
-    return clarification(
-      String(parsed.clarification || "").trim() ||
-        "Уточните, пожалуйста, что и на когда поставить напоминание.",
-    );
+  // rejected или legacy need_clarification от модели — без диалога, только отказ.
+  if (parsed.status === "rejected" || parsed.status === "need_clarification") {
+    const reason =
+      String(parsed.reason || parsed.clarification || "").trim() ||
+      "Не удалось однозначно разобрать дату и время.";
+    return rejection(reason);
   }
 
   const title = String(parsed.title || "").trim();
@@ -84,20 +85,21 @@ async function parseTaskMessage(text) {
   const dueDateMskLocal = parsed.due_date_msk ? String(parsed.due_date_msk).trim() : null;
 
   if (!title) {
-    return clarification("Не понял суть задачи. Сформулируйте, что нужно сделать.");
+    return rejection("Не понятна суть задачи — опишите, что нужно сделать.");
   }
   if (!dueDateMskLocal) {
-    return clarification("Не понял, на когда напомнить. Укажите дату и время.");
+    return rejection("Не указаны дата и время напоминания.");
   }
 
   const dueDateUtc = mskLocalToUtcIso(dueDateMskLocal);
   if (!dueDateUtc) {
-    return clarification("Не разобрал дату. Напишите время яснее, например «завтра в 14:00».");
+    return rejection(
+      "Не удалось разобрать дату — укажите явно, например «завтра в 14:00» или «завтра в 10 утра».",
+    );
   }
 
-  // Серверная страховка от прошлого времени (на случай, если модель не заметила).
   if (new Date(dueDateUtc).getTime() <= Date.now()) {
-    return clarification("Это время уже прошло. Укажите будущие дату и время.");
+    return rejection("Указанное время уже прошло — укажите будущие дату и время.");
   }
 
   return {

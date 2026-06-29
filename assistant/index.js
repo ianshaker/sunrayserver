@@ -14,6 +14,23 @@ const { classifyIntent, isActionableClassification } = require("./router");
 const { sendUnknown, sendError, sendAiDisabled } = require("./reply");
 const { MAX_INPUT_CHARS } = require("./config");
 
+const RECENT_MSG_MAX = 500;
+const recentMsgOrder = [];
+const recentMsgSet = new Set();
+
+function isDuplicateAssistantMessage(chatId, messageId) {
+  if (chatId == null || messageId == null) return false;
+  const key = `${chatId}:${messageId}`;
+  if (recentMsgSet.has(key)) return true;
+  recentMsgSet.add(key);
+  recentMsgOrder.push(key);
+  if (recentMsgOrder.length > RECENT_MSG_MAX) {
+    const old = recentMsgOrder.shift();
+    recentMsgSet.delete(old);
+  }
+  return false;
+}
+
 async function buildContext(msg, bot) {
   const chatId = msg.chat?.id;
   if (chatId == null) return { ctx: null, reason: "no_chat_id" };
@@ -82,6 +99,11 @@ function registerAssistant() {
           `[assistant] пропуск chat=${chatId}: ${trigger.reason}, text="${preview}"`,
         );
       }
+      return;
+    }
+
+    if (isDuplicateAssistantMessage(chatId, msg.message_id)) {
+      console.log(`[assistant] дубль message chat=${chatId} msg=${msg.message_id}`);
       return;
     }
 

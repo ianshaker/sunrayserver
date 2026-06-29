@@ -11,7 +11,7 @@ const { getTelegramBot } = require("../../tgwebhook/bot");
 const { parseTaskMessage } = require("./parser");
 const { formatMskHuman } = require("./time");
 const { createDraft } = require("./draft");
-const { buildPreviewMessage } = require("./messages");
+const { buildPreviewMessage, buildRejectedMessage } = require("./messages");
 const { buildPreviewKeyboard } = require("./keyboards");
 
 async function handle(ctx) {
@@ -39,8 +39,8 @@ async function handle(ctx) {
       `[tasks/create] parse → status=${parsed.status}` +
         (parsed.status === "ok"
           ? ` title="${parsed.title}" due=${parsed.dueDateMskLocal}`
-          : parsed.clarification
-            ? ` clarification="${parsed.clarification}"`
+          : parsed.reason
+            ? ` reason="${parsed.reason}"`
             : parsed.error
               ? ` error=${parsed.error}`
               : ""),
@@ -60,9 +60,9 @@ async function handle(ctx) {
     return;
   }
 
-  if (parsed.status === "need_clarification") {
-    console.log(`[tasks/create] уточнение: ${parsed.clarification}`);
-    await sendText(chatId, `🤔 ${parsed.clarification}`);
+  if (parsed.status === "rejected") {
+    console.log(`[tasks/create] отказ: ${parsed.reason}`);
+    await sendText(chatId, buildRejectedMessage(parsed.reason));
     return;
   }
 

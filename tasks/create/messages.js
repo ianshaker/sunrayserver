@@ -30,8 +30,22 @@ function buildCancelledMessage() {
   return "❌ Отменено. Задача не создана — пришлите запрос заново при необходимости.";
 }
 
+/** Отказ без диалога: одна причина + просьба прислать задачу заново. */
+function buildRejectedMessage(reason) {
+  const lines = [
+    "❌ Задача не создана.",
+    "",
+    `Причина: ${reason}`,
+    "",
+    "Отправьте задачу заново одним сообщением с @ботом, например:",
+    "«@SUNRAYY_bot напомни завтра в 10 утра позвонить клиенту»",
+  ];
+  return lines.join("\n");
+}
+
 module.exports = {
   buildPreviewMessage,
   buildCreatedMessage,
   buildCancelledMessage,
+  buildRejectedMessage,
 };
