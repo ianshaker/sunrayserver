@@ -25,10 +25,22 @@ function parseCallbackData(data) {
 
 function successToast(action, taskNumber, access) {
   if (access.elevated) {
-    return action === "sn" ? access.noticeSnooze : access.noticeComplete;
+    return action === "sn" ? "Задача отложена" : "Задача выполнена";
   }
   if (action === "sn") return `Задача #${taskNumber} отложена на 1 час`;
   return `Задача #${taskNumber} выполнена ✅`;
+}
+
+function buildActionFooter(action, taskNumber, access) {
+  const main =
+    action === "sn"
+      ? `⏰ Задача #${taskNumber} отложена на 1 час`
+      : `✅ Задача #${taskNumber} выполнена`;
+
+  if (!access.elevated) return main;
+
+  const notice = action === "sn" ? access.noticeSnooze : access.noticeComplete;
+  return `${main}\n${notice}`;
 }
 
 async function answerCallback(callbackQuery, text) {
@@ -84,7 +96,7 @@ function registerTaskCallbackHandlers() {
           await finishWithFooter(
             bot,
             ctx,
-            `⏰ Задача #${taskNumber} отложена на 1 час`,
+            buildActionFooter("sn", taskNumber, access),
           );
         }
         await answerCallback(callbackQuery, successToast("sn", taskNumber, access));
@@ -103,7 +115,7 @@ function registerTaskCallbackHandlers() {
           await finishWithFooter(
             bot,
             ctx,
-            `✅ Задача #${taskNumber} выполнена`,
+            buildActionFooter("ok", taskNumber, access),
           );
         }
         await answerCallback(callbackQuery, successToast("ok", taskNumber, access));

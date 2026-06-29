@@ -51,8 +51,19 @@ async function processTaskReminder(task, telegramBot) {
     const message = buildTaskDueReminderMessage(claimed, profile);
     const keyboard = buildTaskActionKeyboard(claimed.task_number);
 
+    // Если задача создана из этого же чата — напоминание reply на отбивку.
+    const extraOptions = {};
+    if (
+      claimed.tg_message_id &&
+      claimed.tg_chat_id != null &&
+      Number(claimed.tg_chat_id) === Number(chatId)
+    ) {
+      extraOptions.reply_to_message_id = Number(claimed.tg_message_id);
+      extraOptions.allow_sending_without_reply = true;
+    }
+
     try {
-      await sendTaskTelegramMessage(telegramBot, chatId, message, keyboard);
+      await sendTaskTelegramMessage(telegramBot, chatId, message, keyboard, extraOptions);
       sentCount += 1;
       console.log(
         `[tasks/reminder] «${claimed.title}» → ${fullName} (chat ${chatId})`,

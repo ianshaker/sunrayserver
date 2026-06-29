@@ -14,6 +14,10 @@ const {
   config: tgwebhookConfig,
 } = require("./tgwebhook");
 const { registerTaskCallbackHandlers } = require("./tasks/callbacks");
+const { registerTaskCreateCallbacks } = require("./tasks/create/callbacks");
+const { registerAssistant, startAssistant } = require("./assistant");
+const { registerIntent } = require("./assistant/registry");
+const { startBotChatsRefresh } = require("./lib/telegramBotChats");
 
 // --- ИНТЕГРАЦИЯ TELEGRAM-БОТА (исходящие; входящие — через вебхук, без polling) --- //
 const TelegramBot = require('node-telegram-bot-api');
@@ -22,6 +26,9 @@ const telegramBot = new TelegramBot(TELEGRAM_TOKEN, { polling: false });
 setWebhookBot(telegramBot);
 registerDiagnosticsHandlers();
 registerTaskCallbackHandlers();
+registerTaskCreateCallbacks();
+registerIntent(require("./tasks/create/intent"));
+registerAssistant();
 
 // --- Импорт обработчика манго (прокидываем telegramBot) --- //
 const { handleMangoWebhook } = require("./mango.calls.new");
@@ -144,6 +151,8 @@ fastify.listen(
     console.log(`Your app is listening on ${address}`);
     startEmailChecker(telegramBot);
     startDirectoryRefresh();
+    startBotChatsRefresh();
+    startAssistant();
     startTaskReminderWorker(telegramBot);
     startWebhookSelfHeal();
   }

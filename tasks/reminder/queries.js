@@ -2,7 +2,7 @@ const { supabase } = require("../supabaseClient");
 const { ACTIVE_TASK_STATUSES, REMINDER_INTERVAL_MS } = require("../config");
 
 const TASK_SELECT =
-  "id, task_number, title, description, due_date, due_reminder_sent_at, priority, status, assignees, assigned_to, assigned_by";
+  "id, task_number, title, description, due_date, due_reminder_sent_at, priority, status, assignees, assigned_to, assigned_by, tg_chat_id, tg_message_id";
 
 async function fetchTasksDueForReminder() {
   const now = new Date().toISOString();
