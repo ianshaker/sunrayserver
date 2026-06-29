@@ -55,6 +55,20 @@ function buildForLine(profile) {
   };
 }
 
+/** «Для: Гена, Ян @username» — все исполнители, HTML если нужен tg://user. */
+function buildForLineMultiple(profiles) {
+  const list = (profiles || []).filter(Boolean);
+  if (!list.length) return { text: "Для: —" };
+
+  const mentions = list.map((p) => buildAssigneeMention(p));
+  const parseMode = mentions.some((m) => m.parseMode === "HTML") ? "HTML" : undefined;
+
+  return {
+    text: `Для: ${mentions.map((m) => m.text).join(", ")}`,
+    parseMode,
+  };
+}
+
 function buildAddAssigneeLine(profile) {
   const mention = buildAssigneeMention(profile);
   return {
@@ -75,6 +89,7 @@ module.exports = {
   buildAssigneeMention,
   buildAssigneeLine,
   buildForLine,
+  buildForLineMultiple,
   buildAddAssigneeLine,
   buildAddedAssigneeLine,
 };

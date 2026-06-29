@@ -3,7 +3,7 @@
 // Без уточняющих вопросов: при нехватке данных — отказ + просьба вызвать заново.
 // ============================================================================
 
-const { buildAddAssigneeLine, buildAddedAssigneeLine } = require("../assigneeMention");
+const { buildAddAssigneeLine, buildAssigneeMention } = require("../assigneeMention");
 
 const ACTION_VERB = {
   complete: "завершить",
@@ -58,6 +58,7 @@ function buildPreviewMessage(draft) {
     if (draft.extraAssigneeProfile) {
       const addLine = buildAddAssigneeLine(draft.extraAssigneeProfile);
       lines.push(addLine.text);
+      lines.push("Станет основным исполнителем (напоминание «Для:»)");
       parseMode = addLine.parseMode;
     }
     if (draft.descriptionAppend) {
@@ -171,9 +172,9 @@ function buildEditedMessage(task, draft) {
   if (draft.dueDateHuman) lines.push(`Дедлайн: ${draft.dueDateHuman}`);
 
   if (draft.extraAssigneeProfile) {
-    const addedLine = buildAddedAssigneeLine(draft.extraAssigneeProfile);
-    lines.push(addedLine.text);
-    parseMode = addedLine.parseMode;
+    const mention = buildAssigneeMention(draft.extraAssigneeProfile);
+    lines.push(`Основной исполнитель: ${mention.text}`);
+    parseMode = mention.parseMode;
   }
 
   if (draft.descriptionAppend) {

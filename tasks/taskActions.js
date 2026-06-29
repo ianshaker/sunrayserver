@@ -157,9 +157,10 @@ async function editTask(taskId, { dueDate, addAssigneeId, descriptionAppend, cur
       Array.isArray(currentTask.assignees) && currentTask.assignees.length
         ? currentTask.assignees
         : [currentTask.assigned_to].filter(Boolean);
-    if (!cur.includes(addAssigneeId)) {
-      updates.assignees = [...new Set([...cur, addAssigneeId])];
-    }
+    // Как при создании: новый исполнитель — первый в assignees и primary assigned_to.
+    const rest = cur.filter((id) => id !== addAssigneeId);
+    updates.assignees = [addAssigneeId, ...rest];
+    updates.assigned_to = addAssigneeId;
   }
 
   if (descriptionAppend) {

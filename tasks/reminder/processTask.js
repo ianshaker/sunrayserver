@@ -41,12 +41,21 @@ async function processTaskReminder(task, telegramBot) {
   const originMessageId =
     claimed.tg_message_id != null ? Number(claimed.tg_message_id) : null;
 
+  /** assigned_to первым, остальные из assignees — для строки «Для:». */
+  function orderedAssigneeProfiles(taskRow) {
+    const ids = resolveAssigneeIds(taskRow);
+    const primary = taskRow.assigned_to;
+    const ordered = primary
+      ? [primary, ...ids.filter((id) => id !== primary)]
+      : ids;
+    return ordered.map((id) => profiles.get(id)).filter(Boolean);
+  }
+
   // Задача из Telegram-бота: напоминание в тот же чат, reply на отбивку «✅ Создал задачу».
   if (originChatId && originMessageId) {
-    const primaryId = claimed.assigned_to || reachableIds[0];
-    const profile = profiles.get(primaryId);
-    const fullName = profile?.full_name || primaryId;
-    const reminder = buildTaskDueReminderMessage(claimed, profile);
+    const assigneeProfiles = orderedAssigneeProfiles(claimed);
+    const names = assigneeProfiles.map((p) => p.full_name || p.id).join(", ") || "—";
+    const reminder = buildTaskDueReminderMessage(claimed, assigneeProfiles);
     const keyboard = buildTaskActionKeyboard(claimed.task_number);
 
     try {
@@ -58,7 +67,7 @@ async function processTaskReminder(task, telegramBot) {
       sentCount = 1;
       console.log(
         `[tasks/reminder] «${claimed.title}» → origin chat ${originChatId} ` +
-          `(reply ${originMessageId}, для ${fullName})`,
+          `(reply ${originMessageId}, для ${names})`,
       );
     } catch (error) {
       console.error(
