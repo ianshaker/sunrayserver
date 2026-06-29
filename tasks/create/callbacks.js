@@ -82,6 +82,7 @@ function registerTaskCreateCallbacks() {
           title: confirmed.title,
           description: confirmed.description,
           dueDateUtc: confirmed.dueDateUtc,
+          extraAssigneeId: confirmed.extraAssigneeId || null,
         });
 
         await editMessage(ctx, buildCreatedMessage(task.task_number, confirmed));

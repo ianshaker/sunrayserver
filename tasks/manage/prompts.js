@@ -11,9 +11,12 @@ function buildManagePrompt(nowMsk) {
 Сотрудник просит выполнить действие над УЖЕ существующей задачей (не создать новую).
 
 ДЕЙСТВИЕ (action) — ровно одно из:
-- "complete"   — завершить, выполнить, закрыть, «готово», «сделал», «выполнена».
-- "cancel"     — отменить, удалить, убрать, «не нужно», «отбой».
+- "complete"   — завершить, выполнить, закрыть, «готово», «сделал», «выполнена» → задача уходит в архив.
+- "cancel"     — отменить, «не нужно», «отбой» → задача уходит в архив.
+- "delete"     — удалить навсегда, «удали», «удалить», «сотри» → БЕЗ архива, навсегда.
 - "reschedule" — перенести, сдвинуть, изменить время, поставить на другое время/дату.
+
+ВАЖНО: «отмени» = cancel (в архив). «удали» / «удалить» = delete (навсегда), НЕ cancel.
 
 НОМЕР ЗАДАЧИ (task_number) — НЕ ПУТАТЬ СО ВРЕМЕНЕМ:
 - Целое число, если оно явно названо: «#17», «задачу 17», «задачу 19», «номер 17».
@@ -25,7 +28,7 @@ function buildManagePrompt(nowMsk) {
 - Часовой пояс — Москва (UTC+3). Текущее московское время: ${nowMsk}.
 - Относительные даты («завтра», «через час», «в понедельник») считай от текущего московского времени.
 - Возвращай due_date_msk строго как "YYYY-MM-DDTHH:mm:ss" — локальное московское время (без смещения).
-- Для "complete" и "cancel" due_date_msk всегда null.
+- Для "complete", "cancel" и "delete" due_date_msk всегда null.
 - НЕ проверяй, прошло ли время — если время разобрал, верни status "ok" с due_date_msk. Проверку «в прошлом» делает сервер.
 
 ЗАПРЕЩЕНО ГАЛЛЮЦИНИРОВАТЬ. Если не уверен — НЕ придумывай. Верни status "rejected" с reason (без вопросов):
@@ -45,7 +48,8 @@ function buildManagePrompt(nowMsk) {
 Примеры ok:
 - «заверши задачу 17»            → { "status":"ok", "action":"complete",   "task_number":17, "due_date_msk":null, "reason":null }
 - «отмени #20»                   → { "status":"ok", "action":"cancel",     "task_number":20, "due_date_msk":null, "reason":null }
-- «удали задачу» (без номера)    → { "status":"ok", "action":"cancel",     "task_number":null, "due_date_msk":null, "reason":null }
+- «удали задачу 5»               → { "status":"ok", "action":"delete",     "task_number":5, "due_date_msk":null, "reason":null }
+- «отмени задачу» (без номера)   → { "status":"ok", "action":"cancel",     "task_number":null, "due_date_msk":null, "reason":null }
 - «перенеси задачу 19 на 21:03»  → { "status":"ok", "action":"reschedule", "task_number":19, "due_date_msk":"2026-06-29T21:03:00", "reason":null }
   (номер 19 — ID задачи; 21:03 — новое время, не путать)
 - «перенеси задачу 19 на завтра в 10 утра» → { "status":"ok", "action":"reschedule", "task_number":19, "due_date_msk":"2026-06-30T10:00:00", "reason":null }

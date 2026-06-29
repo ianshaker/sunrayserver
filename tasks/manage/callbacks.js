@@ -13,6 +13,7 @@ const {
   fetchTaskByNumberAny,
   completeTask,
   cancelTask,
+  deleteTask,
   rescheduleTask,
 } = require("../taskActions");
 const { takeDraft, getDraft } = require("./draft");
@@ -21,9 +22,13 @@ const {
   buildPreviewDismissedMessage,
   buildCompletedMessage,
   buildCancelledMessage,
+  buildDeletedMessage,
   buildRescheduledMessage,
   buildAlreadyClosedMessage,
 } = require("./messages");
+const { sendTaskOriginReply } = require("../originReply");
+
+const PREVIEW_CONFIRMED = "✅ Подтверждено.";
 
 async function answerCallback(callbackQuery, text) {
   const bot = getTelegramBot();
@@ -44,6 +49,18 @@ async function editMessage(ctx, text) {
     disable_web_page_preview: true,
     reply_markup: { inline_keyboard: [] },
   });
+}
+
+/** Отметка на исходной отбивке «Создал задачу»; превью — короткое подтверждение. */
+async function finishManageAction(ctx, task, resultText) {
+  const bot = getTelegramBot();
+  if (!bot) {
+    await editMessage(ctx, resultText);
+    return;
+  }
+
+  const sentToOrigin = await sendTaskOriginReply(bot, task, resultText);
+  await editMessage(ctx, sentToOrigin ? PREVIEW_CONFIRMED : resultText);
 }
 
 function registerTaskManageCallbacks() {
@@ -119,7 +136,7 @@ function registerTaskManageCallbacks() {
     try {
       if (confirmed.action === "complete") {
         await completeTask(task.id);
-        await editMessage(ctx, buildCompletedMessage(task));
+        await finishManageAction(ctx, task, buildCompletedMessage(task));
         await answerCallback(callbackQuery, `Задача #${task.task_number} завершена`);
         console.log(`[tasks/manage] complete #${task.task_number} (chat ${chatId})`);
         return;
@@ -127,16 +144,25 @@ function registerTaskManageCallbacks() {
 
       if (confirmed.action === "cancel") {
         await cancelTask(task.id);
-        await editMessage(ctx, buildCancelledMessage(task));
+        await finishManageAction(ctx, task, buildCancelledMessage(task));
         await answerCallback(callbackQuery, `Задача #${task.task_number} отменена`);
         console.log(`[tasks/manage] cancel #${task.task_number} (chat ${chatId})`);
         return;
       }
 
+      if (confirmed.action === "delete") {
+        await deleteTask(task.id);
+        await finishManageAction(ctx, task, buildDeletedMessage(task));
+        await answerCallback(callbackQuery, `Задача #${task.task_number} удалена`);
+        console.log(`[tasks/manage] delete #${task.task_number} (chat ${chatId})`);
+        return;
+      }
+
       if (confirmed.action === "reschedule") {
         await rescheduleTask(task.id, confirmed.dueDateUtc);
-        await editMessage(
+        await finishManageAction(
           ctx,
+          task,
           buildRescheduledMessage(task, confirmed.dueDateHuman || "не указано"),
         );
         await answerCallback(callbackQuery, `Задача #${task.task_number} перенесена`);

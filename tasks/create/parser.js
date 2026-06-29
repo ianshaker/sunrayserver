@@ -7,6 +7,7 @@ const { generateContent } = require("../../call-ai/geminiClient");
 const { GEMINI_MODEL, VERTEX_LOCATION } = require("./config");
 const { buildParsePrompt, buildParseUserPrompt } = require("./prompts");
 const { nowMskString, mskLocalToUtcIso } = require("./time");
+const { buildRosterText, validateAssigneeId } = require("./assigneeRoster");
 
 function parseModelJson(raw) {
   if (!raw) return null;
@@ -26,7 +27,7 @@ function rejection(reason) {
 
 /**
  * @returns {Promise<
- *   | { status: "ok", title, description, dueDateUtc, dueDateMskLocal }
+ *   | { status: "ok", title, description, dueDateUtc, dueDateMskLocal, extraAssigneeId: string|null }
  *   | { status: "rejected", reason }
  *   | { status: "error", error }
  * >}
@@ -42,7 +43,8 @@ async function parseTaskMessage(text) {
 
   console.log(`[tasks/create/parser] запрос Gemini, длина=${text.trim().length}`);
 
-  const systemPrompt = buildParsePrompt(nowMskString());
+  const rosterText = await buildRosterText();
+  const systemPrompt = buildParsePrompt(nowMskString(), rosterText);
   const userPrompt = buildParseUserPrompt(text);
 
   const { text: raw, finishReason } = await generateContent({
@@ -102,12 +104,22 @@ async function parseTaskMessage(text) {
     return rejection("Указанное время уже прошло — укажите будущие дату и время.");
   }
 
+  // Доп. исполнитель — валидируем id против ростера (защита от галлюцинаций).
+  const rawExtraId = parsed.extra_assignee_id ? String(parsed.extra_assignee_id).trim() : null;
+  const extraAssigneeId =
+    rawExtraId && (await validateAssigneeId(rawExtraId)) ? rawExtraId : null;
+
+  if (rawExtraId && !extraAssigneeId) {
+    console.log(`[tasks/create/parser] extra_assignee_id "${rawExtraId}" не найден в ростере — игнорируем`);
+  }
+
   return {
     status: "ok",
     title,
     description,
     dueDateUtc,
     dueDateMskLocal,
+    extraAssigneeId,
   };
 }
 

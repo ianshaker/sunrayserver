@@ -1,22 +1,31 @@
 // ============================================================================
 // Вставка задачи в manager_tasks (service_role, минуя RLS).
-// Автор = исполнитель (задача «для себя»). Напоминание вернётся в его чат.
+// Автор всегда включён в исполнители. Если задача создана «для кого-то»,
+// extraAssigneeId добавляется к assignees и становится primary assigned_to.
 // ============================================================================
 
 const { supabase } = require("../supabaseClient");
 const { DEFAULT_PRIORITY, DEFAULT_STATUS } = require("./config");
 
 /**
- * @param {{ authorProfileId:string, title:string, description:string, dueDateUtc:string }} input
+ * @param {{ authorProfileId:string, title:string, description:string,
+ *           dueDateUtc:string, extraAssigneeId?: string|null }} input
  * @returns {Promise<{ id:string, task_number:number }>}
  */
-async function insertManagerTask({ authorProfileId, title, description, dueDateUtc }) {
+async function insertManagerTask({ authorProfileId, title, description, dueDateUtc, extraAssigneeId }) {
+  // Автор всегда в исполнителях. Если есть доп. исполнитель — он идёт первым
+  // (assigned_to = primaryAssignee = тот, кому пошлёт напоминание).
+  const assignees = extraAssigneeId
+    ? [...new Set([extraAssigneeId, authorProfileId])]
+    : [authorProfileId];
+  const primaryAssignee = assignees[0];
+
   const payload = {
     title,
     description: description || null,
     assigned_by: authorProfileId,
-    assigned_to: authorProfileId,
-    assignees: [authorProfileId],
+    assigned_to: primaryAssignee,
+    assignees,
     controllers: [],
     priority: DEFAULT_PRIORITY,
     status: DEFAULT_STATUS,

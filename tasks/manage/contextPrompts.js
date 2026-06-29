@@ -29,7 +29,8 @@ function formatTaskForPrompt(task) {
 function buildContextSearchPrompt(action) {
   const actionDesc = {
     complete: "завершить / выполнить / закрыть",
-    cancel: "отменить / удалить / убрать",
+    cancel: "отменить / «не нужно» / «отбой»",
+    delete: "удалить навсегда / «удали» / «сотри»",
     reschedule: "перенести / сдвинуть дедлайн",
   }[action] || "изменить";
 

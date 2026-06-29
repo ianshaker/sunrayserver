@@ -6,12 +6,14 @@
 const ACTION_VERB = {
   complete: "завершить",
   cancel: "отменить",
+  delete: "удалить",
   reschedule: "перенести",
 };
 
 const ACTION_NOUN = {
   complete: "завершения",
   cancel: "отмены",
+  delete: "удаления",
   reschedule: "переноса",
 };
 
@@ -27,6 +29,7 @@ function verb(action) {
 const PREVIEW_HEADING = {
   complete: "✅ Завершить задачу",
   cancel: "❌ Отменить задачу",
+  delete: "🗑 Удалить задачу навсегда",
   reschedule: "⏰ Перенести задачу",
 };
 
@@ -41,6 +44,10 @@ function buildPreviewMessage(draft) {
   if (draft.action === "reschedule") {
     if (draft.currentDueHuman) lines.push(`Сейчас: ${draft.currentDueHuman}`);
     lines.push(`Новый дедлайн: ${draft.dueDateHuman || "не указано"}`);
+  }
+
+  if (draft.action === "delete") {
+    lines.push("Задача будет удалена без архива — восстановить нельзя.");
   }
 
   lines.push("---");
@@ -127,6 +134,10 @@ function buildCancelledMessage(task) {
   return `❌ Задача #${task.task_number} отменена.\nНазвание: ${task.title || "—"}`;
 }
 
+function buildDeletedMessage(task) {
+  return `🗑 Задача #${task.task_number} удалена навсегда.\nНазвание: ${task.title || "—"}`;
+}
+
 function buildRescheduledMessage(task, dueDateHuman) {
   return [
     `⏰ Задача #${task.task_number} перенесена.`,
@@ -148,5 +159,6 @@ module.exports = {
   buildAlreadyClosedMessage,
   buildCompletedMessage,
   buildCancelledMessage,
+  buildDeletedMessage,
   buildRescheduledMessage,
 };

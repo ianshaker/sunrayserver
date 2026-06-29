@@ -10,6 +10,7 @@ function buildPreviewMessage(draft) {
   ];
   if (draft.description) lines.push(`Описание: ${draft.description}`);
   lines.push(`Напомнить: ${draft.dueDateHuman}`);
+  if (draft.extraAssigneeName) lines.push(`Исполнитель: ${draft.extraAssigneeName}`);
   lines.push("---");
   lines.push("Нажмите «Сохранить» или «Отменить».");
   return lines.join("\n");
@@ -23,6 +24,7 @@ function buildCreatedMessage(taskNumber, draft) {
   ];
   if (draft.description) lines.push(`Описание: ${draft.description}`);
   lines.push(`Напомню: ${draft.dueDateHuman}`);
+  if (draft.extraAssigneeName) lines.push(`Исполнитель: ${draft.extraAssigneeName}`);
   return lines.join("\n");
 }
 

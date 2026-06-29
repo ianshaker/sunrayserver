@@ -2,7 +2,7 @@ const { supabase } = require("./supabaseClient");
 const { ACTIVE_TASK_STATUSES } = require("./config");
 
 const TASK_FIELDS =
-  "id, task_number, title, status, assignees, assigned_to, assigned_by, controllers, due_date";
+  "id, task_number, title, status, assignees, assigned_to, assigned_by, controllers, due_date, tg_chat_id, tg_message_id";
 
 async function fetchActiveTaskByNumber(taskNumber) {
   const { data, error } = await supabase
@@ -33,7 +33,7 @@ async function fetchActiveTasksForContext() {
   return data || [];
 }
 
-/** Задача по номеру в ЛЮБОМ статусе (для команд ассистента: отличить «нет» от «уже закрыта»). */
+/** Задача по номеру: сначала активная, иначе архив (для «уже закрыта»). */
 async function fetchTaskByNumberAny(taskNumber) {
   const { data, error } = await supabase
     .from("manager_tasks")
@@ -42,7 +42,17 @@ async function fetchTaskByNumberAny(taskNumber) {
     .maybeSingle();
 
   if (error) throw error;
-  return data || null;
+  if (data) return { ...data, _source: "active" };
+
+  const { data: archived, error: archErr } = await supabase
+    .from("manager_tasks_archive")
+    .select(`${TASK_FIELDS}, archived_at`)
+    .eq("task_number", taskNumber)
+    .maybeSingle();
+
+  if (archErr) throw archErr;
+  if (archived) return { ...archived, _source: "archive" };
+  return null;
 }
 
 /** Ключи mt:10 | mt:30 | mt:1h | mt:tm в callback_data. */
@@ -94,7 +104,7 @@ async function completeTaskByNumber(taskNumber) {
 
 // --- Действия по id (для команд ассистента: задачу уже нашли и проверили права) --- //
 
-/** Завершить: триггер БД сам очистит due_date и метку напоминания. */
+/** Завершить → триггер БД переносит в архив. */
 async function completeTask(taskId) {
   const { error } = await supabase
     .from("manager_tasks")
@@ -104,13 +114,19 @@ async function completeTask(taskId) {
   if (error) throw error;
 }
 
-/** Отменить: статус cancelled → выпадает из выборки напоминаний. */
+/** Отменить → триггер БД переносит в архив. */
 async function cancelTask(taskId) {
   const { error } = await supabase
     .from("manager_tasks")
-    .update({ status: "cancelled", due_reminder_sent_at: null })
+    .update({ status: "cancelled" })
     .eq("id", taskId);
 
+  if (error) throw error;
+}
+
+/** Удалить навсегда (без архива). Только из manager_tasks. */
+async function deleteTask(taskId) {
+  const { error } = await supabase.from("manager_tasks").delete().eq("id", taskId);
   if (error) throw error;
 }
 
@@ -133,5 +149,6 @@ module.exports = {
   completeTaskByNumber,
   completeTask,
   cancelTask,
+  deleteTask,
   rescheduleTask,
 };
