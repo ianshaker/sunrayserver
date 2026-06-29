@@ -1,4 +1,4 @@
-const { getChatIdForUser } = require("./chatMapping");
+const { getChatIdForUser } = require("./directory");
 const {
   buildTaskCreatedMessage,
   buildTaskUpdatedMessage,
@@ -24,7 +24,7 @@ async function notifyAssignees({
       continue;
     }
 
-    const chatId = getChatIdForUser(assignee.id);
+    const chatId = await getChatIdForUser(assignee.id);
     if (!chatId) {
       console.log(
         `⚠️ [tasks] Нет chat_id для ${assignee.full_name} (${assignee.id})`,
@@ -79,7 +79,7 @@ async function handleTaskUpdated(task, assignees, assignedBy, telegramBot) {
 async function handleTaskCompleted(task, assignees, assignedBy, telegramBot) {
   console.log("✅ [tasks] Завершение:", task.title);
 
-  const chatId = getChatIdForUser(assignedBy.id);
+  const chatId = await getChatIdForUser(assignedBy.id);
   if (!chatId) {
     console.log(
       `⚠️ [tasks] Нет chat_id создателя ${assignedBy.full_name} (${assignedBy.id})`,

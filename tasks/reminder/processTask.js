@@ -1,4 +1,4 @@
-const { getChatIdForUser } = require("../chatMapping");
+const { getChatIdForUserSync, ensureDirectory } = require("../directory");
 const { resolveAssigneeIds } = require("../assignees");
 const { loadProfilesByIds } = require("../profiles");
 const { buildTaskDueReminderMessage } = require("../messages");
@@ -17,7 +17,8 @@ async function processTaskReminder(task, telegramBot) {
   }
 
   const profiles = await loadProfilesByIds(assigneeIds);
-  const reachableIds = assigneeIds.filter((id) => getChatIdForUser(id));
+  await ensureDirectory();
+  const reachableIds = assigneeIds.filter((id) => getChatIdForUserSync(id));
 
   if (!reachableIds.length) {
     const names = assigneeIds
@@ -38,7 +39,7 @@ async function processTaskReminder(task, telegramBot) {
   for (const userId of reachableIds) {
     const profile = profiles.get(userId);
     const fullName = profile?.full_name || userId;
-    const chatId = getChatIdForUser(userId);
+    const chatId = getChatIdForUserSync(userId);
 
     if (!chatId) {
       console.log(

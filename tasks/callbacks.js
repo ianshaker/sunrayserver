@@ -1,7 +1,7 @@
 const { onCallbackQuery } = require("../tgwebhook");
 const { getTelegramBot } = require("../tgwebhook/bot");
-const { resolveAssigneeIds } = require("./assignees");
-const { getUserIdsForChatId } = require("./chatMapping");
+const { resolveProfileIdByTelegramUser } = require("./directory");
+const { resolveTaskActionPermission } = require("./superUsers");
 const { snoozeTaskByNumber, completeTaskByNumber, fetchActiveTaskByNumber } = require("./taskActions");
 const {
   getMessageContext,
@@ -23,12 +23,12 @@ function parseCallbackData(data) {
   return { action: match[1], taskNumber: Number(match[2]) };
 }
 
-function chatMayActOnTask(task, chatId) {
-  const chatUserIds = getUserIdsForChatId(chatId);
-  if (!chatUserIds.length) return false;
-
-  const assigneeIds = resolveAssigneeIds(task);
-  return assigneeIds.some((id) => chatUserIds.includes(id));
+function successToast(action, taskNumber, access) {
+  if (access.elevated) {
+    return action === "sn" ? access.noticeSnooze : access.noticeComplete;
+  }
+  if (action === "sn") return `Задача #${taskNumber} отложена на 1 час`;
+  return `Задача #${taskNumber} выполнена ✅`;
 }
 
 async function answerCallback(callbackQuery, text) {
@@ -60,8 +60,11 @@ function registerTaskCallbackHandlers() {
         await answerCallback(callbackQuery, "Задача не найдена или уже закрыта");
         return;
       }
-      if (!chatMayActOnTask(task, chatId)) {
-        await answerCallback(callbackQuery, "Нет доступа к этой задаче");
+
+      const profileId = await resolveProfileIdByTelegramUser(callbackQuery.from);
+      const access = resolveTaskActionPermission(task, profileId);
+      if (!access.allowed) {
+        await answerCallback(callbackQuery, "Только участники задачи могут её менять");
         return;
       }
 
@@ -84,7 +87,7 @@ function registerTaskCallbackHandlers() {
             `⏰ Задача #${taskNumber} отложена на 1 час`,
           );
         }
-        await answerCallback(callbackQuery, `Задача #${taskNumber} отложена на 1 час`);
+        await answerCallback(callbackQuery, successToast("sn", taskNumber, access));
         console.log(`[tasks/callback] snooze #${taskNumber} из chat ${chatId}`);
         return;
       }
@@ -103,7 +106,7 @@ function registerTaskCallbackHandlers() {
             `✅ Задача #${taskNumber} выполнена`,
           );
         }
-        await answerCallback(callbackQuery, `Задача #${taskNumber} выполнена ✅`);
+        await answerCallback(callbackQuery, successToast("ok", taskNumber, access));
         console.log(`[tasks/callback] complete #${taskNumber} из chat ${chatId}`);
       }
     } catch (error) {

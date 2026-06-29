@@ -4,7 +4,7 @@ const { ACTIVE_TASK_STATUSES } = require("./config");
 async function fetchActiveTaskByNumber(taskNumber) {
   const { data, error } = await supabase
     .from("manager_tasks")
-    .select("id, task_number, title, status, assignees, assigned_to, due_date")
+    .select("id, task_number, title, status, assignees, assigned_to, assigned_by, controllers, due_date")
     .eq("task_number", taskNumber)
     .maybeSingle();
 

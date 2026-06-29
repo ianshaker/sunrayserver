@@ -33,7 +33,7 @@ const { registerZamerRoute } = require("./infonazamer");
 const { registerPushRoutes } = require("./pushmodul");
 
 // --- Задачи менеджеров (CRM → Telegram) --- //
-const { registerTaskRoute, startTaskReminderWorker } = require("./tasks");
+const { registerTaskRoute, startTaskReminderWorker, startDirectoryRefresh } = require("./tasks");
 
 // --- Импорт функции для готовности --- //
 const { registerReadinessRoute } = require("./readiness");
@@ -143,6 +143,7 @@ fastify.listen(
     }
     console.log(`Your app is listening on ${address}`);
     startEmailChecker(telegramBot);
+    startDirectoryRefresh();
     startTaskReminderWorker(telegramBot);
     startWebhookSelfHeal();
   }
