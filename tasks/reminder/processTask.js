@@ -36,43 +36,63 @@ async function processTaskReminder(task, telegramBot) {
   const sentAt = claimed.due_reminder_sent_at || new Date().toISOString();
   let sentCount = 0;
 
-  for (const userId of reachableIds) {
-    const profile = profiles.get(userId);
-    const fullName = profile?.full_name || userId;
-    const chatId = getChatIdForUserSync(userId);
+  const originChatId =
+    claimed.tg_chat_id != null ? Number(claimed.tg_chat_id) : null;
+  const originMessageId =
+    claimed.tg_message_id != null ? Number(claimed.tg_message_id) : null;
 
-    if (!chatId) {
-      console.log(
-        `[tasks/reminder] нет Telegram chat_id для ${fullName} (${userId})`,
-      );
-      continue;
-    }
-
+  // Задача из Telegram-бота: напоминание в тот же чат, reply на отбивку «✅ Создал задачу».
+  if (originChatId && originMessageId) {
+    const primaryId = reachableIds[0];
+    const profile = profiles.get(primaryId);
+    const fullName = profile?.full_name || primaryId;
     const message = buildTaskDueReminderMessage(claimed, profile);
     const keyboard = buildTaskActionKeyboard(claimed.task_number);
 
-    // Если задача создана из этого же чата — напоминание reply на отбивку.
-    const extraOptions = {};
-    if (
-      claimed.tg_message_id &&
-      claimed.tg_chat_id != null &&
-      Number(claimed.tg_chat_id) === Number(chatId)
-    ) {
-      extraOptions.reply_to_message_id = Number(claimed.tg_message_id);
-      extraOptions.allow_sending_without_reply = true;
-    }
-
     try {
-      await sendTaskTelegramMessage(telegramBot, chatId, message, keyboard, extraOptions);
-      sentCount += 1;
+      await sendTaskTelegramMessage(telegramBot, originChatId, message, keyboard, {
+        reply_to_message_id: originMessageId,
+        allow_sending_without_reply: true,
+      });
+      sentCount = 1;
       console.log(
-        `[tasks/reminder] «${claimed.title}» → ${fullName} (chat ${chatId})`,
+        `[tasks/reminder] «${claimed.title}» → origin chat ${originChatId} ` +
+          `(reply ${originMessageId}, для ${fullName})`,
       );
     } catch (error) {
       console.error(
-        `[tasks/reminder] ошибка TG для ${fullName}:`,
+        `[tasks/reminder] ошибка TG origin chat ${originChatId}:`,
         error.message,
       );
+    }
+  } else {
+    for (const userId of reachableIds) {
+      const profile = profiles.get(userId);
+      const fullName = profile?.full_name || userId;
+      const chatId = getChatIdForUserSync(userId);
+
+      if (!chatId) {
+        console.log(
+          `[tasks/reminder] нет Telegram chat_id для ${fullName} (${userId})`,
+        );
+        continue;
+      }
+
+      const message = buildTaskDueReminderMessage(claimed, profile);
+      const keyboard = buildTaskActionKeyboard(claimed.task_number);
+
+      try {
+        await sendTaskTelegramMessage(telegramBot, chatId, message, keyboard);
+        sentCount += 1;
+        console.log(
+          `[tasks/reminder] «${claimed.title}» → ${fullName} (chat ${chatId})`,
+        );
+      } catch (error) {
+        console.error(
+          `[tasks/reminder] ошибка TG для ${fullName}:`,
+          error.message,
+        );
+      }
     }
   }
 

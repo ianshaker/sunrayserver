@@ -82,22 +82,30 @@ async function resolveProfileIdByTelegramUser(from) {
   if (tgUserId != null) {
     const { data, error } = await supabase
       .from("profiles")
-      .select("id")
+      .select("id, full_name, telegram_username")
       .eq("telegram_user_id", tgUserId)
       .maybeSingle();
     if (error) console.error("[tasks/directory] поиск по user_id:", error.message);
-    if (data) return data.id;
+    if (data) {
+      console.log(
+        `[tasks/directory] tg ${tgUserId} (@${uname || "—"}) → ${data.full_name || data.id}`,
+      );
+      return data.id;
+    }
   }
 
   if (uname) {
     const { data, error } = await supabase
       .from("profiles")
-      .select("id, telegram_user_id")
+      .select("id, telegram_user_id, full_name")
       .eq("telegram_username", uname)
       .maybeSingle();
     if (error) console.error("[tasks/directory] поиск по нику:", error.message);
 
     if (data) {
+      console.log(
+        `[tasks/directory] @${uname} → ${data.full_name || data.id}`,
+      );
       if (tgUserId != null && data.telegram_user_id == null) {
         const { error: updateError } = await supabase
           .from("profiles")
