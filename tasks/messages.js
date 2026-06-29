@@ -6,9 +6,14 @@ const {
 } = require("./formatters");
 const { stripAiReminderLogs } = require("./reminder/descriptionLog");
 
+function formatTaskNumber(task) {
+  if (task?.task_number == null) return "";
+  return ` #${task.task_number}`;
+}
+
 function buildTaskCreatedMessage(task, assignedBy) {
   const lines = [
-    `ЗАДАЧА от ${formatDateTime(task.created_at)}`,
+    `ЗАДАЧА${formatTaskNumber(task)} от ${formatDateTime(task.created_at)}`,
     `От: ${assignedBy.full_name || "—"}`,
     "---",
     `Название: ${task.title || "—"}`,
@@ -28,7 +33,7 @@ function buildTaskCreatedMessage(task, assignedBy) {
 
 function buildTaskUpdatedMessage(task, assignedBy) {
   const lines = [
-    `ЗАДАЧА ОБНОВЛЕНА · ${formatDateTime(new Date().toISOString())}`,
+    `ЗАДАЧА${formatTaskNumber(task)} ОБНОВЛЕНА · ${formatDateTime(new Date().toISOString())}`,
     `От: ${assignedBy.full_name || "—"}`,
     "---",
     `Название: ${task.title || "—"}`,
@@ -54,7 +59,7 @@ function buildTaskCompletedMessage(task, assignees, assignedBy) {
     .join(", ");
 
   const lines = [
-    `ЗАДАЧА ЗАВЕРШЕНА · ${formatDateTime(new Date().toISOString())}`,
+    `ЗАДАЧА${formatTaskNumber(task)} ЗАВЕРШЕНА · ${formatDateTime(new Date().toISOString())}`,
     `Название: ${task.title || "—"}`,
     `Выполнили: ${executors || "—"}`,
     `Автор: ${assignedBy.full_name || "—"}`,
@@ -67,7 +72,7 @@ function buildTaskDueReminderMessage(task, assigneeProfile) {
   const assigneeName = assigneeProfile?.full_name || "—";
 
   const lines = [
-    "⏰ НАПОМИНАНИЕ О ДЕДЛАЙНЕ",
+    `⏰ НАПОМИНАНИЕ О ДЕДЛАЙНЕ${formatTaskNumber(task)}`,
     `Для: ${assigneeName}`,
     "---",
     `Название: ${task.title || "—"}`,
