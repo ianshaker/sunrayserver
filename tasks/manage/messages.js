@@ -24,7 +24,65 @@ function verb(action) {
   return ACTION_VERB[action] || "изменить";
 }
 
-/** Номер не назван — отказ без диалога, просьба вызвать заново с номером. */
+const PREVIEW_HEADING = {
+  complete: "✅ Завершить задачу",
+  cancel: "❌ Отменить задачу",
+  reschedule: "⏰ Перенести задачу",
+};
+
+function buildPreviewMessage(draft) {
+  const heading = PREVIEW_HEADING[draft.action] || "Изменить задачу";
+  const lines = [
+    `${heading} #${draft.taskNumber}?`,
+    "---",
+    `Название: ${draft.taskTitle || "—"}`,
+  ];
+
+  if (draft.action === "reschedule") {
+    if (draft.currentDueHuman) lines.push(`Сейчас: ${draft.currentDueHuman}`);
+    lines.push(`Новый дедлайн: ${draft.dueDateHuman || "не указано"}`);
+  }
+
+  lines.push("---");
+  lines.push("Нажмите «Сохранить» или «Отменить».");
+  return lines.join("\n");
+}
+
+function buildPreviewDismissedMessage() {
+  return "❌ Отменено. Действие не выполнено — пришлите команду заново при необходимости.";
+}
+
+/** Задача по контексту не найдена ни среди активных. */
+function buildContextNotFoundMessage(action) {
+  return [
+    `🔍 Не нашёл активных задач, подходящих под ваш запрос.`,
+    "",
+    `Попробуйте уточнить название или укажите номер задачи:`,
+    `«@SUNRAYY_bot ${verb(action)} задачу #17»`,
+  ].join("\n");
+}
+
+/** Нет активных задач совсем. */
+function buildNoActiveTasksMessage() {
+  return "ℹ️ Активных задач нет — нечего изменять.";
+}
+
+/** Gemini нашёл несколько похожих задач — просим уточнить. */
+function buildAmbiguousMessage(candidates, action) {
+  const list = candidates
+    .map((c) => `• #${c.task_number} — ${c.title || "без названия"}`)
+    .join("\n");
+  return [
+    `🔍 Нашёл несколько похожих задач — уточните, которую нужно ${verb(action)}:`,
+    "",
+    list,
+    "",
+    `Вызовите меня с номером задачи:`,
+    `«@SUNRAYY_bot ${verb(action)} задачу #17»`,
+  ].join("\n");
+}
+
+/** Номер не назван — раньше был отказ, теперь логика ветки B. Оставляем для запасного случая. */
 function buildNoNumberMessage(action) {
   const noun = ACTION_NOUN[action] || "действия";
   return [
@@ -78,6 +136,11 @@ function buildRescheduledMessage(task, dueDateHuman) {
 }
 
 module.exports = {
+  buildPreviewMessage,
+  buildPreviewDismissedMessage,
+  buildContextNotFoundMessage,
+  buildNoActiveTasksMessage,
+  buildAmbiguousMessage,
   buildNoNumberMessage,
   buildRejectedMessage,
   buildNotFoundMessage,

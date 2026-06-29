@@ -10,4 +10,7 @@ module.exports = {
 
   /** Действия, которые понимает парсер. */
   ACTIONS: Object.freeze(["complete", "cancel", "reschedule"]),
+
+  DRAFT_TTL_MS: 60 * 60 * 1000, // 1 час
+  CALLBACK_PREFIX: "tm",
 };

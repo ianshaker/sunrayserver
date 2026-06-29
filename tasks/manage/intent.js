@@ -1,34 +1,65 @@
 // ============================================================================
 // Интент: управление существующей задачей из Telegram — завершить / отменить /
-// перенести ПО НОМЕРУ.
+// перенести.
 //
-// Поток: оркестратор → этот intent → парсинг Gemini → действие по номеру.
-// Поиска по содержанию ПОКА НЕТ (затравка на будущее): если номер не назван —
-// отказ без уточнений, просьба вызвать заново с номером.
+// Две ветки:
+//   A — номер задачи назван явно (#17, «задачу 17»)  → fetchByNumber → превью
+//   B — номер не назван, задача описана словами       → contextSearch → превью
+//
+// Везде финал: превью с кнопками «Сохранить / Отменить» (callbacks.js).
 // ============================================================================
 
 const { PERMISSIONS } = require("../../lib/telegramBotChats");
 const { sendText } = require("../../assistant/reply");
+const { getTelegramBot } = require("../../tgwebhook/bot");
 const { ACTIVE_TASK_STATUSES } = require("../config");
 const { resolveTaskActionPermission } = require("../superUsers");
-const {
-  fetchTaskByNumberAny,
-  completeTask,
-  cancelTask,
-  rescheduleTask,
-} = require("../taskActions");
+const { fetchTaskByNumberAny } = require("../taskActions");
 const { formatMskHuman } = require("../create/time");
 const { parseManageMessage } = require("./parser");
+const { findTaskByContext } = require("./contextSearch");
+const { createDraft } = require("./draft");
+const { buildPreviewKeyboard } = require("./keyboards");
 const {
-  buildNoNumberMessage,
+  buildPreviewMessage,
   buildRejectedMessage,
   buildNotFoundMessage,
   buildNotAllowedMessage,
   buildAlreadyClosedMessage,
-  buildCompletedMessage,
-  buildCancelledMessage,
-  buildRescheduledMessage,
+  buildContextNotFoundMessage,
+  buildNoActiveTasksMessage,
+  buildAmbiguousMessage,
 } = require("./messages");
+
+// ─── общие утилиты ──────────────────────────────────────────────────────────
+
+async function sendPreview(bot, chatId, task, parsedAction, parsedDueDateUtc, authorProfileId) {
+  const draftData = {
+    chatId,
+    authorProfileId,
+    action: parsedAction,
+    taskId: task.id,
+    taskNumber: task.task_number,
+    taskTitle: task.title,
+    dueDateUtc: parsedDueDateUtc || null,
+    dueDateHuman: parsedAction === "reschedule" ? formatMskHuman(parsedDueDateUtc) : null,
+    currentDueHuman: task.due_date ? formatMskHuman(task.due_date) : null,
+  };
+  const draftId = createDraft(draftData);
+
+  await bot.sendMessage(chatId, buildPreviewMessage(draftData), {
+    disable_web_page_preview: true,
+    reply_markup: buildPreviewKeyboard(draftId),
+  });
+
+  return draftId;
+}
+
+function checkAccess(task, profileId) {
+  return resolveTaskActionPermission(task, profileId);
+}
+
+// ─── handle ─────────────────────────────────────────────────────────────────
 
 async function handle(ctx) {
   const { chatId, text, profileId, msg } = ctx;
@@ -38,15 +69,15 @@ async function handle(ctx) {
       `tgUser=${msg?.from?.id} text="${text.slice(0, 100)}"`,
   );
 
-  // Действовать может только зарегистрированный сотрудник.
   if (!profileId) {
-    console.log(`[tasks/manage] отказ: профиль не найден для tg user ${msg?.from?.id}`);
     await sendText(
       chatId,
       "Вы не зарегистрированы в системе менеджеров — действие не выполнено. Обратитесь к администратору.",
     );
     return;
   }
+
+  // ── Этап 1: парсим действие, номер, время (fast-path или Gemini) ──────────
 
   let parsed;
   try {
@@ -55,7 +86,7 @@ async function handle(ctx) {
       `[tasks/manage] parse → status=${parsed.status} action=${parsed.action || "?"} ` +
         `num=${parsed.taskNumber ?? "null"}` +
         (parsed.reason ? ` reason="${parsed.reason}"` : "") +
-        (parsed.error ? ` error=${parsed.error}` : ""),
+        (parsed.error ? ` err=${parsed.error}` : ""),
     );
   } catch (error) {
     console.error("[tasks/manage] парсинг упал:", error.message);
@@ -64,48 +95,87 @@ async function handle(ctx) {
   }
 
   if (parsed.status === "error") {
-    const text =
+    await sendText(
+      chatId,
       parsed.error === "ai_disabled"
         ? "AI-ассистент временно недоступен."
-        : "Не удалось разобрать команду. Сформулируйте иначе и вызовите меня заново.";
-    await sendText(chatId, text);
-    return;
-  }
-
-  // Главное правило этапа без контекста: нет номера → отказ, вызвать заново.
-  if (parsed.taskNumber == null) {
-    console.log(`[tasks/manage] отказ: номер задачи не назван (action=${parsed.action})`);
-    await sendText(chatId, buildNoNumberMessage(parsed.action));
+        : "Не удалось разобрать команду. Сформулируйте иначе и вызовите меня заново.",
+    );
     return;
   }
 
   if (parsed.status === "rejected") {
-    console.log(`[tasks/manage] отказ парсера: ${parsed.reason}`);
     await sendText(chatId, buildRejectedMessage(parsed.reason, parsed.action));
     return;
   }
 
+  // ── Этап 2: получаем задачу (Ветка A — по номеру, Ветка B — по контексту) ─
+
+  const bot = getTelegramBot();
+  if (!bot) {
+    console.warn("[tasks/manage] нет telegramBot для превью");
+    await sendText(chatId, "Не удалось показать подтверждение. Попробуйте позже.");
+    return;
+  }
+
   let task;
-  try {
-    task = await fetchTaskByNumberAny(parsed.taskNumber);
-  } catch (error) {
-    console.error("[tasks/manage] выборка задачи упала:", error.message);
-    await sendText(chatId, "Не удалось получить задачу. Попробуйте позже.");
-    return;
+
+  if (parsed.taskNumber != null) {
+    // ── Ветка A: номер указан ────────────────────────────────────────────────
+    console.log(`[tasks/manage] ветка A: по номеру #${parsed.taskNumber}`);
+    try {
+      task = await fetchTaskByNumberAny(parsed.taskNumber);
+    } catch (error) {
+      console.error("[tasks/manage] выборка задачи:", error.message);
+      await sendText(chatId, "Не удалось получить задачу. Попробуйте позже.");
+      return;
+    }
+
+    if (!task) {
+      await sendText(chatId, buildNotFoundMessage(parsed.taskNumber));
+      return;
+    }
+  } else {
+    // ── Ветка B: поиск по контексту ──────────────────────────────────────────
+    console.log(`[tasks/manage] ветка B: контекстный поиск (action=${parsed.action})`);
+
+    let contextResult;
+    try {
+      contextResult = await findTaskByContext(text, parsed.action);
+    } catch (error) {
+      console.error("[tasks/manage] контекстный поиск упал:", error.message);
+      await sendText(chatId, "Не удалось выполнить поиск задачи. Попробуйте позже.");
+      return;
+    }
+
+    console.log(`[tasks/manage] контекст → status=${contextResult.status}`);
+
+    if (contextResult.status === "no_tasks") {
+      await sendText(chatId, buildNoActiveTasksMessage());
+      return;
+    }
+    if (contextResult.status === "not_found") {
+      await sendText(chatId, buildContextNotFoundMessage(parsed.action));
+      return;
+    }
+    if (contextResult.status === "ambiguous") {
+      await sendText(chatId, buildAmbiguousMessage(contextResult.candidates, parsed.action));
+      return;
+    }
+    if (contextResult.status === "error") {
+      await sendText(chatId, "Не удалось выполнить поиск задачи. Попробуйте позже.");
+      return;
+    }
+
+    task = contextResult.task;
   }
 
-  if (!task) {
-    await sendText(chatId, buildNotFoundMessage(parsed.taskNumber));
-    return;
-  }
+  // ── Этап 3: проверка прав и статуса (одинакова для обеих веток) ────────────
 
-  // Право действовать: участник задачи или повышенный доступ (как у TG-кнопок).
-  const access = resolveTaskActionPermission(task, profileId);
+  const access = checkAccess(task, profileId);
   if (!access.allowed) {
-    console.log(
-      `[tasks/manage] нет прав: profile=${profileId} task=#${task.task_number}`,
-    );
-    await sendText(chatId, buildNotAllowedMessage(parsed.taskNumber));
+    console.log(`[tasks/manage] нет прав: profile=${profileId} task=#${task.task_number}`);
+    await sendText(chatId, buildNotAllowedMessage(task.task_number));
     return;
   }
 
@@ -114,36 +184,12 @@ async function handle(ctx) {
     return;
   }
 
-  try {
-    if (parsed.action === "complete") {
-      await completeTask(task.id);
-      await sendText(chatId, buildCompletedMessage(task));
-      console.log(`[tasks/manage] complete #${task.task_number} (chat ${chatId})`);
-      return;
-    }
+  // ── Этап 4: превью с кнопками «Сохранить / Отменить» ─────────────────────
 
-    if (parsed.action === "cancel") {
-      await cancelTask(task.id);
-      await sendText(chatId, buildCancelledMessage(task));
-      console.log(`[tasks/manage] cancel #${task.task_number} (chat ${chatId})`);
-      return;
-    }
-
-    if (parsed.action === "reschedule") {
-      await rescheduleTask(task.id, parsed.dueDateUtc);
-      await sendText(
-        chatId,
-        buildRescheduledMessage(task, formatMskHuman(parsed.dueDateUtc)),
-      );
-      console.log(
-        `[tasks/manage] reschedule #${task.task_number} → ${parsed.dueDateUtc} (chat ${chatId})`,
-      );
-      return;
-    }
-  } catch (error) {
-    console.error(`[tasks/manage] ошибка действия ${parsed.action}:`, error.message);
-    await sendText(chatId, "Не удалось выполнить действие. Попробуйте позже.");
-  }
+  const draftId = await sendPreview(bot, chatId, task, parsed.action, parsed.dueDateUtc, profileId);
+  console.log(
+    `[tasks/manage] превью: chat ${chatId}, draft ${draftId}, ${parsed.action} #${task.task_number}`,
+  );
 }
 
 module.exports = {
@@ -151,13 +197,14 @@ module.exports = {
   permission: PERMISSIONS.TASK_ACTIONS,
   title: "Управление существующей задачей",
   description:
-    "Пользователь просит ДЕЙСТВИЕ над УЖЕ существующей задачей по её номеру: завершить/выполнить/закрыть, отменить/удалить, или перенести/сдвинуть срок. Обычно упоминается номер задачи (#17, «задачу 17»). Это НЕ создание новой задачи или напоминания.",
+    "Пользователь просит ДЕЙСТВИЕ над УЖЕ существующей задачей: завершить/выполнить/закрыть, отменить/удалить, или перенести/сдвинуть срок. Задача может быть указана по номеру (#17, «задачу 17») ИЛИ по описанию/смыслу («задачу где надо позвонить Татьяне», «задачу про слонов»). Это НЕ создание новой задачи.",
   examples: [
     "Заверши задачу #17",
     "Отмени задачу 20",
-    "Удали задачу номер 5",
     "Перенеси задачу 12 на завтра в 10 утра",
-    "Задача 8 выполнена, закрой её",
+    "Закрой задачу про звонок Татьяне",
+    "Отмени задачу где надо купить 5 слонов",
+    "Перенеси задачу по замеру у Ивановых на пятницу в 14:00",
   ],
   handle,
 };

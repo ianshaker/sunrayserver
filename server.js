@@ -17,6 +17,7 @@ const {
 } = require("./tgwebhook");
 const { registerTaskCallbackHandlers } = require("./tasks/callbacks");
 const { registerTaskCreateCallbacks } = require("./tasks/create/callbacks");
+const { registerTaskManageCallbacks } = require("./tasks/manage/callbacks");
 const { registerAssistant, startAssistant } = require("./assistant");
 const { registerIntent } = require("./assistant/registry");
 const { startBotChatsRefresh } = require("./lib/telegramBotChats");
@@ -30,6 +31,7 @@ setWebhookBot(telegramBot);
 registerDiagnosticsHandlers();
 registerTaskCallbackHandlers();
 registerTaskCreateCallbacks();
+registerTaskManageCallbacks();
 registerIntent(require("./tasks/create/intent"));
 registerIntent(require("./tasks/manage/intent"));
 registerAssistant();

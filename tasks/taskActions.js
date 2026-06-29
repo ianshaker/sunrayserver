@@ -17,6 +17,22 @@ async function fetchActiveTaskByNumber(taskNumber) {
   return data;
 }
 
+/**
+ * Все активные задачи для контекстного поиска (Ветка B ассистента).
+ * Возвращает только поля, нужные для Gemini-промпта.
+ */
+async function fetchActiveTasksForContext() {
+  const { data, error } = await supabase
+    .from("manager_tasks")
+    .select("task_number, title, description, due_date, status")
+    .in("status", ACTIVE_TASK_STATUSES)
+    .order("task_number", { ascending: false })
+    .limit(200);
+
+  if (error) throw error;
+  return data || [];
+}
+
 /** Задача по номеру в ЛЮБОМ статусе (для команд ассистента: отличить «нет» от «уже закрыта»). */
 async function fetchTaskByNumberAny(taskNumber) {
   const { data, error } = await supabase
@@ -112,6 +128,7 @@ module.exports = {
   SNOOZE_PRESETS,
   fetchActiveTaskByNumber,
   fetchTaskByNumberAny,
+  fetchActiveTasksForContext,
   snoozeTaskByNumber,
   completeTaskByNumber,
   completeTask,
