@@ -31,6 +31,7 @@ registerDiagnosticsHandlers();
 registerTaskCallbackHandlers();
 registerTaskCreateCallbacks();
 registerIntent(require("./tasks/create/intent"));
+registerIntent(require("./tasks/manage/intent"));
 registerAssistant();
 
 // --- Импорт обработчика манго (прокидываем telegramBot) --- //

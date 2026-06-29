@@ -1,10 +1,13 @@
 const { supabase } = require("./supabaseClient");
 const { ACTIVE_TASK_STATUSES } = require("./config");
 
+const TASK_FIELDS =
+  "id, task_number, title, status, assignees, assigned_to, assigned_by, controllers, due_date";
+
 async function fetchActiveTaskByNumber(taskNumber) {
   const { data, error } = await supabase
     .from("manager_tasks")
-    .select("id, task_number, title, status, assignees, assigned_to, assigned_by, controllers, due_date")
+    .select(TASK_FIELDS)
     .eq("task_number", taskNumber)
     .maybeSingle();
 
@@ -12,6 +15,18 @@ async function fetchActiveTaskByNumber(taskNumber) {
   if (!data) return null;
   if (!ACTIVE_TASK_STATUSES.includes(data.status)) return null;
   return data;
+}
+
+/** Задача по номеру в ЛЮБОМ статусе (для команд ассистента: отличить «нет» от «уже закрыта»). */
+async function fetchTaskByNumberAny(taskNumber) {
+  const { data, error } = await supabase
+    .from("manager_tasks")
+    .select(TASK_FIELDS)
+    .eq("task_number", taskNumber)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data || null;
 }
 
 /** Ключи mt:10 | mt:30 | mt:1h | mt:tm в callback_data. */
@@ -57,18 +72,49 @@ async function completeTaskByNumber(taskNumber) {
   const task = await fetchActiveTaskByNumber(taskNumber);
   if (!task) return { ok: false, reason: "not_found" };
 
+  await completeTask(task.id);
+  return { ok: true, task };
+}
+
+// --- Действия по id (для команд ассистента: задачу уже нашли и проверили права) --- //
+
+/** Завершить: триггер БД сам очистит due_date и метку напоминания. */
+async function completeTask(taskId) {
   const { error } = await supabase
     .from("manager_tasks")
     .update({ status: "completed" })
-    .eq("id", task.id);
+    .eq("id", taskId);
 
   if (error) throw error;
-  return { ok: true, task };
+}
+
+/** Отменить: статус cancelled → выпадает из выборки напоминаний. */
+async function cancelTask(taskId) {
+  const { error } = await supabase
+    .from("manager_tasks")
+    .update({ status: "cancelled", due_reminder_sent_at: null })
+    .eq("id", taskId);
+
+  if (error) throw error;
+}
+
+/** Перенести: новый дедлайн + сброс метки, чтобы напоминание пришло заново. */
+async function rescheduleTask(taskId, dueDateUtc) {
+  const { error } = await supabase
+    .from("manager_tasks")
+    .update({ due_date: dueDateUtc, due_reminder_sent_at: null })
+    .eq("id", taskId);
+
+  if (error) throw error;
 }
 
 module.exports = {
   SNOOZE_PRESETS,
   fetchActiveTaskByNumber,
+  fetchTaskByNumberAny,
   snoozeTaskByNumber,
   completeTaskByNumber,
+  completeTask,
+  cancelTask,
+  rescheduleTask,
 };
