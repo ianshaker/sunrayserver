@@ -67,7 +67,7 @@ function registerGmailAuthRoutes(fastify) {
 
     try {
       const { tokens } = await exchangeCodeForTokens(code);
-      writeToken(tokens);
+      await writeToken(tokens);
       await reloadGmailClientAfterTokenSave(tokens);
 
       notifyGmailActivated().catch((e) => {

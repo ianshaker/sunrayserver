@@ -1,5 +1,5 @@
 const { GMAIL_LABEL_QUERY } = require("../config");
-const { getGmailClient } = require("../gmail/client");
+const { ensureGmailClient } = require("../gmail/client");
 const { readCache, writeCache } = require("../gmail/tokenStore");
 const { extractEmailBodyFromPayload } = require("../parsing/emailFields");
 const { insertAppealFromEmail } = require("../appeals/insertFromEmail");
@@ -18,7 +18,7 @@ async function checkNewEmails() {
   console.log(`${prefix} checkNewEmails start`);
 
   try {
-    const gmailClient = getGmailClient();
+    const gmailClient = await ensureGmailClient();
     const formattedDate = `${now.getFullYear()}/${now.getMonth() + 1}/${now.getDate()}`;
 
     let cache = readCache();
