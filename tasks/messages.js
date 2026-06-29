@@ -4,6 +4,7 @@ const {
   getStatusLabel,
   formatOptionalBlock,
 } = require("./formatters");
+const { buildForLine } = require("./assigneeMention");
 
 function formatTaskNumber(task) {
   if (task?.task_number == null) return "";
@@ -68,16 +69,19 @@ function buildTaskCompletedMessage(task, assignees, assignedBy) {
 }
 
 function buildTaskDueReminderMessage(task, assigneeProfile) {
-  const assigneeName = assigneeProfile?.full_name || "—";
+  const forLine = buildForLine(assigneeProfile);
   const numPrefix = task?.task_number != null ? `#${task.task_number} ` : "";
   const deadline = task.due_date ? formatDateTime(task.due_date) : "Не указан";
 
-  return [
-    `⏰ ${numPrefix}ДЕДЛАЙН ${deadline}`,
-    `Для: ${assigneeName}`,
-    "---",
-    `Название: ${task.title || "—"}`,
-  ].join("\n");
+  return {
+    text: [
+      `⏰ ${numPrefix}ДЕДЛАЙН ${deadline}`,
+      forLine.text,
+      "---",
+      `Название: ${task.title || "—"}`,
+    ].join("\n"),
+    parseMode: forLine.parseMode,
+  };
 }
 
 module.exports = {

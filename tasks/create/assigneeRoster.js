@@ -13,7 +13,7 @@ let cache = { profiles: [], loadedAt: 0 };
 async function loadRoster() {
   const { data, error } = await supabase
     .from("profiles")
-    .select("id, full_name, telegram_username")
+    .select("id, full_name, telegram_username, telegram_user_id")
     .order("full_name");
 
   if (error) {

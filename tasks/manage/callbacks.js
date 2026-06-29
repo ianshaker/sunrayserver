@@ -15,6 +15,7 @@ const {
   cancelTask,
   deleteTask,
   rescheduleTask,
+  editTask,
 } = require("../taskActions");
 const { takeDraft, getDraft } = require("./draft");
 const { parsePreviewCallback } = require("./keyboards");
@@ -24,11 +25,10 @@ const {
   buildCancelledMessage,
   buildDeletedMessage,
   buildRescheduledMessage,
+  buildEditedMessage,
   buildAlreadyClosedMessage,
 } = require("./messages");
 const { sendTaskOriginReply } = require("../originReply");
-
-const PREVIEW_CONFIRMED = "✅ Подтверждено.";
 
 async function answerCallback(callbackQuery, text) {
   const bot = getTelegramBot();
@@ -40,7 +40,7 @@ async function answerCallback(callbackQuery, text) {
   }
 }
 
-async function editMessage(ctx, text) {
+async function editMessage(ctx, text, parseMode) {
   const bot = getTelegramBot();
   if (!bot) return;
   await bot.editMessageText(text, {
@@ -48,19 +48,30 @@ async function editMessage(ctx, text) {
     message_id: ctx.messageId,
     disable_web_page_preview: true,
     reply_markup: { inline_keyboard: [] },
+    ...(parseMode ? { parse_mode: parseMode } : {}),
   });
 }
 
-/** Отметка на исходной отбивке «Создал задачу»; превью — короткое подтверждение. */
-async function finishManageAction(ctx, task, resultText) {
+/** Reply на origin; превью удаляем — не оставляем лишнее «Подтверждено». */
+async function finishManageAction(ctx, task, resultText, parseMode) {
   const bot = getTelegramBot();
   if (!bot) {
-    await editMessage(ctx, resultText);
+    await editMessage(ctx, resultText, parseMode);
     return;
   }
 
-  const sentToOrigin = await sendTaskOriginReply(bot, task, resultText);
-  await editMessage(ctx, sentToOrigin ? PREVIEW_CONFIRMED : resultText);
+  const sentToOrigin = await sendTaskOriginReply(bot, task, resultText, null, parseMode);
+  if (sentToOrigin) {
+    try {
+      await bot.deleteMessage(ctx.chatId, ctx.messageId);
+    } catch (error) {
+      console.error("[tasks/manage] не удалось удалить превью:", error.message);
+      await editMessage(ctx, resultText, parseMode);
+    }
+    return;
+  }
+
+  await editMessage(ctx, resultText, parseMode);
 }
 
 function registerTaskManageCallbacks() {
@@ -169,6 +180,21 @@ function registerTaskManageCallbacks() {
         console.log(
           `[tasks/manage] reschedule #${task.task_number} → ${confirmed.dueDateUtc} (chat ${chatId})`,
         );
+        return;
+      }
+
+      if (confirmed.action === "edit") {
+        await editTask(task.id, {
+          dueDate: confirmed.dueDateUtc || null,
+          addAssigneeId: confirmed.extraAssigneeId || null,
+          descriptionAppend: confirmed.descriptionAppend || null,
+          currentTask: task,
+        });
+        const edited = buildEditedMessage(task, confirmed);
+        await finishManageAction(ctx, task, edited.text, edited.parseMode);
+        await answerCallback(callbackQuery, `Задача #${task.task_number} обновлена`);
+        console.log(`[tasks/manage] edit #${task.task_number} (chat ${chatId})`);
+        return;
       }
     } catch (error) {
       console.error(`[tasks/manage] ошибка ${confirmed.action}:`, error.message);

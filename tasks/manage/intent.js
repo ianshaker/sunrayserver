@@ -1,6 +1,6 @@
 // ============================================================================
 // Интент: управление существующей задачей из Telegram — завершить / отменить /
-// перенести.
+// перенести / редактировать.
 //
 // Две ветки:
 //   A — номер задачи назван явно (#17, «задачу 17»)  → fetchByNumber → превью
@@ -16,6 +16,7 @@ const { ACTIVE_TASK_STATUSES } = require("../config");
 const { resolveTaskActionPermission } = require("../superUsers");
 const { fetchTaskByNumberAny } = require("../taskActions");
 const { formatMskHuman } = require("../create/time");
+const { getRoster } = require("../create/assigneeRoster");
 const { parseManageMessage } = require("./parser");
 const { findTaskByContext } = require("./contextSearch");
 const { createDraft } = require("./draft");
@@ -31,25 +32,31 @@ const {
   buildAmbiguousMessage,
 } = require("./messages");
 
-// ─── общие утилиты ──────────────────────────────────────────────────────────
+async function sendPreview(bot, chatId, task, parsed, authorProfileId, extraAssigneeProfile) {
+  const needsDueHuman =
+    parsed.action === "reschedule" || (parsed.action === "edit" && parsed.dueDateUtc);
 
-async function sendPreview(bot, chatId, task, parsedAction, parsedDueDateUtc, authorProfileId) {
   const draftData = {
     chatId,
     authorProfileId,
-    action: parsedAction,
+    action: parsed.action,
     taskId: task.id,
     taskNumber: task.task_number,
     taskTitle: task.title,
-    dueDateUtc: parsedDueDateUtc || null,
-    dueDateHuman: parsedAction === "reschedule" ? formatMskHuman(parsedDueDateUtc) : null,
+    dueDateUtc: parsed.dueDateUtc || null,
+    dueDateHuman: needsDueHuman && parsed.dueDateUtc ? formatMskHuman(parsed.dueDateUtc) : null,
     currentDueHuman: task.due_date ? formatMskHuman(task.due_date) : null,
+    extraAssigneeId: parsed.extraAssigneeId || null,
+    extraAssigneeProfile: extraAssigneeProfile || null,
+    descriptionAppend: parsed.descriptionAppend || null,
   };
   const draftId = createDraft(draftData);
 
-  await bot.sendMessage(chatId, buildPreviewMessage(draftData), {
+  const preview = buildPreviewMessage(draftData);
+  await bot.sendMessage(chatId, preview.text, {
     disable_web_page_preview: true,
     reply_markup: buildPreviewKeyboard(draftId),
+    ...(preview.parseMode ? { parse_mode: preview.parseMode } : {}),
   });
 
   return draftId;
@@ -58,8 +65,6 @@ async function sendPreview(bot, chatId, task, parsedAction, parsedDueDateUtc, au
 function checkAccess(task, profileId) {
   return resolveTaskActionPermission(task, profileId);
 }
-
-// ─── handle ─────────────────────────────────────────────────────────────────
 
 async function handle(ctx) {
   const { chatId, text, profileId, msg } = ctx;
@@ -76,8 +81,6 @@ async function handle(ctx) {
     );
     return;
   }
-
-  // ── Этап 1: парсим действие, номер, время (fast-path или Gemini) ──────────
 
   let parsed;
   try {
@@ -109,8 +112,6 @@ async function handle(ctx) {
     return;
   }
 
-  // ── Этап 2: получаем задачу (Ветка A — по номеру, Ветка B — по контексту) ─
-
   const bot = getTelegramBot();
   if (!bot) {
     console.warn("[tasks/manage] нет telegramBot для превью");
@@ -121,7 +122,6 @@ async function handle(ctx) {
   let task;
 
   if (parsed.taskNumber != null) {
-    // ── Ветка A: номер указан ────────────────────────────────────────────────
     console.log(`[tasks/manage] ветка A: по номеру #${parsed.taskNumber}`);
     try {
       task = await fetchTaskByNumberAny(parsed.taskNumber);
@@ -136,7 +136,6 @@ async function handle(ctx) {
       return;
     }
   } else {
-    // ── Ветка B: поиск по контексту ──────────────────────────────────────────
     console.log(`[tasks/manage] ветка B: контекстный поиск (action=${parsed.action})`);
 
     let contextResult;
@@ -170,8 +169,6 @@ async function handle(ctx) {
     task = contextResult.task;
   }
 
-  // ── Этап 3: проверка прав и статуса (одинакова для обеих веток) ────────────
-
   const access = checkAccess(task, profileId);
   if (!access.allowed) {
     console.log(`[tasks/manage] нет прав: profile=${profileId} task=#${task.task_number}`);
@@ -184,9 +181,13 @@ async function handle(ctx) {
     return;
   }
 
-  // ── Этап 4: превью с кнопками «Сохранить / Отменить» ─────────────────────
+  let extraAssigneeProfile = null;
+  if (parsed.extraAssigneeId) {
+    const roster = await getRoster();
+    extraAssigneeProfile = roster.find((p) => p.id === parsed.extraAssigneeId) || null;
+  }
 
-  const draftId = await sendPreview(bot, chatId, task, parsed.action, parsed.dueDateUtc, profileId);
+  const draftId = await sendPreview(bot, chatId, task, parsed, profileId, extraAssigneeProfile);
   console.log(
     `[tasks/manage] превью: chat ${chatId}, draft ${draftId}, ${parsed.action} #${task.task_number}`,
   );
@@ -197,15 +198,16 @@ module.exports = {
   permission: PERMISSIONS.TASK_ACTIONS,
   title: "Управление существующей задачей",
   description:
-    "Пользователь просит ДЕЙСТВИЕ над УЖЕ существующей задачей: завершить (→ архив), отменить (→ архив), удалить навсегда (без архива), или перенести срок. По номеру (#17) или по описанию («задачу про слонов»). НЕ создание новой задачи.",
+    "Пользователь просит ДЕЙСТВИЕ над УЖЕ существующей задачей: завершить (→ архив), отменить (→ архив), удалить навсегда (без архива), перенести срок, или изменить (дедлайн + исполнитель + описание). По номеру (#17) или по описанию («задачу про слонов»). НЕ создание новой задачи.",
   examples: [
     "Заверши задачу #17",
     "Отмени задачу 20",
     "Удали задачу 5",
     "Перенеси задачу 12 на завтра в 10 утра",
+    "Перенеси задачу 22 на завтра в 10 и добавь Гену",
+    "Добавь в задачу 22: я ещё позвоню клиентке Елене",
     "Закрой задачу про звонок Татьяне",
-    "Отмени задачу где надо купить 5 слонов",
-    "Перенеси задачу по замеру у Ивановых на пятницу в 14:00",
+    "Измени задачу где надо купить 5 слонов — добавь Глеба",
   ],
   handle,
 };

@@ -3,11 +3,14 @@
 // Без уточняющих вопросов: при нехватке данных — отказ + просьба вызвать заново.
 // ============================================================================
 
+const { buildAddAssigneeLine, buildAddedAssigneeLine } = require("../assigneeMention");
+
 const ACTION_VERB = {
   complete: "завершить",
   cancel: "отменить",
   delete: "удалить",
   reschedule: "перенести",
+  edit: "изменить",
 };
 
 const ACTION_NOUN = {
@@ -15,6 +18,7 @@ const ACTION_NOUN = {
   cancel: "отмены",
   delete: "удаления",
   reschedule: "переноса",
+  edit: "изменения",
 };
 
 const STATUS_LABEL = {
@@ -31,6 +35,7 @@ const PREVIEW_HEADING = {
   cancel: "❌ Отменить задачу",
   delete: "🗑 Удалить задачу навсегда",
   reschedule: "⏰ Перенести задачу",
+  edit: "✏️ Изменить задачу",
 };
 
 function buildPreviewMessage(draft) {
@@ -41,9 +46,23 @@ function buildPreviewMessage(draft) {
     `Название: ${draft.taskTitle || "—"}`,
   ];
 
+  let parseMode;
+
   if (draft.action === "reschedule") {
     if (draft.currentDueHuman) lines.push(`Сейчас: ${draft.currentDueHuman}`);
     lines.push(`Новый дедлайн: ${draft.dueDateHuman || "не указано"}`);
+  }
+
+  if (draft.action === "edit") {
+    if (draft.dueDateHuman) lines.push(`Новый дедлайн: ${draft.dueDateHuman}`);
+    if (draft.extraAssigneeProfile) {
+      const addLine = buildAddAssigneeLine(draft.extraAssigneeProfile);
+      lines.push(addLine.text);
+      parseMode = addLine.parseMode;
+    }
+    if (draft.descriptionAppend) {
+      lines.push(`Дополнить описание: ${draft.descriptionAppend}`);
+    }
   }
 
   if (draft.action === "delete") {
@@ -52,14 +71,13 @@ function buildPreviewMessage(draft) {
 
   lines.push("---");
   lines.push("Нажмите «Сохранить» или «Отменить».");
-  return lines.join("\n");
+  return { text: lines.join("\n"), parseMode };
 }
 
 function buildPreviewDismissedMessage() {
   return "❌ Отменено. Действие не выполнено — пришлите команду заново при необходимости.";
 }
 
-/** Задача по контексту не найдена ни среди активных. */
 function buildContextNotFoundMessage(action) {
   return [
     `🔍 Не нашёл активных задач, подходящих под ваш запрос.`,
@@ -69,12 +87,10 @@ function buildContextNotFoundMessage(action) {
   ].join("\n");
 }
 
-/** Нет активных задач совсем. */
 function buildNoActiveTasksMessage() {
   return "ℹ️ Активных задач нет — нечего изменять.";
 }
 
-/** Gemini нашёл несколько похожих задач — просим уточнить. */
 function buildAmbiguousMessage(candidates, action) {
   const list = candidates
     .map((c) => `• #${c.task_number} — ${c.title || "без названия"}`)
@@ -89,7 +105,6 @@ function buildAmbiguousMessage(candidates, action) {
   ].join("\n");
 }
 
-/** Номер не назван — раньше был отказ, теперь логика ветки B. Оставляем для запасного случая. */
 function buildNoNumberMessage(action) {
   const noun = ACTION_NOUN[action] || "действия";
   return [
@@ -100,7 +115,6 @@ function buildNoNumberMessage(action) {
   ].join("\n");
 }
 
-/** Отказ от парсера (например, неоднозначное время переноса). */
 function buildRejectedMessage(reason, action) {
   const lines = [
     "❌ Команда не выполнена.",
@@ -146,6 +160,29 @@ function buildRescheduledMessage(task, dueDateHuman) {
   ].join("\n");
 }
 
+function buildEditedMessage(task, draft) {
+  const lines = [
+    `✏️ Задача #${task.task_number} обновлена.`,
+    `Название: ${task.title || "—"}`,
+  ];
+
+  let parseMode;
+
+  if (draft.dueDateHuman) lines.push(`Дедлайн: ${draft.dueDateHuman}`);
+
+  if (draft.extraAssigneeProfile) {
+    const addedLine = buildAddedAssigneeLine(draft.extraAssigneeProfile);
+    lines.push(addedLine.text);
+    parseMode = addedLine.parseMode;
+  }
+
+  if (draft.descriptionAppend) {
+    lines.push(`Дополнено описание: ${draft.descriptionAppend}`);
+  }
+
+  return { text: lines.join("\n"), parseMode };
+}
+
 module.exports = {
   buildPreviewMessage,
   buildPreviewDismissedMessage,
@@ -161,4 +198,5 @@ module.exports = {
   buildCancelledMessage,
   buildDeletedMessage,
   buildRescheduledMessage,
+  buildEditedMessage,
 };

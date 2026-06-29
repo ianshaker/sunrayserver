@@ -9,7 +9,7 @@ module.exports = {
   VERTEX_LOCATION: SUMMARY.VERTEX_LOCATION,
 
   /** Действия, которые понимает парсер. */
-  ACTIONS: Object.freeze(["complete", "cancel", "delete", "reschedule"]),
+  ACTIONS: Object.freeze(["complete", "cancel", "delete", "reschedule", "edit"]),
 
   DRAFT_TTL_MS: 60 * 60 * 1000, // 1 час
   CALLBACK_PREFIX: "tm",

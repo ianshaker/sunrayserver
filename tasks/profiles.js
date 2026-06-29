@@ -5,7 +5,7 @@ async function loadProfilesByIds(userIds) {
 
   const { data, error } = await supabase
     .from("profiles")
-    .select("id, full_name, email")
+    .select("id, full_name, email, telegram_username, telegram_user_id")
     .in("id", userIds);
 
   if (error) throw error;

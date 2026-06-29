@@ -2,7 +2,7 @@ const { supabase } = require("./supabaseClient");
 const { ACTIVE_TASK_STATUSES } = require("./config");
 
 const TASK_FIELDS =
-  "id, task_number, title, status, assignees, assigned_to, assigned_by, controllers, due_date, tg_chat_id, tg_message_id";
+  "id, task_number, title, description, status, assignees, assigned_to, assigned_by, controllers, due_date, tg_chat_id, tg_message_id";
 
 async function fetchActiveTaskByNumber(taskNumber) {
   const { data, error } = await supabase
@@ -140,6 +140,39 @@ async function rescheduleTask(taskId, dueDateUtc) {
   if (error) throw error;
 }
 
+/**
+ * Редактировать задачу: дедлайн, assignees, описание (append).
+ * @param {{ dueDate?: string|null, addAssigneeId?: string|null, descriptionAppend?: string|null, currentTask: object }} opts
+ */
+async function editTask(taskId, { dueDate, addAssigneeId, descriptionAppend, currentTask }) {
+  const updates = {};
+
+  if (dueDate) {
+    updates.due_date = dueDate;
+    updates.due_reminder_sent_at = null;
+  }
+
+  if (addAssigneeId) {
+    const cur =
+      Array.isArray(currentTask.assignees) && currentTask.assignees.length
+        ? currentTask.assignees
+        : [currentTask.assigned_to].filter(Boolean);
+    if (!cur.includes(addAssigneeId)) {
+      updates.assignees = [...new Set([...cur, addAssigneeId])];
+    }
+  }
+
+  if (descriptionAppend) {
+    const cur = currentTask.description || "";
+    updates.description = cur ? `${cur}\n${descriptionAppend}` : descriptionAppend;
+  }
+
+  if (!Object.keys(updates).length) return;
+
+  const { error } = await supabase.from("manager_tasks").update(updates).eq("id", taskId);
+  if (error) throw error;
+}
+
 module.exports = {
   SNOOZE_PRESETS,
   fetchActiveTaskByNumber,
@@ -151,4 +184,5 @@ module.exports = {
   cancelTask,
   deleteTask,
   rescheduleTask,
+  editTask,
 };

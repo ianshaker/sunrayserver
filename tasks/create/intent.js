@@ -67,12 +67,11 @@ async function handle(ctx) {
     return;
   }
 
-  // Имя доп. исполнителя — из ростера (для отображения в превью и отбивке).
-  let extraAssigneeName = null;
+  // Профиль доп. исполнителя — для @упоминания в превью и отбивке.
+  let extraAssigneeProfile = null;
   if (parsed.extraAssigneeId) {
     const roster = await getRoster();
-    const profile = roster.find((p) => p.id === parsed.extraAssigneeId);
-    extraAssigneeName = profile?.full_name || null;
+    extraAssigneeProfile = roster.find((p) => p.id === parsed.extraAssigneeId) || null;
   }
 
   const draftData = {
@@ -83,7 +82,7 @@ async function handle(ctx) {
     dueDateUtc: parsed.dueDateUtc,
     dueDateHuman: formatMskHuman(parsed.dueDateUtc),
     extraAssigneeId: parsed.extraAssigneeId || null,
-    extraAssigneeName,
+    extraAssigneeProfile,
   };
 
   const draftId = createDraft(draftData);
@@ -94,9 +93,11 @@ async function handle(ctx) {
     return;
   }
 
-  await bot.sendMessage(chatId, buildPreviewMessage(draftData), {
+  const preview = buildPreviewMessage(draftData);
+  await bot.sendMessage(chatId, preview.text, {
     disable_web_page_preview: true,
     reply_markup: buildPreviewKeyboard(draftId),
+    ...(preview.parseMode ? { parse_mode: preview.parseMode } : {}),
   });
 
   console.log(

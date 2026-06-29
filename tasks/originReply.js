@@ -9,13 +9,14 @@ function getTaskOrigin(task) {
   return { chatId, messageId };
 }
 
-async function sendTaskOriginReply(telegramBot, task, text, replyMarkup) {
+async function sendTaskOriginReply(telegramBot, task, text, replyMarkup, parseMode) {
   const origin = getTaskOrigin(task);
   if (!origin || !telegramBot) return false;
 
   await sendTaskTelegramMessage(telegramBot, origin.chatId, text, replyMarkup, {
     reply_to_message_id: origin.messageId,
     allow_sending_without_reply: true,
+    ...(parseMode ? { parse_mode: parseMode } : {}),
   });
   return true;
 }

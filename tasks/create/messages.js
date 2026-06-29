@@ -2,6 +2,8 @@
 // Тексты сообщений для создания задачи из Telegram.
 // ============================================================================
 
+const { buildAssigneeLine } = require("../assigneeMention");
+
 function buildPreviewMessage(draft) {
   const lines = [
     "📝 Создать задачу?",
@@ -10,10 +12,17 @@ function buildPreviewMessage(draft) {
   ];
   if (draft.description) lines.push(`Описание: ${draft.description}`);
   lines.push(`Напомнить: ${draft.dueDateHuman}`);
-  if (draft.extraAssigneeName) lines.push(`Исполнитель: ${draft.extraAssigneeName}`);
+
+  let parseMode;
+  if (draft.extraAssigneeProfile) {
+    const assigneeLine = buildAssigneeLine(draft.extraAssigneeProfile);
+    lines.push(assigneeLine.text);
+    parseMode = assigneeLine.parseMode;
+  }
+
   lines.push("---");
   lines.push("Нажмите «Сохранить» или «Отменить».");
-  return lines.join("\n");
+  return { text: lines.join("\n"), parseMode };
 }
 
 function buildCreatedMessage(taskNumber, draft) {
@@ -24,12 +33,19 @@ function buildCreatedMessage(taskNumber, draft) {
   ];
   if (draft.description) lines.push(`Описание: ${draft.description}`);
   lines.push(`Напомню: ${draft.dueDateHuman}`);
-  if (draft.extraAssigneeName) lines.push(`Исполнитель: ${draft.extraAssigneeName}`);
-  return lines.join("\n");
+
+  let parseMode;
+  if (draft.extraAssigneeProfile) {
+    const assigneeLine = buildAssigneeLine(draft.extraAssigneeProfile);
+    lines.push(assigneeLine.text);
+    parseMode = assigneeLine.parseMode;
+  }
+
+  return { text: lines.join("\n"), parseMode };
 }
 
 function buildCancelledMessage() {
-  return "❌ Отменено. Задача не создана — пришлите запрос заново при необходимости.";
+  return { text: "❌ Отменено. Задача не создана — пришлите запрос заново при необходимости." };
 }
 
 /** Отказ без диалога: одна причина + просьба прислать задачу заново. */
@@ -42,7 +58,7 @@ function buildRejectedMessage(reason) {
     "Отправьте задачу заново одним сообщением с @ботом, например:",
     "«@SUNRAYY_bot напомни завтра в 10 утра позвонить клиенту»",
   ];
-  return lines.join("\n");
+  return { text: lines.join("\n") };
 }
 
 module.exports = {

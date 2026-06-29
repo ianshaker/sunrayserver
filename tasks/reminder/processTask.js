@@ -43,16 +43,17 @@ async function processTaskReminder(task, telegramBot) {
 
   // Задача из Telegram-бота: напоминание в тот же чат, reply на отбивку «✅ Создал задачу».
   if (originChatId && originMessageId) {
-    const primaryId = reachableIds[0];
+    const primaryId = claimed.assigned_to || reachableIds[0];
     const profile = profiles.get(primaryId);
     const fullName = profile?.full_name || primaryId;
-    const message = buildTaskDueReminderMessage(claimed, profile);
+    const reminder = buildTaskDueReminderMessage(claimed, profile);
     const keyboard = buildTaskActionKeyboard(claimed.task_number);
 
     try {
-      await sendTaskTelegramMessage(telegramBot, originChatId, message, keyboard, {
+      await sendTaskTelegramMessage(telegramBot, originChatId, reminder.text, keyboard, {
         reply_to_message_id: originMessageId,
         allow_sending_without_reply: true,
+        ...(reminder.parseMode ? { parse_mode: reminder.parseMode } : {}),
       });
       sentCount = 1;
       console.log(
@@ -82,7 +83,9 @@ async function processTaskReminder(task, telegramBot) {
       const keyboard = buildTaskActionKeyboard(claimed.task_number);
 
       try {
-        await sendTaskTelegramMessage(telegramBot, chatId, message, keyboard);
+        await sendTaskTelegramMessage(telegramBot, chatId, message.text, keyboard, {
+          ...(message.parseMode ? { parse_mode: message.parseMode } : {}),
+        });
         sentCount += 1;
         console.log(
           `[tasks/reminder] «${claimed.title}» → ${fullName} (chat ${chatId})`,

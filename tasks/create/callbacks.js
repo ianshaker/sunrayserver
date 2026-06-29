@@ -22,7 +22,7 @@ async function answerCallback(callbackQuery, text) {
   }
 }
 
-async function editMessage(ctx, text) {
+async function editMessage(ctx, text, parseMode) {
   const bot = getTelegramBot();
   if (!bot) return;
   await bot.editMessageText(text, {
@@ -30,6 +30,7 @@ async function editMessage(ctx, text) {
     message_id: ctx.messageId,
     disable_web_page_preview: true,
     reply_markup: { inline_keyboard: [] },
+    ...(parseMode ? { parse_mode: parseMode } : {}),
   });
 }
 
@@ -63,7 +64,8 @@ function registerTaskCreateCallbacks() {
 
     if (action === "cancel") {
       takeDraft(draftId);
-      await editMessage(ctx, buildCancelledMessage());
+      const cancelled = buildCancelledMessage();
+      await editMessage(ctx, cancelled.text, cancelled.parseMode);
       await answerCallback(callbackQuery, "Отменено");
       console.log(`[tasks/create] отмена draft ${draftId} (chat ${chatId})`);
       return;
@@ -85,7 +87,8 @@ function registerTaskCreateCallbacks() {
           extraAssigneeId: confirmed.extraAssigneeId || null,
         });
 
-        await editMessage(ctx, buildCreatedMessage(task.task_number, confirmed));
+        const created = buildCreatedMessage(task.task_number, confirmed);
+        await editMessage(ctx, created.text, created.parseMode);
         // message_id отбивки = текущее сообщение → напоминание придёт reply на него.
         await attachTelegramOrigin(task.id, chatId, messageId);
 

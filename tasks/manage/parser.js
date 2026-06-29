@@ -1,6 +1,6 @@
 // ============================================================================
 // Парсер команд управления задачами (этап 2):
-// текст → { action, taskNumber, dueDateUtc? }.
+// текст → { action, taskNumber, dueDateUtc?, extraAssigneeId?, descriptionAppend? }.
 //
 // Сначала детерминированный разбор простых «задачу N … HH:MM», затем Gemini.
 // Проверку «время в прошлом» делает только сервер (не LLM).
@@ -12,6 +12,11 @@ const { GEMINI_MODEL, VERTEX_LOCATION, ACTIONS } = require("./config");
 const { tryExtractReschedule } = require("./extract");
 const { buildManagePrompt, buildManageUserPrompt } = require("./prompts");
 const { nowMskString, mskLocalToUtcIso } = require("../create/time");
+const { buildRosterText, validateAssigneeId } = require("../create/assigneeRoster");
+
+/** Не уходим в fast-path reschedule — команда явно про edit (исполнитель / описание). */
+const EDIT_HINT =
+  /(?:добав(?:ь|ить|ьте)|допиш|описан|исполнител|менеджер|к\s+задач|в\s+задач)/i;
 
 function parseModelJson(raw) {
   if (!raw) return null;
@@ -29,6 +34,24 @@ function normalizeTaskNumber(value) {
   if (value == null) return null;
   const n = Number(value);
   return Number.isInteger(n) && n > 0 ? n : null;
+}
+
+function normalizeDescriptionAppend(value) {
+  if (value == null) return null;
+  const s = String(value).trim();
+  return s || null;
+}
+
+async function resolveExtraAssigneeId(rawId) {
+  if (!rawId) return null;
+  const id = String(rawId).trim();
+  if (!id) return null;
+  const valid = await validateAssigneeId(id);
+  if (!valid) {
+    console.log(`[tasks/manage/parser] extra_assignee_id "${id}" не найден в ростере — игнорируем`);
+    return null;
+  }
+  return id;
 }
 
 function finalizeReschedule(action, taskNumber, dueDateMskLocal) {
@@ -64,9 +87,56 @@ function finalizeReschedule(action, taskNumber, dueDateMskLocal) {
   return { status: "ok", action, taskNumber, dueDateUtc, dueDateMskLocal };
 }
 
+function finalizeEdit(taskNumber, dueDateMskLocal, extraAssigneeId, descriptionAppend) {
+  const hasDue = !!dueDateMskLocal;
+  const hasAssignee = !!extraAssigneeId;
+  const hasDesc = !!descriptionAppend;
+
+  if (!hasDue && !hasAssignee && !hasDesc) {
+    return {
+      status: "rejected",
+      action: "edit",
+      taskNumber,
+      reason: "Не указано, что изменить в задаче.",
+    };
+  }
+
+  let dueDateUtc = null;
+  let dueDateMskLocalOut = null;
+
+  if (hasDue) {
+    const finalized = finalizeReschedule("edit", taskNumber, dueDateMskLocal);
+    if (finalized.status !== "ok") return finalized;
+    dueDateUtc = finalized.dueDateUtc;
+    dueDateMskLocalOut = finalized.dueDateMskLocal;
+  }
+
+  return {
+    status: "ok",
+    action: "edit",
+    taskNumber,
+    dueDateUtc,
+    dueDateMskLocal: dueDateMskLocalOut,
+    extraAssigneeId,
+    descriptionAppend,
+  };
+}
+
+function okPayload(action, taskNumber, dueDateUtc, dueDateMskLocal, extraAssigneeId, descriptionAppend) {
+  return {
+    status: "ok",
+    action,
+    taskNumber,
+    dueDateUtc: dueDateUtc || null,
+    dueDateMskLocal: dueDateMskLocal || null,
+    extraAssigneeId: extraAssigneeId || null,
+    descriptionAppend: descriptionAppend || null,
+  };
+}
+
 /**
  * @returns {Promise<
- *   | { status: "ok", action, taskNumber, dueDateUtc, dueDateMskLocal }
+ *   | { status: "ok", action, taskNumber, dueDateUtc, dueDateMskLocal, extraAssigneeId, descriptionAppend }
  *   | { status: "rejected", action, taskNumber, reason }
  *   | { status: "error", error }
  * >}
@@ -77,7 +147,7 @@ async function parseManageMessage(text) {
   }
 
   const fast = tryExtractReschedule(text);
-  if (fast) {
+  if (fast && !EDIT_HINT.test(text)) {
     console.log(
       `[tasks/manage/parser] fast-path reschedule #${fast.taskNumber} → ${fast.dueDateMskLocal}`,
     );
@@ -91,7 +161,8 @@ async function parseManageMessage(text) {
 
   console.log(`[tasks/manage/parser] запрос Gemini, длина=${text.trim().length}`);
 
-  const systemPrompt = buildManagePrompt(nowMskString());
+  const rosterText = await buildRosterText();
+  const systemPrompt = buildManagePrompt(nowMskString(), rosterText);
   const userPrompt = buildManageUserPrompt(text);
 
   const { text: raw, finishReason } = await generateContent({
@@ -101,7 +172,7 @@ async function parseManageMessage(text) {
     location: VERTEX_LOCATION,
     generationConfig: {
       temperature: 0,
-      maxOutputTokens: 512,
+      maxOutputTokens: 768,
       responseMimeType: "application/json",
       thinkingConfig: { thinkingBudget: 0 },
     },
@@ -123,7 +194,8 @@ async function parseManageMessage(text) {
 
   console.log(
     `[tasks/manage/parser] Gemini → status=${parsed.status} action=${parsed.action} ` +
-      `num=${parsed.task_number ?? "null"} due=${parsed.due_date_msk || "null"}`,
+      `num=${parsed.task_number ?? "null"} due=${parsed.due_date_msk || "null"} ` +
+      `assignee=${parsed.extra_assignee_id || "null"} desc=${parsed.description_append ? "yes" : "null"}`,
   );
 
   const action = String(parsed.action || "").trim();
@@ -133,8 +205,19 @@ async function parseManageMessage(text) {
 
   const taskNumber = normalizeTaskNumber(parsed.task_number);
   const dueDateMskLocal = parsed.due_date_msk ? String(parsed.due_date_msk).trim() : null;
+  const extraAssigneeId = await resolveExtraAssigneeId(parsed.extra_assignee_id);
+  const descriptionAppend = normalizeDescriptionAppend(parsed.description_append);
 
-  // Если модель вернула due_date_msk — проверяем на сервере (игнорируем ложный rejected).
+  if (action === "edit") {
+    if (parsed.status === "rejected") {
+      const reason =
+        String(parsed.reason || "").trim() || "Не указано, что изменить в задаче.";
+      return { status: "rejected", action, taskNumber, reason };
+    }
+    return finalizeEdit(taskNumber, dueDateMskLocal, extraAssigneeId, descriptionAppend);
+  }
+
+  // reschedule с due_date — проверяем на сервере
   if (action === "reschedule" && dueDateMskLocal) {
     const finalized = finalizeReschedule(action, taskNumber, dueDateMskLocal);
     if (finalized.status === "ok") return finalized;
@@ -147,11 +230,11 @@ async function parseManageMessage(text) {
     return { status: "rejected", action, taskNumber, reason };
   }
 
-  if (action !== "reschedule") {
-    return { status: "ok", action, taskNumber, dueDateUtc: null, dueDateMskLocal: null };
+  if (action === "reschedule") {
+    return finalizeReschedule(action, taskNumber, dueDateMskLocal);
   }
 
-  return finalizeReschedule(action, taskNumber, dueDateMskLocal);
+  return okPayload(action, taskNumber, null, null, null, null);
 }
 
 module.exports = { parseManageMessage };

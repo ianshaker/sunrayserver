@@ -18,13 +18,16 @@ function sweep() {
  * @param {{
  *   chatId: number,
  *   authorProfileId: string,
- *   action: "complete" | "cancel" | "reschedule",
+ *   action: "complete" | "cancel" | "delete" | "reschedule" | "edit",
  *   taskId: string,
  *   taskNumber: number,
  *   taskTitle: string | null,
  *   dueDateUtc?: string | null,
  *   dueDateHuman?: string | null,
  *   currentDueHuman?: string | null,
+ *   extraAssigneeId?: string | null,
+ *   extraAssigneeProfile?: object | null,
+ *   descriptionAppend?: string | null,
  * }} data
  * @returns {string}
  */
