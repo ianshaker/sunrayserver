@@ -2,6 +2,8 @@
 // assistant — входной AI-роутер Telegram-сообщений.
 //
 // Поток: trigger → telegram_bot_chats → classify intent → dispatch handle().
+// Статусное сообщение (StatusMessage) обновляется по ходу обработки:
+//   "Вижу..." → "Расшифровываю..." (голос) → "Думаю..." → превью с кнопками.
 // ============================================================================
 
 const { onMessage } = require("../tgwebhook");
@@ -13,8 +15,9 @@ const { getEnabledIntents, getIntent } = require("./registry");
 const { classifyIntent, isActionableClassification } = require("./router");
 const { sendUnknown, sendError, sendAiDisabled, sendPermissionDenied, sendText } = require("./reply");
 const { detectPermissionGap } = require("./permissionHints");
-const { MAX_INPUT_CHARS } = require("./config");
+const { MAX_INPUT_CHARS, REPLIES, buildPermissionReply, ADMIN_TELEGRAM_USERNAME } = require("./config");
 const { extractReplyContext, labelUnsupportedKind } = require("./replyExtract");
+const { StatusMessage } = require("./statusMessage");
 
 const RECENT_MSG_MAX = 500;
 const recentMsgOrder = [];
@@ -39,11 +42,7 @@ async function buildContext(msg, bot) {
 
   const chat = await getBotChat(chatId);
   if (!chat) {
-    return {
-      ctx: null,
-      reason: `chat_not_in_registry:${chatId}`,
-      chat: null,
-    };
+    return { ctx: null, reason: `chat_not_in_registry:${chatId}`, chat: null };
   }
 
   const enabledIntents = getEnabledIntents(chat.permissions);
@@ -54,31 +53,53 @@ async function buildContext(msg, bot) {
   const rawText = (msg.text || msg.caption || "").trim();
   const textFromMsg = stripMention(rawText, bot).slice(0, MAX_INPUT_CHARS);
 
+  const replyMsg = msg.reply_to_message;
+  const hasVoiceReply = !!(replyMsg && !replyMsg.from?.is_bot && replyMsg.voice);
+
+  if (!textFromMsg && !hasVoiceReply) {
+    return { ctx: null, reason: "empty_after_mention_strip" };
+  }
+
+  // Статусное сообщение — reply на команду менеджера.
+  const tgBot = getTelegramBot();
+  const statusMsg = new StatusMessage(tgBot, chatId, msg.message_id);
+  await statusMsg.send("⏳ Вижу меня отметили, изучаю запрос...");
+
+  // Голосовой reply: обновляем статус до начала расшифровки.
+  if (hasVoiceReply) {
+    await statusMsg.update("🎙 Расшифровываю голосовое...");
+  }
+
   const { replyText, replyFrom, replyUnsupported, replyVoiceFailed } =
-    await extractReplyContext(msg.reply_to_message, getTelegramBot());
+    await extractReplyContext(replyMsg, tgBot);
+
   if (replyUnsupported) {
     console.log(
       `[assistant] reply без текста (${labelUnsupportedKind(replyUnsupported)}) — контекст не используем`,
     );
   }
 
-  // Если текст команды пустой (@бот без слов), но голосовое reply расшифровалось —
-  // используем транскрипт как основной текст (голосовое — полноценная команда).
+  // Если текст команды пустой, но голосовое расшифровалось — голос = команда.
   let text = textFromMsg;
   let voiceAsText = false;
-  if (!text && replyText && msg.reply_to_message?.voice) {
+  if (!text && replyText && hasVoiceReply) {
     text = replyText;
     voiceAsText = true;
     console.log(`[assistant] голосовое → основной текст команды: "${text.slice(0, 80)}"`);
   }
 
-  if (!text) return { ctx: null, reason: "empty_after_mention_strip" };
+  if (!text) {
+    // Только @бот + голосовое reply, но расшифровка не удалась.
+    const label = replyVoiceFailed || "нет текста";
+    await statusMsg.update(`❌ Не удалось расшифровать голосовое — ${label}.\nПришлите команду текстом.`);
+    return { ctx: null, reason: "empty_after_mention_strip" };
+  }
 
   const profileId = await resolveProfileIdByTelegramUser(msg.from);
 
   return {
     ctx: {
-      bot: getTelegramBot(),
+      bot: tgBot,
       chat,
       profileId,
       msg,
@@ -89,6 +110,7 @@ async function buildContext(msg, bot) {
       replyVoiceFailed,
       chatId,
       enabledIntents,
+      statusMsg,
     },
     reason: null,
     chat,
@@ -98,7 +120,7 @@ async function buildContext(msg, bot) {
 async function dispatchIntent(ctx, classification) {
   const intentDef = getIntent(classification.intent);
   if (!intentDef) {
-    await sendUnknown(ctx.chatId);
+    await ctx.statusMsg.update(REPLIES.UNKNOWN);
     return;
   }
 
@@ -120,7 +142,6 @@ function registerAssistant() {
 
     const trigger = await shouldHandle(msg);
     if (!trigger.ok) {
-      // Шум только если в тексте есть @ — иначе в группе слишком много сообщений.
       if (preview.includes("@")) {
         console.log(
           `[assistant] пропуск chat=${chatId}: ${trigger.reason}, text="${preview}"`,
@@ -134,23 +155,28 @@ function registerAssistant() {
       return;
     }
 
+    let ctx = null;
     try {
-      const { ctx, reason, chat: chatEntry } = await buildContext(msg, trigger.bot);
-      if (!ctx) {
+      const { ctx: builtCtx, reason, chat: chatEntry } = await buildContext(msg, trigger.bot);
+      if (!builtCtx) {
         console.log(
           `[assistant] нет контекста chat=${chatId}: ${reason}, text="${preview}"`,
         );
+        // Статусное сообщение уже обновлено внутри buildContext (если было отправлено).
+        // Для permission-gap без статуса — отдельный ответ.
         const rawText = stripMention((msg.text || msg.caption || "").trim(), trigger.bot);
         const gap = detectPermissionGap({
           chat: chatEntry,
           text: rawText,
           contextReason: reason,
         });
-        if (gap) {
+        if (gap && reason !== "empty_after_mention_strip") {
           await sendPermissionDenied(chatId, gap);
         }
         return;
       }
+
+      ctx = builtCtx;
 
       console.log(
         `[assistant] вход: chat «${ctx.chat.title}» (${ctx.chatId}), ` +
@@ -159,20 +185,20 @@ function registerAssistant() {
           `text="${ctx.text.slice(0, 80)}${ctx.text.length > 80 ? "…" : ""}"`,
       );
 
-      // Уведомляем, если голосовое было, но не расшифровалось.
+      // Обновляем статус перед вызовом Gemini (роутер + парсер).
+      // Если голосовое не расшифровалось — показываем предупреждение в той же строке.
       if (ctx.replyVoiceFailed) {
-        try {
-          await sendText(
-            ctx.chatId,
-            `⚠️ Голосовое не взял в контекст — ${ctx.replyVoiceFailed}. Работаю только с текстом команды.`,
-          );
-        } catch (_) {}
+        await ctx.statusMsg.update(
+          `⚠️ Голосовое не взял в контекст — ${ctx.replyVoiceFailed}.\n💭 Думаю над запросом...`,
+        );
+      } else {
+        await ctx.statusMsg.update("💭 Думаю над запросом...");
       }
 
       const classification = await classifyIntent(ctx.text, ctx.enabledIntents);
 
       if (classification.aiDisabled) {
-        await sendAiDisabled(ctx.chatId);
+        await ctx.statusMsg.update(REPLIES.AI_DISABLED);
         return;
       }
 
@@ -186,21 +212,23 @@ function registerAssistant() {
           text: ctx.text,
           classification,
         });
-        if (gap) {
-          await sendPermissionDenied(chatId, gap);
-        } else {
-          await sendUnknown(chatId);
-        }
+        const errText = gap
+          ? buildPermissionReply(gap, ADMIN_TELEGRAM_USERNAME)
+          : REPLIES.UNKNOWN;
+        await ctx.statusMsg.update(errText || REPLIES.UNKNOWN);
         return;
       }
 
       await dispatchIntent(ctx, classification);
     } catch (error) {
       console.error("[assistant] ошибка обработки:", error.message);
-      const chatId = msg.chat?.id;
       if (chatId != null) {
         try {
-          await sendError(chatId);
+          if (ctx?.statusMsg?.messageId) {
+            await ctx.statusMsg.update(REPLIES.ERROR);
+          } else {
+            await sendError(chatId);
+          }
         } catch (replyError) {
           console.error("[assistant] не удалось отправить ошибку:", replyError.message);
         }

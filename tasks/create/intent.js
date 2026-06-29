@@ -20,6 +20,14 @@ const {
   appendReplyAuthorNote,
 } = require("./replyAuthor");
 
+async function reply(ctx, text) {
+  if (ctx.statusMsg?.messageId) {
+    await ctx.statusMsg.update(text);
+  } else {
+    await sendText(ctx.chatId, text);
+  }
+}
+
 async function handle(ctx) {
   const { chatId, text, replyText, replyFrom, profileId, msg } = ctx;
 
@@ -31,10 +39,7 @@ async function handle(ctx) {
 
   if (!profileId) {
     console.log(`[tasks/create] отказ: профиль не найден для tg user ${msg?.from?.id}`);
-    await sendText(
-      chatId,
-      "Вы не зарегистрированы в системе менеджеров — задача не создана. Обратитесь к администратору.",
-    );
+    await reply(ctx, "Вы не зарегистрированы в системе менеджеров — задача не создана. Обратитесь к администратору.");
     return;
   }
 
@@ -53,7 +58,7 @@ async function handle(ctx) {
     );
   } catch (error) {
     console.error("[tasks/create] парсинг упал:", error.message);
-    await sendText(chatId, "Не удалось обработать запрос. Попробуйте позже.");
+    await reply(ctx, "Не удалось обработать запрос. Попробуйте позже.");
     return;
   }
 
@@ -62,13 +67,13 @@ async function handle(ctx) {
       parsed.error === "ai_disabled"
         ? "AI-ассистент временно недоступен."
         : "Не удалось разобрать запрос. Сформулируйте задачу иначе.";
-    await sendText(chatId, errMsg);
+    await reply(ctx, errMsg);
     return;
   }
 
   if (parsed.status === "rejected") {
     console.log(`[tasks/create] отказ: ${parsed.reason}`);
-    await sendText(chatId, buildRejectedMessage(parsed.reason));
+    await reply(ctx, buildRejectedMessage(parsed.reason).text);
     return;
   }
 
@@ -114,11 +119,20 @@ async function handle(ctx) {
   }
 
   const preview = buildPreviewMessage(draftData);
-  await bot.sendMessage(chatId, preview.text, {
-    disable_web_page_preview: true,
-    reply_markup: buildPreviewKeyboard(draftId),
-    ...(preview.parseMode ? { parse_mode: preview.parseMode } : {}),
-  });
+  const keyboard = buildPreviewKeyboard(draftId);
+
+  // Превью: редактируем статусное сообщение → добавляем кнопки.
+  const finalized = ctx.statusMsg
+    ? await ctx.statusMsg.finalize(preview.text, keyboard, preview.parseMode)
+    : null;
+
+  if (!finalized) {
+    await bot.sendMessage(chatId, preview.text, {
+      disable_web_page_preview: true,
+      reply_markup: keyboard,
+      ...(preview.parseMode ? { parse_mode: preview.parseMode } : {}),
+    });
+  }
 
   console.log(
     `[tasks/create] превью: chat ${chatId}, draft ${draftId}, ` +

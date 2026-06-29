@@ -33,7 +33,7 @@ const {
   buildAmbiguousMessage,
 } = require("./messages");
 
-async function sendPreview(bot, chatId, task, parsed, authorProfileId, extraAssigneeProfile) {
+async function sendPreview(bot, chatId, task, parsed, authorProfileId, extraAssigneeProfile, statusMsg) {
   const needsDueHuman =
     parsed.action === "reschedule" || (parsed.action === "edit" && parsed.dueDateUtc);
 
@@ -54,17 +54,33 @@ async function sendPreview(bot, chatId, task, parsed, authorProfileId, extraAssi
   const draftId = createDraft(draftData);
 
   const preview = buildPreviewMessage(draftData);
-  await bot.sendMessage(chatId, preview.text, {
-    disable_web_page_preview: true,
-    reply_markup: buildPreviewKeyboard(draftId),
-    ...(preview.parseMode ? { parse_mode: preview.parseMode } : {}),
-  });
+  const keyboard = buildPreviewKeyboard(draftId);
+
+  const finalized = statusMsg
+    ? await statusMsg.finalize(preview.text, keyboard, preview.parseMode)
+    : null;
+
+  if (!finalized) {
+    await bot.sendMessage(chatId, preview.text, {
+      disable_web_page_preview: true,
+      reply_markup: keyboard,
+      ...(preview.parseMode ? { parse_mode: preview.parseMode } : {}),
+    });
+  }
 
   return draftId;
 }
 
 function checkAccess(task, profileId) {
   return resolveTaskActionPermission(task, profileId);
+}
+
+async function reply(ctx, text) {
+  if (ctx.statusMsg?.messageId) {
+    await ctx.statusMsg.update(text);
+  } else {
+    await sendText(ctx.chatId, text);
+  }
 }
 
 async function handle(ctx) {
@@ -77,10 +93,7 @@ async function handle(ctx) {
   );
 
   if (!profileId) {
-    await sendText(
-      chatId,
-      "Вы не зарегистрированы в системе менеджеров — действие не выполнено. Обратитесь к администратору.",
-    );
+    await reply(ctx, "Вы не зарегистрированы в системе менеджеров — действие не выполнено. Обратитесь к администратору.");
     return;
   }
 
@@ -97,13 +110,13 @@ async function handle(ctx) {
     );
   } catch (error) {
     console.error("[tasks/manage] парсинг упал:", error.message);
-    await sendText(chatId, "Не удалось обработать команду. Попробуйте позже.");
+    await reply(ctx, "Не удалось обработать команду. Попробуйте позже.");
     return;
   }
 
   if (parsed.status === "error") {
-    await sendText(
-      chatId,
+    await reply(
+      ctx,
       parsed.error === "ai_disabled"
         ? "AI-ассистент временно недоступен."
         : "Не удалось разобрать команду. Сформулируйте иначе и вызовите меня заново.",
@@ -112,14 +125,14 @@ async function handle(ctx) {
   }
 
   if (parsed.status === "rejected") {
-    await sendText(chatId, buildRejectedMessage(parsed.reason, parsed.action));
+    await reply(ctx, buildRejectedMessage(parsed.reason, parsed.action));
     return;
   }
 
   const bot = getTelegramBot();
   if (!bot) {
     console.warn("[tasks/manage] нет telegramBot для превью");
-    await sendText(chatId, "Не удалось показать подтверждение. Попробуйте позже.");
+    await reply(ctx, "Не удалось показать подтверждение. Попробуйте позже.");
     return;
   }
 
@@ -131,12 +144,12 @@ async function handle(ctx) {
       task = await fetchTaskByNumberAny(parsed.taskNumber);
     } catch (error) {
       console.error("[tasks/manage] выборка задачи:", error.message);
-      await sendText(chatId, "Не удалось получить задачу. Попробуйте позже.");
+      await reply(ctx, "Не удалось получить задачу. Попробуйте позже.");
       return;
     }
 
     if (!task) {
-      await sendText(chatId, buildNotFoundMessage(parsed.taskNumber));
+      await reply(ctx, buildNotFoundMessage(parsed.taskNumber));
       return;
     }
   } else {
@@ -147,26 +160,26 @@ async function handle(ctx) {
       contextResult = await findTaskByContext(text, parsed.action, { replyText });
     } catch (error) {
       console.error("[tasks/manage] контекстный поиск упал:", error.message);
-      await sendText(chatId, "Не удалось выполнить поиск задачи. Попробуйте позже.");
+      await reply(ctx, "Не удалось выполнить поиск задачи. Попробуйте позже.");
       return;
     }
 
     console.log(`[tasks/manage] контекст → status=${contextResult.status}`);
 
     if (contextResult.status === "no_tasks") {
-      await sendText(chatId, buildNoActiveTasksMessage());
+      await reply(ctx, buildNoActiveTasksMessage());
       return;
     }
     if (contextResult.status === "not_found") {
-      await sendText(chatId, buildContextNotFoundMessage(parsed.action));
+      await reply(ctx, buildContextNotFoundMessage(parsed.action));
       return;
     }
     if (contextResult.status === "ambiguous") {
-      await sendText(chatId, buildAmbiguousMessage(contextResult.candidates, parsed.action));
+      await reply(ctx, buildAmbiguousMessage(contextResult.candidates, parsed.action));
       return;
     }
     if (contextResult.status === "error") {
-      await sendText(chatId, "Не удалось выполнить поиск задачи. Попробуйте позже.");
+      await reply(ctx, "Не удалось выполнить поиск задачи. Попробуйте позже.");
       return;
     }
 
@@ -176,12 +189,12 @@ async function handle(ctx) {
   const access = checkAccess(task, profileId);
   if (!access.allowed) {
     console.log(`[tasks/manage] нет прав: profile=${profileId} task=#${task.task_number}`);
-    await sendText(chatId, buildNotAllowedMessage(task.task_number));
+    await reply(ctx, buildNotAllowedMessage(task.task_number));
     return;
   }
 
   if (!ACTIVE_TASK_STATUSES.includes(task.status) || task._source === "archive") {
-    await sendText(chatId, buildAlreadyClosedMessage(task));
+    await reply(ctx, buildAlreadyClosedMessage(task));
     return;
   }
 
@@ -191,7 +204,7 @@ async function handle(ctx) {
     extraAssigneeProfile = roster.find((p) => p.id === parsed.extraAssigneeId) || null;
   }
 
-  const draftId = await sendPreview(bot, chatId, task, parsed, profileId, extraAssigneeProfile);
+  const draftId = await sendPreview(bot, chatId, task, parsed, profileId, extraAssigneeProfile, ctx.statusMsg);
   console.log(
     `[tasks/manage] превью: chat ${chatId}, draft ${draftId}, ${parsed.action} #${task.task_number}`,
   );
