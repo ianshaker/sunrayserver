@@ -7,9 +7,12 @@ const { guardSetupAccess, extractSetupKey, appendSetupKey } = require("./guard")
 const { renderSetupPage } = require("./pageHtml");
 const { extractGoogleAuthCode } = require("./extractAuthCode");
 const { generateAuthUrl, exchangeCodeForTokens } = require("../gmail/oauth");
-const { writeToken } = require("../gmail/tokenStore");
+const { writeToken, isTokenPersistedInSupabase } = require("../gmail/tokenStore");
 const { reloadGmailClientAfterTokenSave } = require("../gmail/client");
-const { notifyGmailActivated } = require("../telegramNotify");
+const {
+  notifyGmailActivated,
+  notifyGmailTokenNotPersisted,
+} = require("../telegramNotify");
 
 function registerGmailAuthRoutes(fastify) {
   fastify.get(SETUP_PATH, async (request, reply) => {
@@ -66,10 +69,34 @@ function registerGmailAuthRoutes(fastify) {
     }
 
     try {
+      console.log("[postamails] /exchange-code: меняем код на токен...");
       const { tokens } = await exchangeCodeForTokens(code);
+      console.log("[postamails] токен от Google получен, сохраняем в Supabase...");
+
       await writeToken(tokens);
       await reloadGmailClientAfterTokenSave(tokens);
 
+      // Честная проверка: токен реально лёг в БД, а не только in-memory/диск этого инстанса.
+      const persisted = await isTokenPersistedInSupabase();
+
+      if (!persisted) {
+        console.error(
+          "[postamails] ❌ активация НЕ завершена: токен не сохранён в Supabase.",
+        );
+        notifyGmailTokenNotPersisted().catch((e) =>
+          console.error("[postamails] TG (не сохранён):", e.message),
+        );
+        return reply.type("text/html").send(
+          renderSetupPage({
+            key,
+            message:
+              "Код принят, но токен НЕ сохранён в базу. Проверьте миграции gmail_oauth_tokens и попробуйте снова. Почта пока работать не будет.",
+            messageType: "error",
+          }),
+        );
+      }
+
+      console.log("[postamails] ✅ активация завершена, токен в Supabase.");
       notifyGmailActivated().catch((e) => {
         console.error("[postamails] TG после активации Gmail:", e.message);
       });
@@ -78,6 +105,7 @@ function registerGmailAuthRoutes(fastify) {
       const sep = successUrl.includes("?") ? "&" : "?";
       return reply.redirect(`${successUrl}${sep}success=1`);
     } catch (error) {
+      console.error("[postamails] ❌ ошибка обмена кода:", error.message);
       return reply
         .type("text/html")
         .send(

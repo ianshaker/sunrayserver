@@ -4,7 +4,7 @@ const http = require("http");
 const https = require("https");
 const crypto = require("crypto");
 const { URL } = require("url");
-const { createClient } = require("@supabase/supabase-js");
+const { supabase } = require("./lib/supabaseClient");
 
 const MANGO_DEBUG_LOG = process.env.MANGO_DEBUG_LOG !== "false";
 const MANGO_LOG_FILE = path.join(__dirname, "mango_webhook_debug.jsonl");
@@ -65,13 +65,6 @@ function logMangoWebhook(request, rawBody, parsedBody) {
 
 // --- КОНСТАНТЫ И СПРАВОЧНИКИ ---
 const TELEGRAM_CHAT_ID = -1002582438853;
-
-const SUPABASE_URL = "https://xyzkneqhggpxstxqbqhs.supabase.co";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inh5emtuZXFoZ2dweHN0eHFicWhzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDY1NTE1MzIsImV4cCI6MjA2MjEyNzUzMn0.HmkcuxviENuQbiYgyQh0MBPr5zYlk88YLnRBlTXaKUU";
-// service_role не обязателен: по умолчанию используем anon (как и весь проект).
-// Если положить SUPABASE_SERVICE_ROLE_KEY в env — подхватится автоматически.
-const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY;
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 const CALL_RECORDINGS_BUCKET = "call-recordings";
 

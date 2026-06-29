@@ -2,6 +2,9 @@ const path = require("path");
 const fs = require("fs");
 const fastify = require("fastify")({ logger: true });
 
+const { logSupabaseBoot } = require("./lib/supabaseClient");
+logSupabaseBoot();
+
 // --- ИНТЕГРАЦИЯ TELEGRAM-БОТА (только исходящие сообщения, без polling) --- //
 const TelegramBot = require('node-telegram-bot-api');
 const TELEGRAM_TOKEN = '7866133715:AAH2lSoDsDnmpQhEjSghjNb23ezp98IZW4g';

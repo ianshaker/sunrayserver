@@ -1,6 +1,6 @@
 const fs = require("fs");
 const { TOKEN_PATH, CACHE_PATH } = require("../config");
-const { supabase, HAS_SERVICE_ROLE } = require("../supabaseClient");
+const { supabase } = require("../supabaseClient");
 
 const TOKEN_ROW_ID = "sunray";
 
@@ -25,7 +25,6 @@ function writeTokenToDisk(tokens) {
 
 // ---- Supabase (основной источник: общий для всех инстансов, переживает redeploy) ----
 async function readTokenFromSupabase() {
-  if (!HAS_SERVICE_ROLE) return null;
   try {
     const { data, error } = await supabase
       .from("gmail_oauth_tokens")
@@ -33,18 +32,17 @@ async function readTokenFromSupabase() {
       .eq("id", TOKEN_ROW_ID)
       .maybeSingle();
     if (error) {
-      console.error("[postamails] чтение токена из Supabase:", error.message);
+      console.error("[postamails] ❌ чтение токена из Supabase:", error.message);
       return null;
     }
     return data?.token || null;
   } catch (e) {
-    console.error("[postamails] чтение токена из Supabase:", e.message);
+    console.error("[postamails] ❌ чтение токена из Supabase:", e.message);
     return null;
   }
 }
 
 async function writeTokenToSupabase(tokens) {
-  if (!HAS_SERVICE_ROLE) return;
   try {
     const { error } = await supabase.from("gmail_oauth_tokens").upsert({
       id: TOKEN_ROW_ID,
@@ -52,10 +50,18 @@ async function writeTokenToSupabase(tokens) {
       updated_at: new Date().toISOString(),
     });
     if (error) {
-      console.error("[postamails] запись токена в Supabase:", error.message);
+      console.error(
+        "[postamails] ❌ запись токена в Supabase:",
+        error.message,
+        "(применена ли миграция gmail_oauth_tokens + anon-политики?)",
+      );
+      return false;
     }
+    console.log("[postamails] ✅ токен Gmail сохранён в Supabase.");
+    return true;
   } catch (e) {
-    console.error("[postamails] запись токена в Supabase:", e.message);
+    console.error("[postamails] ❌ запись токена в Supabase:", e.message);
+    return false;
   }
 }
 
@@ -66,8 +72,15 @@ async function readToken() {
 }
 
 async function writeToken(tokens) {
-  await writeTokenToSupabase(tokens);
+  const savedToDb = await writeTokenToSupabase(tokens);
   writeTokenToDisk(tokens);
+  return savedToDb;
+}
+
+// Проверка: реально ли токен лежит в постоянном хранилище (Supabase), а не только in-memory/диск.
+async function isTokenPersistedInSupabase() {
+  const remote = await readTokenFromSupabase();
+  return Boolean(remote);
 }
 
 // ---- Кэш обработанных писем (на диске, дедуп всё равно по телефону) ----
@@ -92,6 +105,7 @@ function writeCache(cache) {
 module.exports = {
   readToken,
   writeToken,
+  isTokenPersistedInSupabase,
   readCache,
   writeCache,
   ensureCacheFile,

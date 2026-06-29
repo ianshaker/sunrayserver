@@ -33,7 +33,14 @@ async function notifyIncomingChatMarkdown(text) {
 async function notifyGmailActivated() {
   await notifyIncomingChat(
     "✅ <b>Gmail API активирован</b>\n\n" +
-      "Проверка почты «Заявки Sunray» возобновлена автоматически.",
+      "Токен сохранён в базу, проверка почты «Заявки Sunray» возобновлена.",
+  );
+}
+
+async function notifyGmailTokenNotPersisted() {
+  await notifyIncomingChat(
+    "❌ <b>Gmail НЕ активирован</b>\n\n" +
+      "Код принят, но токен не сохранился в базу. Нужно проверить миграции и активировать заново.",
   );
 }
 
@@ -42,4 +49,5 @@ module.exports = {
   notifyIncomingChat,
   notifyIncomingChatMarkdown,
   notifyGmailActivated,
+  notifyGmailTokenNotPersisted,
 };
