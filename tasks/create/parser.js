@@ -32,7 +32,11 @@ function rejection(reason) {
  *   | { status: "error", error }
  * >}
  */
-async function parseTaskMessage(text) {
+/**
+ * @param {string} text — прямой текст команды (упоминание бота уже убрано)
+ * @param {{ replyText?: string|null }} opts — текст отмеченного сообщения (если есть)
+ */
+async function parseTaskMessage(text, { replyText } = {}) {
   if (!text || !text.trim()) {
     return rejection("Пустое сообщение — укажите, что сделать и на когда напомнить.");
   }
@@ -45,7 +49,7 @@ async function parseTaskMessage(text) {
 
   const rosterText = await buildRosterText();
   const systemPrompt = buildParsePrompt(nowMskString(), rosterText);
-  const userPrompt = buildParseUserPrompt(text);
+  const userPrompt = buildParseUserPrompt(text, replyText);
 
   const { text: raw, finishReason } = await generateContent({
     systemPrompt,

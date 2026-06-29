@@ -85,9 +85,18 @@ function buildAddedAssigneeLine(profile) {
   };
 }
 
+function buildAssigneesLine(profiles) {
+  const line = buildForLineMultiple(profiles);
+  return {
+    text: line.text.replace(/^Для:/, "Исполнители:"),
+    parseMode: line.parseMode,
+  };
+}
+
 module.exports = {
   buildAssigneeMention,
   buildAssigneeLine,
+  buildAssigneesLine,
   buildForLine,
   buildForLineMultiple,
   buildAddAssigneeLine,

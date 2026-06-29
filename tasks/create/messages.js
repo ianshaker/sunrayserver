@@ -2,7 +2,7 @@
 // Тексты сообщений для создания задачи из Telegram.
 // ============================================================================
 
-const { buildAssigneeLine } = require("../assigneeMention");
+const { buildAssigneesLine } = require("../assigneeMention");
 
 function buildPreviewMessage(draft) {
   const lines = [
@@ -14,8 +14,8 @@ function buildPreviewMessage(draft) {
   lines.push(`Напомнить: ${draft.dueDateHuman}`);
 
   let parseMode;
-  if (draft.extraAssigneeProfile) {
-    const assigneeLine = buildAssigneeLine(draft.extraAssigneeProfile);
+  if (draft.coAssigneeProfiles?.length) {
+    const assigneeLine = buildAssigneesLine(draft.coAssigneeProfiles);
     lines.push(assigneeLine.text);
     parseMode = assigneeLine.parseMode;
   }
@@ -35,8 +35,8 @@ function buildCreatedMessage(taskNumber, draft) {
   lines.push(`Напомню: ${draft.dueDateHuman}`);
 
   let parseMode;
-  if (draft.extraAssigneeProfile) {
-    const assigneeLine = buildAssigneeLine(draft.extraAssigneeProfile);
+  if (draft.coAssigneeProfiles?.length) {
+    const assigneeLine = buildAssigneesLine(draft.coAssigneeProfiles);
     lines.push(assigneeLine.text);
     parseMode = assigneeLine.parseMode;
   }
@@ -48,7 +48,6 @@ function buildCancelledMessage() {
   return { text: "❌ Отменено. Задача не создана — пришлите запрос заново при необходимости." };
 }
 
-/** Отказ без диалога: одна причина + просьба прислать задачу заново. */
 function buildRejectedMessage(reason) {
   const lines = [
     "❌ Задача не создана.",

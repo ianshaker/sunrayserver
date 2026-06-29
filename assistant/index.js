@@ -52,6 +52,15 @@ async function buildContext(msg, bot) {
   const text = stripMention(rawText, bot).slice(0, MAX_INPUT_CHARS);
   if (!text) return { ctx: null, reason: "empty_after_mention_strip" };
 
+  // Текст и автор сообщения, на которое ответил менеджер (не сообщение бота).
+  const replyMsg = msg.reply_to_message;
+  const replyFrom =
+    replyMsg && !replyMsg.from?.is_bot ? replyMsg.from : null;
+  const replyText =
+    replyFrom
+      ? (replyMsg.text || replyMsg.caption || "").trim().slice(0, MAX_INPUT_CHARS) || null
+      : null;
+
   const profileId = await resolveProfileIdByTelegramUser(msg.from);
 
   return {
@@ -61,6 +70,8 @@ async function buildContext(msg, bot) {
       profileId,
       msg,
       text,
+      replyText,
+      replyFrom,
       chatId,
       enabledIntents,
     },

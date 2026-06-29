@@ -9,16 +9,12 @@ const { DEFAULT_PRIORITY, DEFAULT_STATUS } = require("./config");
 
 /**
  * @param {{ authorProfileId:string, title:string, description:string,
- *           dueDateUtc:string, extraAssigneeId?: string|null }} input
- * @returns {Promise<{ id:string, task_number:number }>}
+ *           dueDateUtc:string, coAssigneeIds?: string[] }} input
  */
-async function insertManagerTask({ authorProfileId, title, description, dueDateUtc, extraAssigneeId }) {
-  // Автор всегда в исполнителях. Если есть доп. исполнитель — он идёт первым
-  // (assigned_to = primaryAssignee = тот, кому пошлёт напоминание).
-  const assignees = extraAssigneeId
-    ? [...new Set([extraAssigneeId, authorProfileId])]
-    : [authorProfileId];
-  const primaryAssignee = assignees[0];
+async function insertManagerTask({ authorProfileId, title, description, dueDateUtc, coAssigneeIds = [] }) {
+  const co = [...new Set(coAssigneeIds.filter(Boolean))].filter((id) => id !== authorProfileId);
+  const assignees = co.length ? [...co, authorProfileId] : [authorProfileId];
+  const primaryAssignee = co[0] || authorProfileId;
 
   const payload = {
     title,

@@ -14,16 +14,21 @@ const { createDraft } = require("./draft");
 const { buildPreviewMessage, buildRejectedMessage } = require("./messages");
 const { buildPreviewKeyboard } = require("./keyboards");
 const { getRoster } = require("./assigneeRoster");
+const {
+  resolveReplyAuthor,
+  mergeCoAssigneeIds,
+  appendReplyAuthorNote,
+} = require("./replyAuthor");
 
 async function handle(ctx) {
-  const { chatId, text, profileId, msg } = ctx;
+  const { chatId, text, replyText, replyFrom, profileId, msg } = ctx;
 
   console.log(
     `[tasks/create] старт chat=${chatId} authorProfile=${profileId || "null"} ` +
-      `tgUser=${msg?.from?.id} text="${text.slice(0, 100)}"`,
+      `tgUser=${msg?.from?.id} text="${text.slice(0, 100)}"` +
+      (replyText ? ` replyCtx="${replyText.slice(0, 60)}"` : ""),
   );
 
-  // Автор — тот, кто вызвал бота. Нет в profiles → отказ.
   if (!profileId) {
     console.log(`[tasks/create] отказ: профиль не найден для tg user ${msg?.from?.id}`);
     await sendText(
@@ -35,7 +40,7 @@ async function handle(ctx) {
 
   let parsed;
   try {
-    parsed = await parseTaskMessage(text);
+    parsed = await parseTaskMessage(text, { replyText });
     console.log(
       `[tasks/create] parse → status=${parsed.status}` +
         (parsed.status === "ok"
@@ -53,11 +58,11 @@ async function handle(ctx) {
   }
 
   if (parsed.status === "error") {
-    const msg =
+    const errMsg =
       parsed.error === "ai_disabled"
         ? "AI-ассистент временно недоступен."
         : "Не удалось разобрать запрос. Сформулируйте задачу иначе.";
-    await sendText(chatId, msg);
+    await sendText(chatId, errMsg);
     return;
   }
 
@@ -67,22 +72,37 @@ async function handle(ctx) {
     return;
   }
 
-  // Профиль доп. исполнителя — для @упоминания в превью и отбивке.
-  let extraAssigneeProfile = null;
-  if (parsed.extraAssigneeId) {
-    const roster = await getRoster();
-    extraAssigneeProfile = roster.find((p) => p.id === parsed.extraAssigneeId) || null;
+  let description = parsed.description;
+  let coAssigneeIds = parsed.extraAssigneeId ? [parsed.extraAssigneeId] : [];
+
+  if (replyFrom) {
+    const { profileId: replyAuthorId, unknownLabel } = await resolveReplyAuthor(replyFrom);
+    if (replyAuthorId) {
+      coAssigneeIds = mergeCoAssigneeIds(replyAuthorId, parsed.extraAssigneeId);
+      console.log(
+        `[tasks/create] replyAuthor → co-assignee ${replyAuthorId}` +
+          (replyAuthorId === profileId ? " (тот же, что вызвал бота)" : ""),
+      );
+    } else if (unknownLabel) {
+      description = appendReplyAuthorNote(description, unknownLabel);
+      console.log(`[tasks/create] replyAuthor → не в БД, note: ${unknownLabel}`);
+    }
   }
+
+  const roster = await getRoster();
+  const coAssigneeProfiles = coAssigneeIds
+    .map((id) => roster.find((p) => p.id === id))
+    .filter(Boolean);
 
   const draftData = {
     chatId,
     authorProfileId: profileId,
     title: parsed.title,
-    description: parsed.description,
+    description,
     dueDateUtc: parsed.dueDateUtc,
     dueDateHuman: formatMskHuman(parsed.dueDateUtc),
-    extraAssigneeId: parsed.extraAssigneeId || null,
-    extraAssigneeProfile,
+    coAssigneeIds,
+    coAssigneeProfiles,
   };
 
   const draftId = createDraft(draftData);

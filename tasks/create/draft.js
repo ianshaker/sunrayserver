@@ -17,7 +17,8 @@ function sweep() {
 
 /**
  * @param {{ chatId:number, authorProfileId:string, title:string,
- *           description:string, dueDateUtc:string, dueDateHuman:string }} data
+ *           description:string, dueDateUtc:string, dueDateHuman:string,
+ *           coAssigneeIds?: string[], coAssigneeProfiles?: object[] }} data
  * @returns {string} draftId
  */
 function createDraft(data) {

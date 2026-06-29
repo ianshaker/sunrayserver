@@ -84,7 +84,7 @@ function registerTaskCreateCallbacks() {
           title: confirmed.title,
           description: confirmed.description,
           dueDateUtc: confirmed.dueDateUtc,
-          extraAssigneeId: confirmed.extraAssigneeId || null,
+          coAssigneeIds: confirmed.coAssigneeIds || [],
         });
 
         const created = buildCreatedMessage(task.task_number, confirmed);
