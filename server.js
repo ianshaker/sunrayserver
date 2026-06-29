@@ -1,6 +1,8 @@
 const path = require("path");
 const fs = require("fs");
-const fastify = require("fastify")({ logger: true });
+const fastify = require("fastify")({
+  logger: { level: process.env.FASTIFY_LOG_LEVEL || "warn" },
+});
 
 const { logSupabaseBoot } = require("./lib/supabaseClient");
 logSupabaseBoot();
@@ -109,8 +111,9 @@ fastify.post("/events/summary", { preHandler: checkSelectelIP }, (req, res) => h
 // Selectel пингует сюда сразу после сохранения mp3 в Supabase → мгновенная расшифровка.
 fastify.post("/internal/transcribe-ready", { preHandler: checkSelectelIP }, async (req, reply) => {
   const entryId = req.body?.entry_id;
-  req.log.info({ entry_id: entryId }, "transcribe-ready от Selectel");
+  console.log(`[call-ai] transcribe-ready от Selectel: entry=${entryId || "—"}`);
   const result = await triggerTranscription(entryId);
+  console.log(`[call-ai] transcribe-ready → ${result.status}`);
   return reply.send(result);
 });
 

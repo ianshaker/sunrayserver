@@ -1,9 +1,12 @@
-const { GMAIL_LABEL_QUERY } = require("../config");
+const { GMAIL_LABEL_QUERY, EMAIL_QUIET_LOG_EVERY } = require("../config");
 const { ensureGmailClient } = require("../gmail/client");
 const { readCache, writeCache } = require("../gmail/tokenStore");
 const { extractEmailBodyFromPayload } = require("../parsing/emailFields");
 const { insertAppealFromEmail } = require("../appeals/insertFromEmail");
 const { needsGmailAuthNotification, notifyTokenRefreshNeeded } = require("./tokenAlerts");
+const { createQuietDigest } = require("../../lib/quietDigest");
+
+const quietDigest = createQuietDigest("[postamails]", EMAIL_QUIET_LOG_EVERY);
 
 function logTimePrefix(now = new Date()) {
   const utcHours = now.getUTCHours();
@@ -14,8 +17,6 @@ function logTimePrefix(now = new Date()) {
 async function checkNewEmails() {
   const now = new Date();
   const prefix = logTimePrefix(now);
-
-  console.log(`${prefix} checkNewEmails start`);
 
   try {
     const gmailClient = await ensureGmailClient();
@@ -36,11 +37,12 @@ async function checkNewEmails() {
     const newIds = ids.filter((id) => !cache.emailIds.includes(id));
 
     if (!newIds.length) {
-      console.log(`${prefix} новых писем нет`);
+      quietDigest.onQuiet();
       return;
     }
 
-    console.log(`${prefix} обрабатываем ${newIds.length} писем`);
+    quietDigest.onActivity();
+    console.log(`${prefix} новых писем: ${newIds.length}`);
 
     for (const id of newIds) {
       try {
@@ -59,8 +61,9 @@ async function checkNewEmails() {
     cache.emailIds = [...cache.emailIds, ...newIds];
     cache.date = formattedDate;
     writeCache(cache);
-    console.log(`${prefix} checkNewEmails done`);
+    console.log(`${prefix} обработка завершена (${newIds.length} писем)`);
   } catch (err) {
+    quietDigest.onActivity();
     console.error(`${prefix} ошибка проверки почты:`, err.message);
 
     if (needsGmailAuthNotification(err.message)) {

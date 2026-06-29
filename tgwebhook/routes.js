@@ -42,6 +42,26 @@ function registerTelegramWebhook(fastify) {
     }
 
     const update = request.body;
+    const updateId = update?.update_id;
+
+    if (update?.message) {
+      const m = update.message;
+      const text = m.text || m.caption || `[${m.sticker ? "sticker" : m.photo ? "photo" : "no text"}]`;
+      console.log(
+        `[tgwebhook] message update=${updateId} chat=${m.chat?.id} ` +
+          `from=@${m.from?.username || "—"} id=${m.from?.id} text="${String(text).slice(0, 100)}"`,
+      );
+    } else if (update?.callback_query) {
+      const cb = update.callback_query;
+      console.log(
+        `[tgwebhook] callback update=${updateId} chat=${cb.message?.chat?.id} ` +
+          `from=@${cb.from?.username || "—"} data="${cb.data || ""}"`,
+      );
+    } else if (update) {
+      console.log(
+        `[tgwebhook] update=${updateId} type=${Object.keys(update).filter((k) => k !== "update_id").join(",") || "?"}`,
+      );
+    }
     // Подтверждаем мгновенно, обрабатываем асинхронно (Telegram ждёт быстрый 200).
     setImmediate(() => {
       dispatchUpdate(update).catch((e) =>

@@ -2,7 +2,10 @@
 // Триггер: когда сообщение адресовано боту (упоминание, reply, private).
 // ============================================================================
 
+const { getTelegramBot } = require("../tgwebhook/bot");
+
 let botUser = null;
+let botUserPromise = null;
 
 function setBotUser(me) {
   if (!me) return;
@@ -15,6 +18,31 @@ function setBotUser(me) {
 
 function getBotUser() {
   return botUser;
+}
+
+/** Ленивая загрузка @username бота — без неё в группах @mention не распознаётся. */
+async function ensureBotUser() {
+  if (botUser) return botUser;
+
+  const bot = getTelegramBot();
+  if (!bot) return null;
+
+  if (!botUserPromise) {
+    botUserPromise = bot
+      .getMe()
+      .then((me) => {
+        setBotUser(me);
+        console.log(`[assistant/trigger] botUser загружен: @${me.username} (id=${me.id})`);
+        return botUser;
+      })
+      .catch((error) => {
+        botUserPromise = null;
+        console.error("[assistant/trigger] getMe() не удался:", error.message);
+        return null;
+      });
+  }
+
+  return botUserPromise;
 }
 
 function isBotCommand(text) {
@@ -38,9 +66,22 @@ function entityMentionsBot(entity, text, bot) {
 }
 
 function messageMentionsBot(msg, bot) {
-  if (!bot || !msg?.entities?.length) return false;
+  if (!bot) return false;
   const text = msg.text || msg.caption || "";
-  return msg.entities.some((entity) => entityMentionsBot(entity, text, bot));
+
+  if (msg?.entities?.length) {
+    if (msg.entities.some((entity) => entityMentionsBot(entity, text, bot))) {
+      return true;
+    }
+  }
+
+  // Запасной путь: @username в тексте (если entities пришли криво).
+  if (bot.username && text) {
+    const pattern = new RegExp(`@${bot.username}\\b`, "i");
+    if (pattern.test(text)) return true;
+  }
+
+  return false;
 }
 
 function isReplyToBot(msg, bot) {
@@ -55,20 +96,26 @@ function isReplyToBot(msg, bot) {
  * - private: любой не-командный текст
  * - group/supergroup: @mention или reply на сообщение бота
  */
-function shouldHandle(msg, bot = botUser) {
-  if (!msg || msg.from?.is_bot) return false;
+async function shouldHandle(msg) {
+  if (!msg || msg.from?.is_bot) return { ok: false, reason: "bot_or_empty" };
 
   const text = (msg.text || msg.caption || "").trim();
-  if (!text || isBotCommand(text)) return false;
+  if (!text || isBotCommand(text)) return { ok: false, reason: "no_text_or_command" };
 
+  const bot = await ensureBotUser();
   const chatType = msg.chat?.type;
-  if (chatType === "private") return true;
+
+  if (chatType === "private") return { ok: true, bot };
 
   if (chatType === "group" || chatType === "supergroup") {
-    return messageMentionsBot(msg, bot) || isReplyToBot(msg, bot);
+    if (!bot) return { ok: false, reason: "bot_user_unknown" };
+    if (messageMentionsBot(msg, bot) || isReplyToBot(msg, bot)) {
+      return { ok: true, bot };
+    }
+    return { ok: false, reason: "no_mention_or_reply" };
   }
 
-  return false;
+  return { ok: false, reason: `chat_type_${chatType || "unknown"}` };
 }
 
 /** Убирает @mention бота из текста. */
@@ -84,6 +131,7 @@ function stripMention(text, bot = botUser) {
 module.exports = {
   setBotUser,
   getBotUser,
+  ensureBotUser,
   shouldHandle,
   stripMention,
   isBotCommand,

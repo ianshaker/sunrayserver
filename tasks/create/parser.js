@@ -36,8 +36,11 @@ async function parseTaskMessage(text) {
     return clarification("Пустое сообщение. Напишите, что и на когда напомнить.");
   }
   if (!hasCredentials()) {
+    console.log("[tasks/create/parser] AI недоступен (нет credentials)");
     return { status: "error", error: "ai_disabled" };
   }
+
+  console.log(`[tasks/create/parser] запрос Gemini, длина=${text.trim().length}`);
 
   const systemPrompt = buildParsePrompt(nowMskString());
   const userPrompt = buildParseUserPrompt(text);
@@ -56,6 +59,7 @@ async function parseTaskMessage(text) {
   });
 
   if (!raw) {
+    console.log(`[tasks/create/parser] пустой ответ Gemini: finish=${finishReason || "?"}`);
     return {
       status: "error",
       error: finishReason === "MAX_TOKENS" ? "response_truncated" : "empty_response",
@@ -64,6 +68,7 @@ async function parseTaskMessage(text) {
 
   const parsed = parseModelJson(raw);
   if (!parsed) {
+    console.log("[tasks/create/parser] JSON не разобран");
     return { status: "error", error: "parse_failed" };
   }
 

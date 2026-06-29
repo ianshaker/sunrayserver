@@ -77,14 +77,21 @@ async function classifyIntent(text, enabledIntents) {
   });
 
   if (!raw) {
-    return {
+    const empty = {
       intent: "unknown",
       confidence: 0,
       reason: finishReason === "MAX_TOKENS" ? "Ответ модели обрезан" : "Пустой ответ модели",
     };
+    console.log(`[assistant/router] пустой ответ модели: finish=${finishReason || "?"}`);
+    return empty;
   }
 
-  return parseRouterResponse(raw, enabledIntents);
+  const result = parseRouterResponse(raw, enabledIntents);
+  console.log(
+    `[assistant/router] intent=${result.intent} conf=${result.confidence.toFixed(2)} ` +
+      `reason="${result.reason}"`,
+  );
+  return result;
 }
 
 function isActionableClassification(result) {

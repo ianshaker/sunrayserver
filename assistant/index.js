@@ -14,30 +14,40 @@ const { classifyIntent, isActionableClassification } = require("./router");
 const { sendUnknown, sendError, sendAiDisabled } = require("./reply");
 const { MAX_INPUT_CHARS } = require("./config");
 
-async function buildContext(msg) {
+async function buildContext(msg, bot) {
   const chatId = msg.chat?.id;
-  if (chatId == null) return null;
+  if (chatId == null) return { ctx: null, reason: "no_chat_id" };
 
   const chat = await getBotChat(chatId);
-  if (!chat) return null;
+  if (!chat) {
+    return {
+      ctx: null,
+      reason: `chat_not_in_registry:${chatId}`,
+    };
+  }
 
   const enabledIntents = getEnabledIntents(chat.permissions);
-  if (!enabledIntents.length) return null;
+  if (!enabledIntents.length) {
+    return { ctx: null, reason: "no_enabled_intents" };
+  }
 
   const rawText = (msg.text || msg.caption || "").trim();
-  const text = stripMention(rawText).slice(0, MAX_INPUT_CHARS);
-  if (!text) return null;
+  const text = stripMention(rawText, bot).slice(0, MAX_INPUT_CHARS);
+  if (!text) return { ctx: null, reason: "empty_after_mention_strip" };
 
   const profileId = await resolveProfileIdByTelegramUser(msg.from);
 
   return {
-    bot: getTelegramBot(),
-    chat,
-    profileId,
-    msg,
-    text,
-    chatId,
-    enabledIntents,
+    ctx: {
+      bot: getTelegramBot(),
+      chat,
+      profileId,
+      msg,
+      text,
+      chatId,
+      enabledIntents,
+    },
+    reason: null,
   };
 }
 
@@ -61,14 +71,33 @@ async function dispatchIntent(ctx, classification) {
 
 function registerAssistant() {
   onMessage(async (msg) => {
-    if (!shouldHandle(msg)) return;
+    const chatId = msg.chat?.id;
+    const preview = (msg.text || msg.caption || "").slice(0, 60);
+
+    const trigger = await shouldHandle(msg);
+    if (!trigger.ok) {
+      // Шум только если в тексте есть @ — иначе в группе слишком много сообщений.
+      if (preview.includes("@")) {
+        console.log(
+          `[assistant] пропуск chat=${chatId}: ${trigger.reason}, text="${preview}"`,
+        );
+      }
+      return;
+    }
 
     try {
-      const ctx = await buildContext(msg);
-      if (!ctx) return;
+      const { ctx, reason } = await buildContext(msg, trigger.bot);
+      if (!ctx) {
+        console.log(
+          `[assistant] нет контекста chat=${chatId}: ${reason}, text="${preview}"`,
+        );
+        return;
+      }
 
       console.log(
         `[assistant] вход: chat «${ctx.chat.title}» (${ctx.chatId}), ` +
+          `profile=${ctx.profileId || "null"}, tgUser=${msg.from?.id}, ` +
+          `intents=[${ctx.enabledIntents.map((i) => i.name).join(",")}], ` +
           `text="${ctx.text.slice(0, 80)}${ctx.text.length > 80 ? "…" : ""}"`,
       );
 

@@ -43,8 +43,11 @@ async function reloadDirectory() {
     });
   }
 
+  const prevSize = cache.byUser?.size ?? 0;
   cache = { byUser, loadedAt: Date.now() };
-  console.log(`[tasks/directory] профилей в кэше: ${byUser.size}`);
+  if (byUser.size !== prevSize || prevSize === 0) {
+    console.log(`[tasks/directory] профилей в кэше: ${byUser.size}`);
+  }
   return cache;
 }
 

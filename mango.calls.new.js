@@ -9,6 +9,48 @@ const { supabase } = require("./lib/supabaseClient");
 const MANGO_DEBUG_LOG = process.env.MANGO_DEBUG_LOG !== "false";
 const MANGO_LOG_FILE = path.join(__dirname, "mango_webhook_debug.jsonl");
 
+// off | compact (default) | verbose — полный RAW/PARSED JSON только в verbose.
+function getMangoLogLevel() {
+    if (process.env.MANGO_DEBUG_LOG === "false") return "off";
+    return process.env.MANGO_LOG_LEVEL || "compact";
+}
+
+function shortEntryId(entryId) {
+    if (!entryId) return "—";
+    const s = String(entryId);
+    return s.length > 12 ? `${s.slice(0, 12)}…` : s;
+}
+
+function shouldLogCompactCall(body) {
+    if (body.call_direction !== undefined) return true;
+    if (body.call_state === "Disconnected") return true;
+    if (body.call_state === "Appeared" && body.location === "ivr") return true;
+    return false;
+}
+
+function logMangoCompact(request, body) {
+    const eventType = classifyMangoEvent(body);
+    const from = body.from?.number || "?";
+    const to = body.to?.number || "?";
+    const entry = shortEntryId(body.entry_id || body.call_id);
+
+    if (body.call_direction !== undefined) {
+        const dir = body.call_direction === 1 ? "вх" : body.call_direction === 2 ? "исх" : body.call_direction;
+        const ans = body.answered ? "ответили" : "не ответили";
+        const talk = body.talk_time != null ? `, разговор ${body.talk_time}с` : "";
+        console.log(
+            `🍋 summary ${dir}, ${ans}${talk} | ${from} → ${to} | entry=${entry}`,
+        );
+        return;
+    }
+
+    const extra =
+        body.call_state === "Disconnected" && body.disconnect_reason != null
+            ? `, код ${body.disconnect_reason}`
+            : "";
+    console.log(`🍋 ${eventType}${extra} | ${from} → ${to} | entry=${entry} | ${request.url}`);
+}
+
 function classifyMangoEvent(body) {
     if (body.call_state) {
         return `call → ${body.call_state} @ ${body.location || "?"}`;
@@ -29,10 +71,19 @@ function redactSecrets(obj) {
 }
 
 function logMangoWebhook(request, rawBody, parsedBody) {
-    if (!MANGO_DEBUG_LOG) return;
+    const level = getMangoLogLevel();
+    if (level === "off") return;
 
     const eventType = classifyMangoEvent(parsedBody);
     const time = new Date().toISOString();
+
+    if (level === "compact") {
+        if (shouldLogCompactCall(parsedBody)) {
+            logMangoCompact(request, parsedBody);
+        }
+        return;
+    }
+
     const divider = "═".repeat(72);
 
     const logEntry = {
@@ -55,6 +106,8 @@ function logMangoWebhook(request, rawBody, parsedBody) {
     console.log("📋 PARSED (распарсенный json):");
     console.log(JSON.stringify(redactSecrets(parsedBody), null, 2));
     console.log(`${divider}\n`);
+
+    if (!MANGO_DEBUG_LOG) return;
 
     try {
         fs.appendFileSync(MANGO_LOG_FILE, JSON.stringify(logEntry) + "\n");

@@ -34,6 +34,9 @@ module.exports = {
   /** Cron: каждую минуту, круглосуточно. */
   CRON_PATTERN: "0 * * * * *",
 
+  /** Лог «тишины» раз в N успешных проверок без новых писем. */
+  EMAIL_QUIET_LOG_EVERY: 30,
+
   TOKEN_ERROR_INTERVAL_MS: 2 * 60 * 60 * 1000,
 
   /** Задержка TG-алерта после listen — Render успевает поднять HTTP. */

@@ -16,7 +16,6 @@ async function findExistingAppealByPhone(normalizedPhone) {
 }
 
 async function getFreeAppealId() {
-  console.log("[postamails] Ищу свободный appeal_id...");
   const { data, error } = await supabase
     .from("ids")
     .select("id, appeal_id, is_used, used_at")

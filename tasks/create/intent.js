@@ -15,10 +15,16 @@ const { buildPreviewMessage } = require("./messages");
 const { buildPreviewKeyboard } = require("./keyboards");
 
 async function handle(ctx) {
-  const { chatId, text, profileId } = ctx;
+  const { chatId, text, profileId, msg } = ctx;
+
+  console.log(
+    `[tasks/create] старт chat=${chatId} authorProfile=${profileId || "null"} ` +
+      `tgUser=${msg?.from?.id} text="${text.slice(0, 100)}"`,
+  );
 
   // Автор — тот, кто вызвал бота. Нет в profiles → отказ.
   if (!profileId) {
+    console.log(`[tasks/create] отказ: профиль не найден для tg user ${msg?.from?.id}`);
     await sendText(
       chatId,
       "Вы не зарегистрированы в системе менеджеров — задача не создана. Обратитесь к администратору.",
@@ -29,6 +35,16 @@ async function handle(ctx) {
   let parsed;
   try {
     parsed = await parseTaskMessage(text);
+    console.log(
+      `[tasks/create] parse → status=${parsed.status}` +
+        (parsed.status === "ok"
+          ? ` title="${parsed.title}" due=${parsed.dueDateMskLocal}`
+          : parsed.clarification
+            ? ` clarification="${parsed.clarification}"`
+            : parsed.error
+              ? ` error=${parsed.error}`
+              : ""),
+    );
   } catch (error) {
     console.error("[tasks/create] парсинг упал:", error.message);
     await sendText(chatId, "Не удалось обработать запрос. Попробуйте позже.");
@@ -45,6 +61,7 @@ async function handle(ctx) {
   }
 
   if (parsed.status === "need_clarification") {
+    console.log(`[tasks/create] уточнение: ${parsed.clarification}`);
     await sendText(chatId, `🤔 ${parsed.clarification}`);
     return;
   }
