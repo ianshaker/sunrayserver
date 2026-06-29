@@ -30,8 +30,16 @@ async function notifyIncomingChatMarkdown(text) {
   await sendMarkdown(TELEGRAM_CHAT_ID, text);
 }
 
+async function notifyGmailActivated() {
+  await notifyIncomingChat(
+    "✅ <b>Gmail API активирован</b>\n\n" +
+      "Проверка почты «Заявки Sunray» возобновлена автоматически.",
+  );
+}
+
 module.exports = {
   setTelegramBot,
   notifyIncomingChat,
   notifyIncomingChatMarkdown,
+  notifyGmailActivated,
 };

@@ -9,6 +9,7 @@ const { extractGoogleAuthCode } = require("./extractAuthCode");
 const { generateAuthUrl, exchangeCodeForTokens } = require("../gmail/oauth");
 const { writeToken } = require("../gmail/tokenStore");
 const { reloadGmailClientAfterTokenSave } = require("../gmail/client");
+const { notifyGmailActivated } = require("../telegramNotify");
 
 function registerGmailAuthRoutes(fastify) {
   fastify.get(SETUP_PATH, async (request, reply) => {
@@ -68,6 +69,10 @@ function registerGmailAuthRoutes(fastify) {
       const { tokens } = await exchangeCodeForTokens(code);
       writeToken(tokens);
       await reloadGmailClientAfterTokenSave(tokens);
+
+      notifyGmailActivated().catch((e) => {
+        console.error("[postamails] TG после активации Gmail:", e.message);
+      });
 
       const successUrl = appendSetupKey(SETUP_PATH, key);
       const sep = successUrl.includes("?") ? "&" : "?";

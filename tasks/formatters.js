@@ -31,7 +31,9 @@ function formatDateTime(dateString) {
 }
 
 function getPriorityLabel(priority) {
-  return PRIORITY_LABELS[priority] || PRIORITY_LABELS.medium;
+  const label = PRIORITY_LABELS[priority] || PRIORITY_LABELS.medium;
+  if (priority === "urgent") return `🔥 ${label}`;
+  return label;
 }
 
 function getStatusLabel(status) {

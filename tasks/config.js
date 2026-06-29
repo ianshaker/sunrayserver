@@ -11,4 +11,13 @@ module.exports = {
 
   /** Telegram: plain text (без Markdown) — безопаснее для произвольных названий. */
   TELEGRAM_PARSE_MODE: undefined,
+
+  /** Статусы, по которым шлём напоминания о дедлайне. */
+  ACTIVE_TASK_STATUSES: ["pending", "in_progress"],
+
+  /** Poll напоминаний: каждую минуту в 0 сек. */
+  REMINDER_CRON_PATTERN: "0 * * * * *",
+
+  /** Повтор TG-напоминания, если задача не закрыта. */
+  REMINDER_INTERVAL_MS: 30 * 60 * 1000,
 };

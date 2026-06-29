@@ -4,11 +4,13 @@ const {
   getStatusLabel,
   formatOptionalBlock,
 } = require("./formatters");
+const { stripAiReminderLogs } = require("./reminder/descriptionLog");
 
 function buildTaskCreatedMessage(task, assignedBy) {
   const lines = [
     `ЗАДАЧА от ${formatDateTime(task.created_at)}`,
     `От: ${assignedBy.full_name || "—"}`,
+    "---",
     `Название: ${task.title || "—"}`,
   ];
 
@@ -16,6 +18,7 @@ function buildTaskCreatedMessage(task, assignedBy) {
   if (description) lines.push(description);
 
   lines.push(`Приоритет: ${getPriorityLabel(task.priority)}`);
+  lines.push("---");
   lines.push(
     `Выполнить до ${task.due_date ? formatDateTime(task.due_date) : "Не указан"}`,
   );
@@ -27,6 +30,7 @@ function buildTaskUpdatedMessage(task, assignedBy) {
   const lines = [
     `ЗАДАЧА ОБНОВЛЕНА · ${formatDateTime(new Date().toISOString())}`,
     `От: ${assignedBy.full_name || "—"}`,
+    "---",
     `Название: ${task.title || "—"}`,
   ];
 
@@ -35,6 +39,7 @@ function buildTaskUpdatedMessage(task, assignedBy) {
 
   lines.push(`Приоритет: ${getPriorityLabel(task.priority)}`);
   lines.push(`Статус: ${getStatusLabel(task.status)}`);
+  lines.push("---");
   lines.push(
     `Выполнить до ${task.due_date ? formatDateTime(task.due_date) : "Не указан"}`,
   );
@@ -58,8 +63,31 @@ function buildTaskCompletedMessage(task, assignees, assignedBy) {
   return lines.join("\n");
 }
 
+function buildTaskDueReminderMessage(task, assigneeProfile) {
+  const assigneeName = assigneeProfile?.full_name || "—";
+
+  const lines = [
+    "⏰ НАПОМИНАНИЕ О ДЕДЛАЙНЕ",
+    `Для: ${assigneeName}`,
+    "---",
+    `Название: ${task.title || "—"}`,
+  ];
+
+  const cleanDescription = stripAiReminderLogs(task.description);
+  const description = formatOptionalBlock("Описание", cleanDescription);
+  if (description) lines.push(description);
+
+  lines.push(`Приоритет: ${getPriorityLabel(task.priority)}`);
+  lines.push(`Статус: ${getStatusLabel(task.status)}`);
+  lines.push("---");
+  lines.push(`Дедлайн: ${formatDateTime(task.due_date)}`);
+
+  return lines.join("\n");
+}
+
 module.exports = {
   buildTaskCreatedMessage,
   buildTaskUpdatedMessage,
   buildTaskCompletedMessage,
+  buildTaskDueReminderMessage,
 };

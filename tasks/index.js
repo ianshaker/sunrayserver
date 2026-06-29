@@ -5,9 +5,9 @@
 //
 // Поток:
 //   CRM POST /tasks/manager → routes → handlers → messages → Telegram
+//   cron reminder → Supabase manager_tasks → TG каждые 30 мин после дедлайна
 //
 // Расширение (будущее):
-//   - AI-сводки / напоминания по due_date → отдельные workers в этой папке
 //   - chatMapping → позже в Supabase profiles.telegram_chat_id
 // ============================================================================
 
@@ -19,9 +19,11 @@ const {
   handleTaskUpdated,
   handleTaskCompleted,
 } = require("./handlers");
+const { startTaskReminderWorker } = require("./reminder/worker");
 
 module.exports = {
   registerTaskRoute,
+  startTaskReminderWorker,
   config,
   getChatIdForUser,
   USER_CHAT_MAPPING,
