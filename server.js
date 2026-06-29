@@ -13,6 +13,7 @@ const {
   registerDiagnosticsHandlers,
   config: tgwebhookConfig,
 } = require("./tgwebhook");
+const { registerTaskCallbackHandlers } = require("./tasks/callbacks");
 
 // --- ИНТЕГРАЦИЯ TELEGRAM-БОТА (исходящие; входящие — через вебхук, без polling) --- //
 const TelegramBot = require('node-telegram-bot-api');
@@ -33,7 +34,6 @@ const { registerPushRoutes } = require("./pushmodul");
 
 // --- Задачи менеджеров (CRM → Telegram) --- //
 const { registerTaskRoute, startTaskReminderWorker } = require("./tasks");
-const { registerTaskCallbackHandlers } = require("./tasks/callbacks");
 
 // --- Импорт функции для готовности --- //
 const { registerReadinessRoute } = require("./readiness");
