@@ -20,6 +20,7 @@ const { registerTaskCreateCallbacks } = require("./tasks/create/callbacks");
 const { registerAssistant, startAssistant } = require("./assistant");
 const { registerIntent } = require("./assistant/registry");
 const { startBotChatsRefresh } = require("./lib/telegramBotChats");
+const { registerBotChatsAdminRoutes } = require("./lib/telegramBotChatsAdmin");
 
 // --- ИНТЕГРАЦИЯ TELEGRAM-БОТА (исходящие; входящие — через вебхук, без polling) --- //
 const TelegramBot = require('node-telegram-bot-api');
@@ -137,6 +138,7 @@ registerGmailAuthRoutes(fastify);
 
 // --- Telegram webhook: приём апдейтов + страница управления /telegram/setup --- //
 registerTelegramWebhook(fastify);
+registerBotChatsAdminRoutes(fastify);
 
 // --- Тестовый пинг --- //
 fastify.get("/ping", async (req, reply) => {

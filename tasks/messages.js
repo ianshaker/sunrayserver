@@ -4,7 +4,6 @@ const {
   getStatusLabel,
   formatOptionalBlock,
 } = require("./formatters");
-const { stripAiReminderLogs } = require("./reminder/descriptionLog");
 
 function formatTaskNumber(task) {
   if (task?.task_number == null) return "";
@@ -70,24 +69,15 @@ function buildTaskCompletedMessage(task, assignees, assignedBy) {
 
 function buildTaskDueReminderMessage(task, assigneeProfile) {
   const assigneeName = assigneeProfile?.full_name || "—";
+  const numPrefix = task?.task_number != null ? `#${task.task_number} ` : "";
+  const deadline = task.due_date ? formatDateTime(task.due_date) : "Не указан";
 
-  const lines = [
-    `⏰ НАПОМИНАНИЕ О ДЕДЛАЙНЕ${formatTaskNumber(task)}`,
+  return [
+    `⏰ ${numPrefix}ДЕДЛАЙН ${deadline}`,
     `Для: ${assigneeName}`,
     "---",
     `Название: ${task.title || "—"}`,
-  ];
-
-  const cleanDescription = stripAiReminderLogs(task.description);
-  const description = formatOptionalBlock("Описание", cleanDescription);
-  if (description) lines.push(description);
-
-  lines.push(`Приоритет: ${getPriorityLabel(task.priority)}`);
-  lines.push(`Статус: ${getStatusLabel(task.status)}`);
-  lines.push("---");
-  lines.push(`Дедлайн: ${formatDateTime(task.due_date)}`);
-
-  return lines.join("\n");
+  ].join("\n");
 }
 
 module.exports = {

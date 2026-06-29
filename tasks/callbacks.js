@@ -2,7 +2,12 @@ const { onCallbackQuery } = require("../tgwebhook");
 const { getTelegramBot } = require("../tgwebhook/bot");
 const { resolveProfileIdByTelegramUser } = require("./directory");
 const { resolveTaskActionPermission } = require("./superUsers");
-const { snoozeTaskByNumber, completeTaskByNumber, fetchActiveTaskByNumber } = require("./taskActions");
+const {
+  SNOOZE_PRESETS,
+  snoozeTaskByNumber,
+  completeTaskByNumber,
+  fetchActiveTaskByNumber,
+} = require("./taskActions");
 const {
   getMessageContext,
   setButtonsLoading,
@@ -10,36 +15,42 @@ const {
   finishWithFooter,
 } = require("./callbackUi");
 
-const CALLBACK_RE = /^mt:(sn|ok):(\d+)$/;
+const CALLBACK_RE = /^mt:(10|30|1h|tm|sn|ok):(\d+)$/;
 
 const LOADING_LABEL = {
-  sn: "⏳ Откладываю…",
+  snooze: "⏳ Переношу…",
   ok: "⏳ Закрываю…",
 };
 
 function parseCallbackData(data) {
   const match = String(data || "").match(CALLBACK_RE);
   if (!match) return null;
-  return { action: match[1], taskNumber: Number(match[2]) };
+  let action = match[1];
+  if (action === "sn") action = "1h";
+  return { action, taskNumber: Number(match[2]) };
 }
 
-function successToast(action, taskNumber, access) {
+function snoozeLabel(presetKey) {
+  return SNOOZE_PRESETS[presetKey]?.label || presetKey;
+}
+
+function successToast(action, taskNumber, access, presetKey) {
   if (access.elevated) {
-    return action === "sn" ? "Задача отложена" : "Задача выполнена";
+    return action === "ok" ? "Задача завершена" : "Дедлайн перенесён";
   }
-  if (action === "sn") return `Задача #${taskNumber} отложена на 1 час`;
-  return `Задача #${taskNumber} выполнена ✅`;
+  if (action === "ok") return `Задача #${taskNumber} завершена`;
+  return `#${taskNumber} → ${snoozeLabel(presetKey)}`;
 }
 
-function buildActionFooter(action, taskNumber, access) {
+function buildActionFooter(action, taskNumber, access, presetKey) {
   const main =
-    action === "sn"
-      ? `⏰ Задача #${taskNumber} отложена на 1 час`
-      : `✅ Задача #${taskNumber} выполнена`;
+    action === "ok"
+      ? `✅ Задача #${taskNumber} завершена`
+      : `⏰ Задача #${taskNumber} → ${snoozeLabel(presetKey)}`;
 
   if (!access.elevated) return main;
 
-  const notice = action === "sn" ? access.noticeSnooze : access.noticeComplete;
+  const notice = action === "ok" ? access.noticeComplete : access.noticeSnooze;
   return `${main}\n${notice}`;
 }
 
@@ -65,6 +76,7 @@ function registerTaskCallbackHandlers() {
     const bot = getTelegramBot();
     const ctx = getMessageContext(callbackQuery);
     const { action, taskNumber } = parsed;
+    const isSnooze = action !== "ok";
 
     try {
       const task = await fetchActiveTaskByNumber(taskNumber);
@@ -80,27 +92,30 @@ function registerTaskCallbackHandlers() {
         return;
       }
 
-      // Показываем «Делаю…» на кнопках, toast — один раз в конце.
       if (bot && ctx) {
-        await setButtonsLoading(bot, ctx, LOADING_LABEL[action] || "⏳ Делаю…");
+        await setButtonsLoading(
+          bot,
+          ctx,
+          isSnooze ? LOADING_LABEL.snooze : LOADING_LABEL.ok,
+        );
       }
 
-      if (action === "sn") {
-        const result = await snoozeTaskByNumber(taskNumber);
+      if (isSnooze) {
+        const result = await snoozeTaskByNumber(taskNumber, action);
         if (!result.ok) {
           if (bot && ctx) await restoreButtons(bot, ctx, taskNumber);
-          await answerCallback(callbackQuery, "Не удалось отложить задачу");
+          await answerCallback(callbackQuery, "Не удалось перенести задачу");
           return;
         }
         if (bot && ctx) {
           await finishWithFooter(
             bot,
             ctx,
-            buildActionFooter("sn", taskNumber, access),
+            buildActionFooter("snooze", taskNumber, access, action),
           );
         }
-        await answerCallback(callbackQuery, successToast("sn", taskNumber, access));
-        console.log(`[tasks/callback] snooze #${taskNumber} из chat ${chatId}`);
+        await answerCallback(callbackQuery, successToast("snooze", taskNumber, access, action));
+        console.log(`[tasks/callback] snooze #${taskNumber} → ${action} из chat ${chatId}`);
         return;
       }
 
@@ -134,7 +149,7 @@ function registerTaskCallbackHandlers() {
     }
   });
 
-  console.log("[tasks/callback] кнопки задач: отложить / выполнено");
+  console.log("[tasks/callback] кнопки задач: перенос / завершить");
 }
 
 module.exports = { registerTaskCallbackHandlers };
