@@ -68,6 +68,7 @@ function formatMskHuman(utcIso) {
 module.exports = {
   MSK_OFFSET,
   TIMEZONE,
+  nowMskParts,
   nowMskString,
   mskLocalToDate,
   mskLocalToUtcIso,
