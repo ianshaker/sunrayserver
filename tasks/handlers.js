@@ -5,12 +5,14 @@ const {
   buildTaskCompletedMessage,
 } = require("./messages");
 const { sendTaskTelegramMessage } = require("./telegram");
+const { buildTaskActionKeyboard } = require("./keyboards");
 
 async function notifyAssignees({
   assignees,
   assignedBy,
   skipCreator = false,
   buildMessage,
+  buildKeyboard,
   telegramBot,
   logLabel,
 }) {
@@ -31,9 +33,10 @@ async function notifyAssignees({
     }
 
     const message = buildMessage();
+    const keyboard = buildKeyboard ? buildKeyboard() : undefined;
 
     try {
-      await sendTaskTelegramMessage(telegramBot, chatId, message);
+      await sendTaskTelegramMessage(telegramBot, chatId, message, keyboard);
       console.log(
         `✅ [tasks] ${logLabel} → ${assignee.full_name} (chat ${chatId})`,
       );
@@ -56,6 +59,7 @@ async function handleTaskCreated(task, assignees, assignedBy, telegramBot) {
     telegramBot,
     logLabel: "новая задача",
     buildMessage: () => buildTaskCreatedMessage(task, assignedBy),
+    buildKeyboard: () => buildTaskActionKeyboard(task.task_number),
   });
 }
 

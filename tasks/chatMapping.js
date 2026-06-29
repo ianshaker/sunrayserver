@@ -21,7 +21,15 @@ function getChatIdForUser(userId) {
   return USER_CHAT_MAPPING[userId] ?? null;
 }
 
+function getUserIdsForChatId(chatId) {
+  const target = Number(chatId);
+  return Object.entries(USER_CHAT_MAPPING)
+    .filter(([, mappedChatId]) => Number(mappedChatId) === target)
+    .map(([userId]) => userId);
+}
+
 module.exports = {
   USER_CHAT_MAPPING,
   getChatIdForUser,
+  getUserIdsForChatId,
 };

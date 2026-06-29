@@ -20,6 +20,7 @@ const TELEGRAM_TOKEN = tgwebhookConfig.TELEGRAM_TOKEN;
 const telegramBot = new TelegramBot(TELEGRAM_TOKEN, { polling: false });
 setWebhookBot(telegramBot);
 registerDiagnosticsHandlers();
+registerTaskCallbackHandlers();
 
 // --- Импорт обработчика манго (прокидываем telegramBot) --- //
 const { handleMangoWebhook } = require("./mango.calls.new");
@@ -32,6 +33,7 @@ const { registerPushRoutes } = require("./pushmodul");
 
 // --- Задачи менеджеров (CRM → Telegram) --- //
 const { registerTaskRoute, startTaskReminderWorker } = require("./tasks");
+const { registerTaskCallbackHandlers } = require("./tasks/callbacks");
 
 // --- Импорт функции для готовности --- //
 const { registerReadinessRoute } = require("./readiness");

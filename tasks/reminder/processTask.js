@@ -3,6 +3,7 @@ const { resolveAssigneeIds } = require("../assignees");
 const { loadProfilesByIds } = require("../profiles");
 const { buildTaskDueReminderMessage } = require("../messages");
 const { sendTaskTelegramMessage } = require("../telegram");
+const { buildTaskActionKeyboard } = require("../keyboards");
 const {
   appendReminderToDescription,
 } = require("./descriptionLog");
@@ -47,9 +48,10 @@ async function processTaskReminder(task, telegramBot) {
     }
 
     const message = buildTaskDueReminderMessage(claimed, profile);
+    const keyboard = buildTaskActionKeyboard(claimed.task_number);
 
     try {
-      await sendTaskTelegramMessage(telegramBot, chatId, message);
+      await sendTaskTelegramMessage(telegramBot, chatId, message, keyboard);
       sentCount += 1;
       console.log(
         `[tasks/reminder] «${claimed.title}» → ${fullName} (chat ${chatId})`,
