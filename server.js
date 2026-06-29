@@ -5,10 +5,21 @@ const fastify = require("fastify")({ logger: true });
 const { logSupabaseBoot } = require("./lib/supabaseClient");
 logSupabaseBoot();
 
-// --- ИНТЕГРАЦИЯ TELEGRAM-БОТА (только исходящие сообщения, без polling) --- //
+// --- Единый Telegram-вебхук (входящие апдейты: кнопки, команды, нейронки) --- //
+const {
+  registerTelegramWebhook,
+  startWebhookSelfHeal,
+  setTelegramBot: setWebhookBot,
+  registerDiagnosticsHandlers,
+  config: tgwebhookConfig,
+} = require("./tgwebhook");
+
+// --- ИНТЕГРАЦИЯ TELEGRAM-БОТА (исходящие; входящие — через вебхук, без polling) --- //
 const TelegramBot = require('node-telegram-bot-api');
-const TELEGRAM_TOKEN = '7866133715:AAH2lSoDsDnmpQhEjSghjNb23ezp98IZW4g';
+const TELEGRAM_TOKEN = tgwebhookConfig.TELEGRAM_TOKEN;
 const telegramBot = new TelegramBot(TELEGRAM_TOKEN, { polling: false });
+setWebhookBot(telegramBot);
+registerDiagnosticsHandlers();
 
 // --- Импорт обработчика манго (прокидываем telegramBot) --- //
 const { handleMangoWebhook } = require("./mango.calls.new");
@@ -112,6 +123,9 @@ registerAskRoute(fastify);
 // --- Gmail OAuth (страница активации, без Telegram polling) --- //
 registerGmailAuthRoutes(fastify);
 
+// --- Telegram webhook: приём апдейтов + страница управления /telegram/setup --- //
+registerTelegramWebhook(fastify);
+
 // --- Тестовый пинг --- //
 fastify.get("/ping", async (req, reply) => {
   return { status: "pong" };
@@ -128,5 +142,6 @@ fastify.listen(
     console.log(`Your app is listening on ${address}`);
     startEmailChecker(telegramBot);
     startTaskReminderWorker(telegramBot);
+    startWebhookSelfHeal();
   }
 );
