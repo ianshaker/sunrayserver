@@ -52,8 +52,7 @@ async function buildContext(msg, bot) {
   }
 
   const rawText = (msg.text || msg.caption || "").trim();
-  const text = stripMention(rawText, bot).slice(0, MAX_INPUT_CHARS);
-  if (!text) return { ctx: null, reason: "empty_after_mention_strip" };
+  const textFromMsg = stripMention(rawText, bot).slice(0, MAX_INPUT_CHARS);
 
   const { replyText, replyFrom, replyUnsupported, replyVoiceFailed } =
     await extractReplyContext(msg.reply_to_message, getTelegramBot());
@@ -62,6 +61,18 @@ async function buildContext(msg, bot) {
       `[assistant] reply без текста (${labelUnsupportedKind(replyUnsupported)}) — контекст не используем`,
     );
   }
+
+  // Если текст команды пустой (@бот без слов), но голосовое reply расшифровалось —
+  // используем транскрипт как основной текст (голосовое — полноценная команда).
+  let text = textFromMsg;
+  let voiceAsText = false;
+  if (!text && replyText && msg.reply_to_message?.voice) {
+    text = replyText;
+    voiceAsText = true;
+    console.log(`[assistant] голосовое → основной текст команды: "${text.slice(0, 80)}"`);
+  }
+
+  if (!text) return { ctx: null, reason: "empty_after_mention_strip" };
 
   const profileId = await resolveProfileIdByTelegramUser(msg.from);
 
@@ -72,8 +83,8 @@ async function buildContext(msg, bot) {
       profileId,
       msg,
       text,
-      replyText,
-      replyFrom,
+      replyText: voiceAsText ? null : replyText,
+      replyFrom: voiceAsText ? null : replyFrom,
       replyUnsupported,
       replyVoiceFailed,
       chatId,
