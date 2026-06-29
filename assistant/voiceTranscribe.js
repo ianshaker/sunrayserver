@@ -15,9 +15,9 @@ const MAX_VOICE_BYTES = 9 * 1024 * 1024; // 9 MB — inline лимит Google
 const MAX_VOICE_SECONDS = 60;
 
 function getTelegramFileUrl(filePath) {
-  const token = process.env.TELEGRAM_BOT_TOKEN;
-  if (!token) throw new Error("TELEGRAM_BOT_TOKEN не задан");
-  return `https://api.telegram.org/file/bot${token}/${filePath}`;
+  const { TELEGRAM_TOKEN } = require("../tgwebhook/config");
+  if (!TELEGRAM_TOKEN) throw new Error("TELEGRAM_TOKEN не задан");
+  return `https://api.telegram.org/file/bot${TELEGRAM_TOKEN}/${filePath}`;
 }
 
 function downloadBuffer(url) {
