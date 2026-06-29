@@ -32,7 +32,7 @@ function parseJson(raw) {
  *   | { status: "error", error: string }
  * >}
  */
-async function findTaskByContext(text, action) {
+async function findTaskByContext(text, action, { replyText } = {}) {
   if (!hasCredentials()) {
     return { status: "error", error: "ai_disabled" };
   }
@@ -50,11 +50,13 @@ async function findTaskByContext(text, action) {
   }
 
   console.log(
-    `[tasks/manage/context] поиск по контексту: action=${action}, задач=${tasks.length}, текст="${text.slice(0, 60)}"`,
+    `[tasks/manage/context] поиск по контексту: action=${action}, задач=${tasks.length}, ` +
+      `text="${text.slice(0, 60)}"` +
+      (replyText ? ` reply="${replyText.slice(0, 40)}"` : ""),
   );
 
   const systemPrompt = buildContextSearchPrompt(action);
-  const userPrompt = buildContextSearchUserPrompt(text, tasks);
+  const userPrompt = buildContextSearchUserPrompt(text, tasks, replyText);
 
   const { text: raw, finishReason } = await generateContent({
     systemPrompt,

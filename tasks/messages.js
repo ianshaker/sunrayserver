@@ -5,6 +5,7 @@ const {
   formatOptionalBlock,
 } = require("./formatters");
 const { buildForLineMultiple } = require("./assigneeMention");
+const { stripAiReminderLogs } = require("./reminder/descriptionLog");
 
 function formatTaskNumber(task) {
   if (task?.task_number == null) return "";
@@ -82,13 +83,21 @@ function buildTaskDueReminderMessage(task, assigneeProfiles) {
   const numPrefix = task?.task_number != null ? `#${task.task_number} ` : "";
   const deadline = task.due_date ? formatDateTime(task.due_date) : "Не указан";
 
+  const lines = [
+    `⏰ ${numPrefix}ДЕДЛАЙН ${deadline}`,
+    forLine.text,
+    "---",
+    `Название: ${task.title || "—"}`,
+  ];
+
+  const description = formatOptionalBlock(
+    "Описание",
+    stripAiReminderLogs(task.description),
+  );
+  if (description) lines.push(description);
+
   return {
-    text: [
-      `⏰ ${numPrefix}ДЕДЛАЙН ${deadline}`,
-      forLine.text,
-      "---",
-      `Название: ${task.title || "—"}`,
-    ].join("\n"),
+    text: lines.join("\n"),
     parseMode: forLine.parseMode,
   };
 }

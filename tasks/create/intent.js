@@ -75,7 +75,7 @@ async function handle(ctx) {
   let description = parsed.description;
   let coAssigneeIds = parsed.extraAssigneeId ? [parsed.extraAssigneeId] : [];
 
-  if (replyFrom) {
+  if (replyFrom && replyText) {
     const { profileId: replyAuthorId, unknownLabel } = await resolveReplyAuthor(replyFrom);
     if (replyAuthorId) {
       coAssigneeIds = mergeCoAssigneeIds(replyAuthorId, parsed.extraAssigneeId);

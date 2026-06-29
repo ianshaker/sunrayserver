@@ -3,7 +3,7 @@
 // ============================================================================
 
 const { getTelegramBot } = require("../tgwebhook/bot");
-const { REPLIES } = require("./config");
+const { REPLIES, buildPermissionReply, ADMIN_TELEGRAM_USERNAME } = require("./config");
 
 async function sendText(chatId, text, options = {}) {
   const bot = getTelegramBot();
@@ -29,9 +29,19 @@ async function sendAiDisabled(chatId) {
   await sendText(chatId, REPLIES.AI_DISABLED);
 }
 
+async function sendPermissionDenied(chatId, kind) {
+  const text = buildPermissionReply(kind, ADMIN_TELEGRAM_USERNAME);
+  if (!text) {
+    await sendUnknown(chatId);
+    return;
+  }
+  await sendText(chatId, text);
+}
+
 module.exports = {
   sendText,
   sendUnknown,
   sendError,
   sendAiDisabled,
+  sendPermissionDenied,
 };

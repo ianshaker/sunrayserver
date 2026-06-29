@@ -141,13 +141,13 @@ function okPayload(action, taskNumber, dueDateUtc, dueDateMskLocal, extraAssigne
  *   | { status: "error", error }
  * >}
  */
-async function parseManageMessage(text) {
+async function parseManageMessage(text, { replyText } = {}) {
   if (!text || !text.trim()) {
     return { status: "error", error: "empty_input" };
   }
 
   const fast = tryExtractReschedule(text);
-  if (fast && !EDIT_HINT.test(text)) {
+  if (fast && !EDIT_HINT.test(text) && !replyText) {
     console.log(
       `[tasks/manage/parser] fast-path reschedule #${fast.taskNumber} → ${fast.dueDateMskLocal}`,
     );
@@ -159,11 +159,14 @@ async function parseManageMessage(text) {
     return { status: "error", error: "ai_disabled" };
   }
 
-  console.log(`[tasks/manage/parser] запрос Gemini, длина=${text.trim().length}`);
+  console.log(
+    `[tasks/manage/parser] запрос Gemini, длина=${text.trim().length}` +
+      (replyText ? ` +reply=${replyText.trim().length}` : ""),
+  );
 
   const rosterText = await buildRosterText();
   const systemPrompt = buildManagePrompt(nowMskString(), rosterText);
-  const userPrompt = buildManageUserPrompt(text);
+  const userPrompt = buildManageUserPrompt(text, replyText);
 
   const { text: raw, finishReason } = await generateContent({
     systemPrompt,

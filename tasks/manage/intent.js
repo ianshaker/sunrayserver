@@ -21,6 +21,7 @@ const { parseManageMessage } = require("./parser");
 const { findTaskByContext } = require("./contextSearch");
 const { createDraft } = require("./draft");
 const { buildPreviewKeyboard } = require("./keyboards");
+const { applyReplyContext } = require("./replyContext");
 const {
   buildPreviewMessage,
   buildRejectedMessage,
@@ -67,11 +68,12 @@ function checkAccess(task, profileId) {
 }
 
 async function handle(ctx) {
-  const { chatId, text, profileId, msg } = ctx;
+  const { chatId, text, replyText, replyFrom, profileId, msg } = ctx;
 
   console.log(
     `[tasks/manage] старт chat=${chatId} profile=${profileId || "null"} ` +
-      `tgUser=${msg?.from?.id} text="${text.slice(0, 100)}"`,
+      `tgUser=${msg?.from?.id} text="${text.slice(0, 100)}"` +
+      (replyText ? ` replyCtx="${replyText.slice(0, 60)}"` : ""),
   );
 
   if (!profileId) {
@@ -84,10 +86,12 @@ async function handle(ctx) {
 
   let parsed;
   try {
-    parsed = await parseManageMessage(text);
+    parsed = await parseManageMessage(text, { replyText });
+    parsed = await applyReplyContext(parsed, { replyText, replyFrom });
     console.log(
       `[tasks/manage] parse → status=${parsed.status} action=${parsed.action || "?"} ` +
         `num=${parsed.taskNumber ?? "null"}` +
+        (parsed.descriptionAppend ? " descAppend=yes" : "") +
         (parsed.reason ? ` reason="${parsed.reason}"` : "") +
         (parsed.error ? ` err=${parsed.error}` : ""),
     );
@@ -140,7 +144,7 @@ async function handle(ctx) {
 
     let contextResult;
     try {
-      contextResult = await findTaskByContext(text, parsed.action);
+      contextResult = await findTaskByContext(text, parsed.action, { replyText });
     } catch (error) {
       console.error("[tasks/manage] контекстный поиск упал:", error.message);
       await sendText(chatId, "Не удалось выполнить поиск задачи. Попробуйте позже.");

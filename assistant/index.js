@@ -11,8 +11,10 @@ const { resolveProfileIdByTelegramUser } = require("../tasks/directory");
 const { shouldHandle, stripMention, setBotUser } = require("./trigger");
 const { getEnabledIntents, getIntent } = require("./registry");
 const { classifyIntent, isActionableClassification } = require("./router");
-const { sendUnknown, sendError, sendAiDisabled } = require("./reply");
+const { sendUnknown, sendError, sendAiDisabled, sendPermissionDenied, sendText } = require("./reply");
+const { detectPermissionGap } = require("./permissionHints");
 const { MAX_INPUT_CHARS } = require("./config");
+const { extractReplyContext, labelUnsupportedKind } = require("./replyExtract");
 
 const RECENT_MSG_MAX = 500;
 const recentMsgOrder = [];
@@ -40,26 +42,26 @@ async function buildContext(msg, bot) {
     return {
       ctx: null,
       reason: `chat_not_in_registry:${chatId}`,
+      chat: null,
     };
   }
 
   const enabledIntents = getEnabledIntents(chat.permissions);
   if (!enabledIntents.length) {
-    return { ctx: null, reason: "no_enabled_intents" };
+    return { ctx: null, reason: "no_enabled_intents", chat };
   }
 
   const rawText = (msg.text || msg.caption || "").trim();
   const text = stripMention(rawText, bot).slice(0, MAX_INPUT_CHARS);
   if (!text) return { ctx: null, reason: "empty_after_mention_strip" };
 
-  // Текст и автор сообщения, на которое ответил менеджер (не сообщение бота).
-  const replyMsg = msg.reply_to_message;
-  const replyFrom =
-    replyMsg && !replyMsg.from?.is_bot ? replyMsg.from : null;
-  const replyText =
-    replyFrom
-      ? (replyMsg.text || replyMsg.caption || "").trim().slice(0, MAX_INPUT_CHARS) || null
-      : null;
+  const { replyText, replyFrom, replyUnsupported, replyVoiceFailed } =
+    await extractReplyContext(msg.reply_to_message, getTelegramBot());
+  if (replyUnsupported) {
+    console.log(
+      `[assistant] reply без текста (${labelUnsupportedKind(replyUnsupported)}) — контекст не используем`,
+    );
+  }
 
   const profileId = await resolveProfileIdByTelegramUser(msg.from);
 
@@ -72,10 +74,13 @@ async function buildContext(msg, bot) {
       text,
       replyText,
       replyFrom,
+      replyUnsupported,
+      replyVoiceFailed,
       chatId,
       enabledIntents,
     },
     reason: null,
+    chat,
   };
 }
 
@@ -119,11 +124,20 @@ function registerAssistant() {
     }
 
     try {
-      const { ctx, reason } = await buildContext(msg, trigger.bot);
+      const { ctx, reason, chat: chatEntry } = await buildContext(msg, trigger.bot);
       if (!ctx) {
         console.log(
           `[assistant] нет контекста chat=${chatId}: ${reason}, text="${preview}"`,
         );
+        const rawText = stripMention((msg.text || msg.caption || "").trim(), trigger.bot);
+        const gap = detectPermissionGap({
+          chat: chatEntry,
+          text: rawText,
+          contextReason: reason,
+        });
+        if (gap) {
+          await sendPermissionDenied(chatId, gap);
+        }
         return;
       }
 
@@ -133,6 +147,16 @@ function registerAssistant() {
           `intents=[${ctx.enabledIntents.map((i) => i.name).join(",")}], ` +
           `text="${ctx.text.slice(0, 80)}${ctx.text.length > 80 ? "…" : ""}"`,
       );
+
+      // Уведомляем, если голосовое было, но не расшифровалось.
+      if (ctx.replyVoiceFailed) {
+        try {
+          await sendText(
+            ctx.chatId,
+            `⚠️ Голосовое не взял в контекст — ${ctx.replyVoiceFailed}. Работаю только с текстом команды.`,
+          );
+        } catch (_) {}
+      }
 
       const classification = await classifyIntent(ctx.text, ctx.enabledIntents);
 
@@ -146,7 +170,16 @@ function registerAssistant() {
           `[assistant] unknown/low confidence: intent=${classification.intent}, ` +
             `confidence=${classification.confidence}`,
         );
-        await sendUnknown(ctx.chatId);
+        const gap = detectPermissionGap({
+          chat: ctx.chat,
+          text: ctx.text,
+          classification,
+        });
+        if (gap) {
+          await sendPermissionDenied(chatId, gap);
+        } else {
+          await sendUnknown(chatId);
+        }
         return;
       }
 

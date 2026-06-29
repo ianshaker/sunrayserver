@@ -39,8 +39,10 @@ function buildContextSearchPrompt(action) {
 Сотрудник хочет выполнить действие «${actionDesc}» над одной из своих задач, но назвал её по смыслу, а не по номеру.
 Ниже — список ВСЕХ активных задач. Найди, какую задачу имеет в виду сотрудник.
 
+Иногда запрос содержит «Отмеченное сообщение» — текст, на который сотрудник ответил. Учитывай его при поиске задачи (телефон, имя клиента, суть).
+
 ПРАВИЛА:
-1. Ищи совпадение по смыслу: заголовку, описанию, ключевым словам, именам, номерам телефонов.
+1. Ищи совпадение по смыслу: заголовку, описанию, ключевым словам, именам, номерам телефонов — в команде И в отмеченном сообщении.
 2. Если нашёл РОВНО ОДНУ подходящую задачу — верни status "found" и её task_number.
 3. Если подходящих задач НЕСКОЛЬКО (2–5) — верни status "ambiguous" и список candidates.
 4. Если не нашёл ни одной подходящей — верни status "not_found".
@@ -58,9 +60,18 @@ function buildContextSearchPrompt(action) {
 {"status":"not_found"}`;
 }
 
-function buildContextSearchUserPrompt(text, tasks) {
+function buildContextSearchUserPrompt(text, tasks, replyText) {
   const taskList = tasks.map(formatTaskForPrompt).join("\n\n");
-  return `Сообщение сотрудника:\n${text.trim()}\n\n---\nАктивные задачи (${tasks.length}):\n\n${taskList}`;
+  const commandBlock = replyText
+    ? [
+        "Команда сотрудника (к боту):",
+        text.trim(),
+        "",
+        "Отмеченное сообщение (контекст):",
+        replyText.trim(),
+      ].join("\n")
+    : `Сообщение сотрудника:\n${text.trim()}`;
+  return `${commandBlock}\n\n---\nАктивные задачи (${tasks.length}):\n\n${taskList}`;
 }
 
 module.exports = { buildContextSearchPrompt, buildContextSearchUserPrompt };
