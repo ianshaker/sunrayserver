@@ -14,7 +14,7 @@ const {
   WORK_HOUR_START,
   WORK_HOUR_END,
 } = require("./config");
-const { getActiveDeadlineNotif, getNextDeadlineAppeal } = require("./queries");
+const { getActiveDeadlineNotif, getNextDeadlineAppeal, getMskTodayDate } = require("./queries");
 const { sendDeadlineNotification, sendDeadlineReminder } = require("./notifier");
 
 /**
@@ -51,7 +51,8 @@ async function runDeadlineCheck(bot) {
     // Берём следующую заявку в очереди
     const next = await getNextDeadlineAppeal();
     if (!next) {
-      return; // Все дедлайны на сегодня обработаны или очередь пуста
+      console.log(`${prefix} очередь пуста на сегодня (${getMskTodayDate()} MSK)`);
+      return;
     }
 
     console.log(`${prefix} → отправляем дедлайн ${next.appeal_number}`);
@@ -70,6 +71,13 @@ function startAppealDeadlineWorker(bot) {
   console.log(
     `[appeals-deadlines] воркер запущен: ${DEADLINE_CRON_PATTERN} (каждые 30 мин, ${hoursLabel})`,
   );
+
+  // Первая проверка через 5 с после старта (не ждём :00/:30).
+  setTimeout(() => {
+    runDeadlineCheck(bot).catch((err) =>
+      console.error("[appeals-deadlines] стартовая проверка:", err.message),
+    );
+  }, 5000);
 }
 
 module.exports = { startAppealDeadlineWorker, runDeadlineCheck };
