@@ -15,6 +15,19 @@ function getMskTodayDate() {
 }
 
 /**
+ * Дата по MSK + N календарных дней (0 = сегодня).
+ *
+ * @param {number} dayOffset
+ * @returns {string} YYYY-MM-DD
+ */
+function getMskDateOffset(dayOffset) {
+  const today = getMskTodayDate();
+  const [y, m, d] = today.split("-").map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d + dayOffset));
+  return date.toISOString().slice(0, 10);
+}
+
+/**
  * Проверяет, есть ли заявка, по которой бот уже кинул уведомление сегодня,
  * но менеджер ещё не отреагировал (deadline_resolved_at IS NULL).
  *
@@ -162,6 +175,72 @@ async function updateAppealReminderDate(id, newDate) {
 }
 
 /**
+ * Новая дата дедлайна: не раньше сегодня (MSK). Дата без времени — «сегодня» допустимо.
+ *
+ * @param {string} isoDate YYYY-MM-DD
+ * @returns {{ ok: true } | { ok: false, reason: string }}
+ */
+function validateNewDeadlineDate(isoDate) {
+  if (!isoDate || !/^\d{4}-\d{2}-\d{2}$/.test(isoDate)) {
+    return { ok: false, reason: "Некорректная дата." };
+  }
+  const today = getMskTodayDate();
+  if (isoDate < today) {
+    return { ok: false, reason: "Новая дата не может быть раньше сегодня." };
+  }
+  return { ok: true };
+}
+
+/**
+ * Применяет структурные обновления + блок в dialog + перенос reminder_date.
+ *
+ * @param {number} id
+ * @param {string} newDate YYYY-MM-DD
+ * @param {{ fieldPatch?: object, dialogAppend?: string | null }} payload
+ */
+async function applyInfoAddedAndRescheduleAppeal(id, newDate, { fieldPatch = {}, dialogAppend = null }) {
+  const { data: row, error: readErr } = await supabase
+    .from("appeals")
+    .select("dialog")
+    .eq("id", id)
+    .single();
+
+  if (readErr) {
+    console.error("[appeals-deadlines/queries] applyInfoAdded read:", readErr.message);
+    throw readErr;
+  }
+
+  const existing = (row?.dialog || "").trim();
+  const append = String(dialogAppend || "").trimStart();
+  const newDialog = append ? (existing ? existing + append : append.trim()) : existing;
+
+  const updatePayload = {
+    ...fieldPatch,
+    reminder_date: newDate,
+    deadline_notif_sent_at: null,
+    deadline_notif_tg_msg_id: null,
+    deadline_resolved_at: null,
+    deadline_resolution: null,
+  };
+
+  if (append) {
+    updatePayload.dialog = newDialog;
+  }
+
+  const { error } = await supabase.from("appeals").update(updatePayload).eq("id", id);
+
+  if (error) {
+    console.error("[appeals-deadlines/queries] applyInfoAddedAndRescheduleAppeal:", error.message);
+    throw error;
+  }
+}
+
+/** @deprecated используйте applyInfoAddedAndRescheduleAppeal */
+async function appendDialogAndRescheduleAppeal(id, newDate, dialogAppend) {
+  return applyInfoAddedAndRescheduleAppeal(id, newDate, { dialogAppend });
+}
+
+/**
  * Ищет заявку по appeal_number (например «#08044»).
  *
  * @param {string} appealNumber
@@ -172,7 +251,9 @@ async function findAppealByNumber(appealNumber) {
 
   const { data, error } = await supabase
     .from("appeals")
-    .select("id, appeal_number, client_name, phone, reminder_date, status, deadline_resolved_at")
+    .select(
+      "id, appeal_number, client_name, phone, city, address, detailed_address, reminder_date, reminder_time, status, deadline_resolved_at, dialog, product_type, source, manager, task_description",
+    )
     .ilike("appeal_number", `%${normalized}%`)
     .limit(1)
     .maybeSingle();
@@ -185,13 +266,131 @@ async function findAppealByNumber(appealNumber) {
   return data;
 }
 
+/**
+ * Уже есть событие погрузки по номеру заявки?
+ *
+ * @param {string} appealNumber
+ */
+async function findExistingLoadingEvent(appealNumber) {
+  const normalized = cleanAppealNumberForQuery(appealNumber);
+
+  const { data, error } = await supabase
+    .from("eventsnew")
+    .select("id, appeal_number, created_at")
+    .eq("type", "Погрузка")
+    .ilike("appeal_number", `%${normalized.replace(/^#/, "")}%`)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    console.error("[appeals-deadlines/queries] findExistingLoadingEvent:", error.message);
+    throw error;
+  }
+
+  return data;
+}
+
+function cleanAppealNumberForQuery(appealNumber) {
+  return String(appealNumber || "").replace(/^#+/, "#");
+}
+
+/**
+ * @param {object} row
+ * @returns {Promise<object>}
+ */
+async function insertLoadingEvent(row) {
+  const { data, error } = await supabase.from("eventsnew").insert(row).select().single();
+
+  if (error) {
+    console.error("[appeals-deadlines/queries] insertLoadingEvent:", error.message);
+    throw error;
+  }
+
+  return data;
+}
+
+/**
+ * @param {number} id
+ */
+async function deleteAppealById(id) {
+  const { error } = await supabase.from("appeals").delete().eq("id", id);
+
+  if (error) {
+    console.error("[appeals-deadlines/queries] deleteAppealById:", error.message);
+    throw error;
+  }
+}
+
+/**
+ * Уже есть отказ по номеру заявки?
+ *
+ * @param {string} appealNumber
+ */
+async function findExistingReject(appealNumber) {
+  const normalized = cleanAppealNumberForQuery(appealNumber).replace(/^#/, "");
+
+  const { data, error } = await supabase
+    .from("appealsotkaz")
+    .select("id, appeal_number, created_at")
+    .ilike("appeal_number", `%${normalized}%`)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    console.error("[appeals-deadlines/queries] findExistingReject:", error.message);
+    throw error;
+  }
+
+  return data;
+}
+
+/**
+ * @param {object} row
+ */
+async function insertAppealsOtkaz(row) {
+  const { data, error } = await supabase.from("appealsotkaz").insert(row).select().single();
+
+  if (error) {
+    console.error("[appeals-deadlines/queries] insertAppealsOtkaz:", error.message);
+    throw error;
+  }
+
+  return data;
+}
+
+/**
+ * @param {string} appealNumber
+ */
+async function updateIdsOtkaz(appealNumber) {
+  const { error } = await supabase
+    .from("ids")
+    .update({ otkaz: "Отказ" })
+    .eq("appeal_id", appealNumber);
+
+  if (error) {
+    console.error("[appeals-deadlines/queries] updateIdsOtkaz:", error.message);
+    throw error;
+  }
+}
+
 module.exports = {
   getMskTodayDate,
+  validateNewDeadlineDate,
   getActiveDeadlineNotif,
   getNextDeadlineAppeal,
   markDeadlineNotifSent,
   markDeadlineResolved,
   rescheduleAppealDeadline,
+  appendDialogAndRescheduleAppeal,
+  applyInfoAddedAndRescheduleAppeal,
   updateAppealReminderDate,
   findAppealByNumber,
+  findExistingLoadingEvent,
+  insertLoadingEvent,
+  deleteAppealById,
+  findExistingReject,
+  insertAppealsOtkaz,
+  updateIdsOtkaz,
 };

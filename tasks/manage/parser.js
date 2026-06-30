@@ -2,21 +2,16 @@
 // Парсер команд управления задачами (этап 2):
 // текст → { action, taskNumber, dueDateUtc?, extraAssigneeId?, descriptionAppend? }.
 //
-// Сначала детерминированный разбор простых «задачу N … HH:MM», затем Gemini.
-// Проверку «время в прошлом» делает только сервер (не LLM).
+// Единственная точка понимания команды — Gemini.
+// Проверку «время в прошлом» и валидацию полей делает сервер после ответа модели.
 // ============================================================================
 
 const { hasCredentials } = require("../../call-ai/googleAuth");
 const { generateContent } = require("../../call-ai/geminiClient");
 const { GEMINI_MODEL, VERTEX_LOCATION, ACTIONS } = require("./config");
-const { tryExtractReschedule } = require("./extract");
 const { buildManagePrompt, buildManageUserPrompt } = require("./prompts");
 const { nowMskString, mskLocalToUtcIso } = require("../create/time");
 const { buildRosterText, validateAssigneeId } = require("../create/assigneeRoster");
-
-/** Не уходим в fast-path reschedule — команда явно про edit (исполнитель / описание). */
-const EDIT_HINT =
-  /(?:добав(?:ь|ить|ьте)|допиш|описан|исполнител|менеджер|к\s+задач|в\s+задач)/i;
 
 function parseModelJson(raw) {
   if (!raw) return null;
@@ -144,14 +139,6 @@ function okPayload(action, taskNumber, dueDateUtc, dueDateMskLocal, extraAssigne
 async function parseManageMessage(text, { replyText } = {}) {
   if (!text || !text.trim()) {
     return { status: "error", error: "empty_input" };
-  }
-
-  const fast = tryExtractReschedule(text);
-  if (fast && !EDIT_HINT.test(text) && !replyText) {
-    console.log(
-      `[tasks/manage/parser] fast-path reschedule #${fast.taskNumber} → ${fast.dueDateMskLocal}`,
-    );
-    return finalizeReschedule("reschedule", fast.taskNumber, fast.dueDateMskLocal);
   }
 
   if (!hasCredentials()) {

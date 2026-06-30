@@ -1,90 +1,20 @@
 // ============================================================================
 // Парсер команд для модуля дедлайнов входящих.
 //
-// Разбирает текст менеджера вида:
-//   «#08044 перенести дедлайн на 10 июля»
-//   «заявка 08044, отказ»
-//   «погрузка по #08044»
-//
-// Возвращает:
-//   { status: "ok", appealNumber, action, newDate? }
-//   { status: "rejected", reason }
-//   { status: "error", error }
+// Единственная точка понимания команды — Gemini.
+// Никакого regex-парсинга действий/дат/причин — это зона нейронки.
+// Структурная нормализация (форматы полей) — после Gemini, в normalizeInfoUpdates.
 // ============================================================================
 
 const { hasCredentials } = require("../call-ai/googleAuth");
 const { generateContent } = require("../call-ai/geminiClient");
+const { getMskTodayDate } = require("./queries");
+const { normalizeInfoUpdates, hasAnyInfoUpdate } = require("./infoUpdates");
 
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash-001";
 const VERTEX_LOCATION = process.env.VERTEX_LOCATION || "us-central1";
 
 const ACTIONS = ["reschedule", "reject", "loading", "info_added"];
-
-/** Извлекает номер заявки из текста: #08044, 08044, «08044» и т.п. */
-function extractAppealNumber(text) {
-  if (!text) return null;
-  const m = text.match(/#?(\d{5})/);
-  return m ? `#${m[1]}` : null;
-}
-
-/** Детерминированное определение действия по ключевым словам. */
-function detectActionFast(text) {
-  const t = text.toLowerCase();
-  if (/отказ|отказали|отк\./.test(t)) return "reject";
-  if (/погруз|в\s+погруз/.test(t)) return "loading";
-  if (/добав.*инфо|инфо.*перен|доп.*инфо/.test(t)) return "info_added";
-  if (/перен[её]с|перенест|дедлайн.*на|на.*дедлайн|новый\s+дедлайн/.test(t)) return "reschedule";
-  return null;
-}
-
-// Ключи — префиксы-регексы (используются через new RegExp(`^${prefix}`)).
-// "ма[йя]" матчит и "май", и "мая".
-const MONTH_MAP = {
-  "январ":   "01",
-  "феврал":  "02",
-  "март":    "03",
-  "апрел":   "04",
-  "ма[йя]":  "05",
-  "июн":     "06",
-  "июл":     "07",
-  "август":  "08",
-  "сентябр": "09",
-  "октябр":  "10",
-  "ноябр":   "11",
-  "декабр":  "12",
-};
-
-/**
- * Пытается извлечь дату (только день и месяц, год = текущий) из текста.
- * Принимает форматы: «10 июля», «10.07», «10/07».
- * @returns {string|null} YYYY-MM-DD или null
- */
-function extractDateFast(text) {
-  // «10 июля», «10 июн», «10-го июля»
-  const ruMatch = text.match(/(\d{1,2})(?:-го)?\s+([а-яё]+)/ui);
-  if (ruMatch) {
-    const day = ruMatch[1].padStart(2, "0");
-    const monthName = ruMatch[2].toLowerCase().slice(0, 5);
-    for (const [prefix, num] of Object.entries(MONTH_MAP)) {
-      const re = new RegExp(`^${prefix}`);
-      if (re.test(monthName)) {
-        const year = new Date().getFullYear();
-        return `${year}-${num}-${day}`;
-      }
-    }
-  }
-
-  // «10.07» или «10/07»
-  const numMatch = text.match(/(\d{1,2})[./](\d{2})/);
-  if (numMatch) {
-    const day = numMatch[1].padStart(2, "0");
-    const month = numMatch[2];
-    const year = new Date().getFullYear();
-    return `${year}-${month}-${day}`;
-  }
-
-  return null;
-}
 
 function parseModelJson(raw) {
   if (!raw) return null;
@@ -99,26 +29,50 @@ function parseModelJson(raw) {
 }
 
 function buildSystemPrompt() {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = getMskTodayDate();
+  const year = today.slice(0, 4);
   return `Ты — парсер команд менеджера по входящим заявкам компании SUNRAY.
 
-Сегодня: ${today}. Год для дат — ${new Date().getFullYear()}, если не указан.
+Сегодня (Москва): ${today}. Год для дат — ${year}, если не указан.
+«Сегодня» → ${today}. «Завтра» → следующий день. «Послезавтра» → через два дня.
 
 Ты получаешь текст сообщения менеджера и должен извлечь:
-1. Номер заявки (appeal_number) — обычно #NNNNN или просто 5 цифр.
+1. Номер заявки (appeal_number) — обычно #NNNNN или просто 5 цифр. Может быть только в контексте отсечки.
 2. action — одно из: reschedule | reject | loading | info_added
    - reschedule: перенести дедлайн
-   - reject: отказ
-   - loading: в погрузку
-   - info_added: добавить инфо и перенести
-3. new_date — только если action=reschedule или info_added: дата в формате YYYY-MM-DD.
+   - reject: отказ (любые формулировки: «в отказ», «отказали», «кинь в отказ», «заапдейть как отказ» и т.п.)
+   - loading: отправить в погрузку (= «на замер», «в замеры», «кинь на замер» — тот же флоу)
+   - info_added: добавить/обновить/заапдейтить инфо по заявке + перенести дедлайн (БЕЗ погрузки)
+3. new_date — только если action=reschedule или info_added (не для loading/reject). Формат YYYY-MM-DD.
+4. reject_reason — только если action=reject: причина в свободной форме (если менеджер указал).
+5. info_updates — если action=loading или info_added. Объект с любыми непустыми полями:
+   - client_name — имя клиента
+   - phone — основной телефон, формат 8(903)111-22-33
+   - extra_phone — дополнительный телефон (дописывается через «, »)
+   - city — город
+   - detailed_address — детальный/уточняющий адрес (НЕ основной адрес Google Maps!)
+   - dialog_text — любой свободный текст для диалога (комментарии, заметки, что сказал клиент)
+   Если менеджер говорит «адрес» без уточнения — клади в detailed_address.
+   Основной адрес Google Maps (поле address) МЕНЯТЬ НЕЛЬЗЯ — если просят его, верни status=rejected.
 
 ФОРМАТ ОТВЕТА — только JSON:
 {
   "status": "ok",
   "appeal_number": "#08044",
-  "action": "reschedule",
-  "new_date": "2026-07-10"
+  "action": "info_added",
+  "new_date": "2026-07-10",
+  "info_updates": {
+    "client_name": "Иван",
+    "extra_phone": "8(903)111-22-33",
+    "detailed_address": "ул. Ленина 5, подъезд 2",
+    "dialog_text": "Клиент просит перезвонить после 18:00"
+  }
+}
+
+Если просят изменить основной адрес (Google Maps):
+{
+  "status": "rejected",
+  "reason": "Основной адрес (Google Maps) можно изменить только в CRM. Укажите детальный адрес."
 }
 
 Если не удалось разобрать:
@@ -129,12 +83,12 @@ function buildSystemPrompt() {
 }
 
 /**
- * Парсит команду менеджера о дедлайне.
+ * Парсит команду менеджера о дедлайне через Gemini.
  *
  * @param {string} text          — основной текст @упоминания
  * @param {{ replyText?: string }} options — контекст отсечки (может содержать номер заявки)
  * @returns {Promise<
- *   | { status: "ok", appealNumber: string, action: string, newDate?: string }
+ *   | { status: "ok", appealNumber: string, action: string, newDate?: string, infoUpdates?: object, rejectReason?: string }
  *   | { status: "rejected", reason: string }
  *   | { status: "error", error: string }
  * >}
@@ -144,42 +98,16 @@ async function parseDeadlineCommand(text, { replyText } = {}) {
     return { status: "error", error: "empty_input" };
   }
 
-  // Быстрый путь: номер — сначала в тексте, потом в отсечке (карточка бота содержит ДЕДЛАЙН #NNNNN)
-  const appealNumberFast = extractAppealNumber(text) || extractAppealNumber(replyText);
-  const actionFast = detectActionFast(text);
-
-  if (appealNumberFast && actionFast) {
-    const result = {
-      status: "ok",
-      appealNumber: appealNumberFast,
-      action: actionFast,
-    };
-
-    if (actionFast === "reschedule" || actionFast === "info_added") {
-      const dateFast = extractDateFast(text);
-      if (dateFast) {
-        result.newDate = dateFast;
-        console.log(`[appeals-deadlines/parser] fast-path: ${appealNumberFast} ${actionFast} → ${dateFast}`);
-        return result;
-      }
-      // Дата не найдена быстро — идём в Gemini
-    } else {
-      console.log(`[appeals-deadlines/parser] fast-path: ${appealNumberFast} ${actionFast}`);
-      return result;
-    }
-  }
-
-  // Fallback: Gemini
   if (!hasCredentials()) {
     return { status: "error", error: "ai_disabled" };
   }
-
-  console.log(`[appeals-deadlines/parser] запрос Gemini для разбора команды`);
 
   const userParts = [`Команда менеджера:\n${text.trim()}`];
   if (replyText) {
     userParts.push(`\nКонтекст (сообщение, на которое менеджер сделал отсечку):\n${replyText.slice(0, 400)}`);
   }
+
+  console.log(`[appeals-deadlines/parser] → Gemini`);
 
   const { text: raw, finishReason } = await generateContent({
     systemPrompt: buildSystemPrompt(),
@@ -188,7 +116,7 @@ async function parseDeadlineCommand(text, { replyText } = {}) {
     location: VERTEX_LOCATION,
     generationConfig: {
       temperature: 0,
-      maxOutputTokens: 256,
+      maxOutputTokens: 512,
       responseMimeType: "application/json",
       thinkingConfig: { thinkingBudget: 0 },
     },
@@ -227,9 +155,21 @@ async function parseDeadlineCommand(text, { replyText } = {}) {
     result.newDate = String(parsed.new_date).trim();
   }
 
+  const infoUpdates = normalizeInfoUpdates(parsed);
+  if (hasAnyInfoUpdate(infoUpdates)) {
+    result.infoUpdates = infoUpdates;
+  }
+
+  if (parsed.reject_reason) {
+    const reason = String(parsed.reject_reason).trim();
+    if (reason) result.rejectReason = reason;
+  }
+
   console.log(
     `[appeals-deadlines/parser] Gemini → ${appealNumber} ${action}` +
-      (result.newDate ? ` → ${result.newDate}` : ""),
+      (result.newDate ? ` → ${result.newDate}` : "") +
+      (result.infoUpdates ? " +info" : "") +
+      (result.rejectReason ? " +reason" : ""),
   );
 
   return result;

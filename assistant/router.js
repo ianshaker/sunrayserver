@@ -11,6 +11,7 @@ const {
 } = require("./config");
 const { buildRouterPrompt, buildRouterUserPrompt } = require("./prompts");
 const { getIntent } = require("./registry");
+const { tryFastPaths } = require("./fastPaths");
 
 function parseRouterResponse(raw, enabledIntents) {
   const allowed = new Set(enabledIntents.map((i) => i.name));
@@ -48,22 +49,6 @@ function parseRouterResponse(raw, enabledIntents) {
   }
 }
 
-function tryDeadlineReplyRoute(text, replyText, enabledIntents) {
-  const allowed = enabledIntents.some((i) => i.name === "appeal_deadline_manage");
-  if (!allowed || !replyText) return null;
-
-  const isDeadlineCard = /ДЕДЛАЙН\s*#?\d{5}/i.test(replyText) || /#\d{5}/.test(replyText);
-  if (!isDeadlineCard) return null;
-
-  if (!/перенес|перенос|дедлайн|отказ|погруз|инфо/i.test(text)) return null;
-
-  return {
-    intent: "appeal_deadline_manage",
-    confidence: 0.96,
-    reason: "Reply на карточку дедлайна входящей заявки",
-  };
-}
-
 /**
  * @returns {Promise<{ intent: string, confidence: number, reason: string, aiDisabled?: boolean }>}
  */
@@ -72,13 +57,8 @@ async function classifyIntent(text, enabledIntents, { replyText } = {}) {
     return { intent: "unknown", confidence: 0, reason: "Нет доступных интентов для чата" };
   }
 
-  const fast = tryDeadlineReplyRoute(text, replyText, enabledIntents);
-  if (fast) {
-    console.log(
-      `[assistant/router] fast-path ${fast.intent} conf=${fast.confidence.toFixed(2)} reason="${fast.reason}"`,
-    );
-    return fast;
-  }
+  const fast = tryFastPaths(text, replyText ?? null, enabledIntents);
+  if (fast) return fast;
 
   if (!hasCredentials()) {
     return { intent: "unknown", confidence: 0, reason: "AI недоступен", aiDisabled: true };

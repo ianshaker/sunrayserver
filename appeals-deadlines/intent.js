@@ -1,10 +1,7 @@
 // ============================================================================
 // Интент: управление дедлайном входящей заявки из Telegram.
 //
-// Разрешение: appeal_deadline
-// Зарегистрированные действия (фаза 1):
-//   reschedule — перенести дедлайн (полностью реализовано)
-//   reject / loading / info_added — заглушки (ответ с инструкцией вручную)
+// reschedule / info_added / loading / reject — превью + «Сохранить / Отменить».
 // ============================================================================
 
 const { PERMISSIONS } = require("../lib/telegramBotChats");
@@ -13,25 +10,58 @@ const { getTelegramBot } = require("../tgwebhook/bot");
 const { parseDeadlineCommand, formatDateHuman } = require("./parser");
 const {
   findAppealByNumber,
-  rescheduleAppealDeadline,
+  validateNewDeadlineDate,
+  findExistingLoadingEvent,
+  findExistingReject,
 } = require("./queries");
 const {
-  formatRescheduleConfirm,
   formatNotImplemented,
   formatAppealNotFound,
+  formatInvalidDate,
+  formatMissingInfoUpdates,
+  formatAlreadyInLoading,
+  formatAlreadyRejected,
+  buildPreviewMessage,
 } = require("./messages");
-const { runDeadlineCheck } = require("./worker");
+const { createDraft } = require("./draft");
+const { buildPreviewKeyboard } = require("./keyboards");
+const { resolveManagerLabel } = require("./managerLabel");
+const { resolveSalesManagerFromProfile } = require("./salesManager");
+const {
+  hasAnyInfoUpdate,
+  buildFieldPatch,
+  buildDialogAppendBlock,
+  buildPreviewChangeLines,
+  mergeAppealForLoading,
+} = require("./infoUpdates");
 
-/**
- * Финализирует статусное сообщение (с поддержкой HTML),
- * либо отправляет новое если статуса нет.
- */
-async function reply(ctx, text) {
+async function reply(ctx, text, parseMode) {
   if (ctx.statusMsg?.messageId) {
-    // finalize() поддерживает parse_mode, в отличие от update()
-    await ctx.statusMsg.finalize(text, null, "HTML");
+    await ctx.statusMsg.finalize(text, null, parseMode || undefined);
   } else {
-    await sendText(ctx.chatId, text, { parse_mode: "HTML" });
+    await sendText(ctx.chatId, text, parseMode ? { parse_mode: parseMode } : undefined);
+  }
+}
+
+async function sendPreview(ctx, draftData) {
+  const draftId = createDraft(draftData);
+  const preview = buildPreviewMessage(draftData);
+  const keyboard = buildPreviewKeyboard(draftId);
+  const bot = getTelegramBot();
+
+  if (ctx.statusMsg?.messageId) {
+    await ctx.statusMsg.finalize(preview.text, keyboard, preview.parseMode);
+    return;
+  }
+
+  if (bot) {
+    await bot.sendMessage(ctx.chatId, preview.text, {
+      disable_web_page_preview: true,
+      reply_markup: keyboard,
+      parse_mode: preview.parseMode,
+    });
+  } else {
+    await sendText(ctx.chatId, preview.text, { parse_mode: preview.parseMode });
   }
 }
 
@@ -44,8 +74,14 @@ async function handle(ctx) {
       (replyText ? ` replyCtx="${replyText.slice(0, 60)}"` : ""),
   );
 
-  // Парсим команду менеджера; передаём replyText чтобы извлечь
-  // номер заявки из отсечки на карточку бота (если не указан в тексте).
+  if (!profileId) {
+    await reply(
+      ctx,
+      "Вы не зарегистрированы в системе менеджеров — действие не выполнено. Обратитесь к администратору.",
+    );
+    return;
+  }
+
   let parsed;
   try {
     parsed = await parseDeadlineCommand(text, { replyText });
@@ -60,7 +96,7 @@ async function handle(ctx) {
       parsed.error === "ai_disabled"
         ? "AI-ассистент временно недоступен."
         : "Не удалось разобрать команду. Укажите номер заявки и действие, например:\n<code>@SUNRAYY_bot #08044 перенести дедлайн на 10 июля</code>";
-    await reply(ctx, errMsg);
+    await reply(ctx, errMsg, "HTML");
     return;
   }
 
@@ -69,26 +105,59 @@ async function handle(ctx) {
     return;
   }
 
-  const { appealNumber, action, newDate } = parsed;
+  const { appealNumber, action, newDate, infoUpdates, rejectReason } = parsed;
 
-  // Заглушки для неимплементированных действий
-  if (action !== "reschedule") {
-    await reply(ctx, formatNotImplemented(action));
-    return;
-  }
+  if (action === "reject") {
+    let appeal;
+    try {
+      appeal = await findAppealByNumber(appealNumber);
+    } catch (err) {
+      console.error("[appeals-deadlines/intent] findAppealByNumber:", err.message);
+      await reply(ctx, "Ошибка при поиске заявки. Попробуйте позже.");
+      return;
+    }
 
-  // -- reschedule --
+    if (!appeal) {
+      await reply(ctx, formatAppealNotFound(appealNumber), "HTML");
+      return;
+    }
 
-  if (!newDate) {
-    await reply(
-      ctx,
-      `⚠️ Не указана новая дата для переноса дедлайна ${appealNumber}.\n` +
-        `Пример: <code>@SUNRAYY_bot ${appealNumber} перенести на 10 июля</code>`,
+    let existingReject = null;
+    try {
+      existingReject = await findExistingReject(appeal.appeal_number || appealNumber);
+    } catch (err) {
+      console.error("[appeals-deadlines/intent] findExistingReject:", err.message);
+    }
+
+    if (existingReject) {
+      await reply(ctx, formatAlreadyRejected(appeal.appeal_number || appealNumber), "HTML");
+      return;
+    }
+
+    const draftData = {
+      chatId,
+      authorProfileId: profileId,
+      action,
+      appealId: appeal.id,
+      appealNumber: appeal.appeal_number || appealNumber,
+      clientName: appeal.client_name,
+      phone: appeal.phone,
+      rejectReason: rejectReason || null,
+    };
+
+    console.log(
+      `[appeals-deadlines/intent] превью ${draftData.appealNumber} → reject` +
+        (draftData.rejectReason ? ` reason="${draftData.rejectReason.slice(0, 40)}"` : ""),
     );
+    await sendPreview(ctx, draftData);
     return;
   }
 
-  // Ищем заявку в базе
+  if (action !== "reschedule" && action !== "info_added" && action !== "loading") {
+    await reply(ctx, formatNotImplemented(action), "HTML");
+    return;
+  }
+
   let appeal;
   try {
     appeal = await findAppealByNumber(appealNumber);
@@ -99,37 +168,115 @@ async function handle(ctx) {
   }
 
   if (!appeal) {
-    await reply(ctx, formatAppealNotFound(appealNumber));
+    await reply(ctx, formatAppealNotFound(appealNumber), "HTML");
     return;
   }
 
-  // Новая дата + сброс трекинга → сегодня очередь разблокируется, в новую дату заявка снова встанет в очередь
-  try {
-    await rescheduleAppealDeadline(appeal.id, newDate);
-  } catch (err) {
-    console.error("[appeals-deadlines/intent] update:", err.message);
-    await reply(ctx, "Ошибка при обновлении дедлайна. Попробуйте позже.");
+  const managerLabel = await resolveManagerLabel(profileId, msg?.from);
+
+  if (action === "loading") {
+    let existingLoading = null;
+    try {
+      existingLoading = await findExistingLoadingEvent(appeal.appeal_number || appealNumber);
+    } catch (err) {
+      console.error("[appeals-deadlines/intent] findExistingLoadingEvent:", err.message);
+    }
+
+    if (existingLoading) {
+      await reply(ctx, formatAlreadyInLoading(appeal.appeal_number || appealNumber), "HTML");
+      return;
+    }
+
+    const { salemanager } = await resolveSalesManagerFromProfile(profileId);
+    const loadingSnapshot = mergeAppealForLoading(appeal, infoUpdates, managerLabel);
+    const previewChangeLines = infoUpdates && hasAnyInfoUpdate(infoUpdates)
+      ? buildPreviewChangeLines(appeal, infoUpdates)
+      : [];
+
+    const draftData = {
+      chatId,
+      authorProfileId: profileId,
+      action,
+      appealId: appeal.id,
+      appealNumber: appeal.appeal_number || appealNumber,
+      salemanager,
+      managerLabel,
+      loadingSnapshot,
+      previewChangeLines,
+      productType: appeal.product_type,
+    };
+
+    console.log(
+      `[appeals-deadlines/intent] превью ${draftData.appealNumber} → loading (salemanager=${salemanager})`,
+    );
+    await sendPreview(ctx, draftData);
+    return;
+  }
+
+  if (!newDate) {
+    await reply(
+      ctx,
+      `⚠️ Не указана новая дата для ${appealNumber}.\n` +
+        `Пример: <code>@SUNRAYY_bot ${appealNumber} перенести на 10 июля</code>` +
+        (action === "info_added"
+          ? `\nили: <code>@SUNRAYY_bot ${appealNumber} добавить инфо: имя клиента Иван, доп тел 8(903)111-22-33, адрес ул. Ленина 5, перенести на сегодня</code>`
+          : ""),
+      "HTML",
+    );
+    return;
+  }
+
+  const dateCheck = validateNewDeadlineDate(newDate);
+  if (!dateCheck.ok) {
+    await reply(ctx, formatInvalidDate(dateCheck.reason), "HTML");
+    return;
+  }
+
+  if (action === "info_added" && !hasAnyInfoUpdate(infoUpdates || {})) {
+    await reply(ctx, formatMissingInfoUpdates(appealNumber), "HTML");
     return;
   }
 
   const newDateHuman = formatDateHuman(newDate);
+  const currentReminderHuman = appeal.reminder_date
+    ? formatDateHuman(appeal.reminder_date)
+    : null;
+
+  let fieldPatch = null;
+  let dialogAppend = null;
+  let previewChangeLines = null;
+
+  if (action === "info_added") {
+    const updates = infoUpdates || {};
+    fieldPatch = buildFieldPatch(appeal, updates);
+    dialogAppend = buildDialogAppendBlock(managerLabel, updates, appeal);
+    previewChangeLines = buildPreviewChangeLines(appeal, updates);
+  }
+
+  const draftData = {
+    chatId,
+    authorProfileId: profileId,
+    action,
+    appealId: appeal.id,
+    appealNumber: appeal.appeal_number || appealNumber,
+    clientName: appeal.client_name,
+    currentReminderDate: appeal.reminder_date,
+    currentReminderHuman,
+    newDate,
+    newDateHuman,
+    infoUpdates: infoUpdates || null,
+    fieldPatch,
+    dialogAppend,
+    managerLabel,
+    previewChangeLines,
+  };
 
   console.log(
-    `[appeals-deadlines/intent] ✅ ${appeal.appeal_number} → reschedule → ${newDate}` +
+    `[appeals-deadlines/intent] превью ${draftData.appealNumber} → ${action} → ${newDate}` +
       ` (profile=${profileId})`,
   );
 
-  await reply(ctx, formatRescheduleConfirm(appeal.appeal_number, newDateHuman));
-
-  // Внеочередная проверка очереди — сразу после закрытия дедлайна
-  const bot = getTelegramBot();
-  if (bot) {
-    setImmediate(() => {
-      runDeadlineCheck(bot).catch((err) =>
-        console.error("[appeals-deadlines/intent] внеочередной чек:", err.message),
-      );
-    });
-  }
+  await sendPreview(ctx, draftData);
 }
 
 module.exports = {
@@ -142,11 +289,13 @@ module.exports = {
     "Всегда упоминается номер заявки (#NNNNN) или слова «дедлайн», «заявка».",
   examples: [
     "#08044 перенести дедлайн на 10 июля",
-    "заявка 08044, переносим на следующую неделю",
+    "#08044 перенести на сегодня",
+    "#08044 в погрузку",
+    "#08044 добавить имя Мария и кинуть в погрузку",
     "#07999 отказ",
-    "08044 в погрузку",
-    "перенести дедлайн #08044 на 5 июля",
-    "#08044 добавить инфо и перенести",
+    "#08044 отказ: клиент передумал",
+    "отказ — дорого (reply на карточку дедлайна)",
+    "#08044 добавить инфо: имя клиента Мария, адрес подъезд 2, перенести на 10 июля",
   ],
   handle,
 };

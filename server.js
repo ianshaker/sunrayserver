@@ -18,6 +18,7 @@ const {
 const { registerTaskCallbackHandlers } = require("./tasks/callbacks");
 const { registerTaskCreateCallbacks } = require("./tasks/create/callbacks");
 const { registerTaskManageCallbacks } = require("./tasks/manage/callbacks");
+const { registerAppealDeadlineCallbacks } = require("./appeals-deadlines/callbacks");
 const { registerAssistant, startAssistant } = require("./assistant");
 const { registerIntent } = require("./assistant/registry");
 const { startBotChatsRefresh } = require("./lib/telegramBotChats");
@@ -32,9 +33,11 @@ registerDiagnosticsHandlers();
 registerTaskCallbackHandlers();
 registerTaskCreateCallbacks();
 registerTaskManageCallbacks();
+registerAppealDeadlineCallbacks();
 registerIntent(require("./tasks/create/intent"));
 registerIntent(require("./tasks/manage/intent"));
 registerIntent(require("./appeals-deadlines/intent"));
+registerDeadlineFastPath();
 registerAssistant();
 
 // --- Импорт обработчика манго (прокидываем telegramBot) --- //
@@ -59,7 +62,7 @@ const removeDuplicates = require("./remove_duplicates"); // пусть буде�
 const { registerGmailAuthRoutes, startEmailChecker } = require("./postamails");
 
 // --- Модуль дедлайнов входящих (очередь уведомлений + интент управления) --- //
-const { startAppealDeadlineWorker } = require("./appeals-deadlines");
+const { startAppealDeadlineWorker, registerDeadlineFastPath } = require("./appeals-deadlines");
 
 // --- Обработка звонков: расшифровка (Google STT) + саммари (Gemini) --- //
 const { startCallAiWorkers, triggerTranscription, setTelegramBot, registerAskRoute } = require("./call-ai");

@@ -29,6 +29,12 @@ const DEADLINE_CRON_PATTERN = "0 */30 * * * *";
 /** Максимум символов диалога в карточке TG. */
 const DIALOG_MAX_CHARS = 800;
 
+/** Черновик превью (как в tasks/manage). */
+const DRAFT_TTL_MS = 60 * 60 * 1000;
+
+/** Префикс callback: ad:save:<draftId> / ad:cancel:<draftId> */
+const CALLBACK_PREFIX = "ad";
+
 module.exports = {
   DEADLINE_CHAT_ID,
   DEADLINE_THREAD_ID,
@@ -38,4 +44,6 @@ module.exports = {
   DEADLINE_24_7,
   DEADLINE_CRON_PATTERN,
   DIALOG_MAX_CHARS,
+  DRAFT_TTL_MS,
+  CALLBACK_PREFIX,
 };
