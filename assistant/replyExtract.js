@@ -47,12 +47,31 @@ function labelUnsupportedKind(kind) {
  * }>}
  */
 async function extractReplyContext(replyMsg, bot = null, maxChars = MAX_INPUT_CHARS) {
-  if (!replyMsg || replyMsg.from?.is_bot) {
+  if (!replyMsg) {
     return { replyText: null, replyFrom: null, replyUnsupported: null, replyVoiceFailed: null };
   }
 
   const replyText =
     (replyMsg.text || replyMsg.caption || "").trim().slice(0, maxChars) || null;
+
+  // Reply на сообщение бота (карточка дедлайна, превью задачи и т.п.) —
+  // текст берём в контекст, replyFrom не используем.
+  if (replyMsg.from?.is_bot) {
+    if (replyText) {
+      return {
+        replyText,
+        replyFrom: null,
+        replyUnsupported: null,
+        replyVoiceFailed: null,
+      };
+    }
+    return {
+      replyText: null,
+      replyFrom: null,
+      replyUnsupported: detectUnsupportedKind(replyMsg) || "empty",
+      replyVoiceFailed: null,
+    };
+  }
 
   if (replyText) {
     return {

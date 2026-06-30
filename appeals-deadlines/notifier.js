@@ -50,7 +50,7 @@ async function sendDeadlineNotification(appeal, bot) {
 async function sendDeadlineReminder(appeal, bot) {
   const replyText =
     `⏰ Напоминаю: дедлайн по заявке <b>${appeal.appeal_number}</b> ещё не закрыт.\n` +
-    `Отметьте @sunraysalebot с номером заявки и укажите действие.`;
+    `Отметьте @SUNRAYY_bot с номером заявки и укажите действие.`;
 
   try {
     await bot.sendMessage(DEADLINE_CHAT_ID, replyText, {

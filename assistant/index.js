@@ -182,7 +182,8 @@ function registerAssistant() {
         `[assistant] вход: chat «${ctx.chat.title}» (${ctx.chatId}), ` +
           `profile=${ctx.profileId || "null"}, tgUser=${msg.from?.id}, ` +
           `intents=[${ctx.enabledIntents.map((i) => i.name).join(",")}], ` +
-          `text="${ctx.text.slice(0, 80)}${ctx.text.length > 80 ? "…" : ""}"`,
+          `text="${ctx.text.slice(0, 80)}${ctx.text.length > 80 ? "…" : ""}"` +
+          (ctx.replyText ? ` replyCtx="${ctx.replyText.slice(0, 60)}…"` : ""),
       );
 
       // Обновляем статус перед вызовом Gemini (роутер + парсер).
@@ -195,7 +196,9 @@ function registerAssistant() {
         await ctx.statusMsg.update("💭 Думаю над запросом...");
       }
 
-      const classification = await classifyIntent(ctx.text, ctx.enabledIntents);
+      const classification = await classifyIntent(ctx.text, ctx.enabledIntents, {
+        replyText: ctx.replyText,
+      });
 
       if (classification.aiDisabled) {
         await ctx.statusMsg.update(REPLIES.AI_DISABLED);

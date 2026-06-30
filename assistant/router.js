@@ -48,12 +48,36 @@ function parseRouterResponse(raw, enabledIntents) {
   }
 }
 
+function tryDeadlineReplyRoute(text, replyText, enabledIntents) {
+  const allowed = enabledIntents.some((i) => i.name === "appeal_deadline_manage");
+  if (!allowed || !replyText) return null;
+
+  const isDeadlineCard = /ДЕДЛАЙН\s*#?\d{5}/i.test(replyText) || /#\d{5}/.test(replyText);
+  if (!isDeadlineCard) return null;
+
+  if (!/перенес|перенос|дедлайн|отказ|погруз|инфо/i.test(text)) return null;
+
+  return {
+    intent: "appeal_deadline_manage",
+    confidence: 0.96,
+    reason: "Reply на карточку дедлайна входящей заявки",
+  };
+}
+
 /**
  * @returns {Promise<{ intent: string, confidence: number, reason: string, aiDisabled?: boolean }>}
  */
-async function classifyIntent(text, enabledIntents) {
+async function classifyIntent(text, enabledIntents, { replyText } = {}) {
   if (!enabledIntents.length) {
     return { intent: "unknown", confidence: 0, reason: "Нет доступных интентов для чата" };
+  }
+
+  const fast = tryDeadlineReplyRoute(text, replyText, enabledIntents);
+  if (fast) {
+    console.log(
+      `[assistant/router] fast-path ${fast.intent} conf=${fast.confidence.toFixed(2)} reason="${fast.reason}"`,
+    );
+    return fast;
   }
 
   if (!hasCredentials()) {
@@ -61,7 +85,7 @@ async function classifyIntent(text, enabledIntents) {
   }
 
   const systemPrompt = buildRouterPrompt(enabledIntents);
-  const userPrompt = buildRouterUserPrompt(text);
+  const userPrompt = buildRouterUserPrompt(text, replyText);
 
   const { text: raw, finishReason } = await generateContent({
     systemPrompt,

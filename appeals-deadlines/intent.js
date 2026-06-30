@@ -60,7 +60,7 @@ async function handle(ctx) {
     const errMsg =
       parsed.error === "ai_disabled"
         ? "AI-ассистент временно недоступен."
-        : "Не удалось разобрать команду. Укажите номер заявки и действие, например:\n<code>@sunraysalebot #08044 перенести дедлайн на 10 июля</code>";
+        : "Не удалось разобрать команду. Укажите номер заявки и действие, например:\n<code>@SUNRAYY_bot #08044 перенести дедлайн на 10 июля</code>";
     await reply(ctx, errMsg);
     return;
   }
@@ -84,7 +84,7 @@ async function handle(ctx) {
     await reply(
       ctx,
       `⚠️ Не указана новая дата для переноса дедлайна ${appealNumber}.\n` +
-        `Пример: <code>@sunraysalebot ${appealNumber} перенести на 10 июля</code>`,
+        `Пример: <code>@SUNRAYY_bot ${appealNumber} перенести на 10 июля</code>`,
     );
     return;
   }
