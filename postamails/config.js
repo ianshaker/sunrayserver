@@ -12,7 +12,6 @@ module.exports = {
   DATA_DIR,
   TOKEN_PATH: path.join(DATA_DIR, "gmail-token.json"),
   CREDENTIALS_PATH: path.join(DATA_DIR, "gmail-credentials.json"),
-  CACHE_PATH: path.join(DATA_DIR, "postamailsCache.json"),
   CONTRACTS_PATH: path.join(ROOT_DIR, "contractsfinalnew.json"),
 
   TABLES_TO_CHECK: [

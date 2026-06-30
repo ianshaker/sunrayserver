@@ -7,7 +7,7 @@ const {
 logSupabaseBoot();
 
 console.log(
-  `[postamails] Supabase: ${USING_SERVICE_ROLE ? "service_role" : "anon"} (gmail_oauth_tokens, appeals).`,
+  `[postamails] Supabase: ${USING_SERVICE_ROLE ? "service_role" : "anon"} (gmail_oauth_tokens, gmail_processed_messages, appeals).`,
 );
 
 module.exports = { supabase, USING_SERVICE_ROLE };

@@ -32,7 +32,11 @@ async function insertAppealFromEmail(emailText) {
         `Номер договора: <b>${contract.dogovor_number || ""}</b>` +
         formatRawEmailBlockForTelegram(emailText),
     );
-    return "Клиент найден в завершённых договорах";
+    return {
+      outcome: "contract",
+      phone: normalizedPhone,
+      appealNumber: contract.appeal_id || null,
+    };
   }
 
   const existing = await findExistingAppealByPhone(normalizedPhone);
@@ -46,7 +50,11 @@ async function insertAppealFromEmail(emailText) {
     msg += `Продукт: <b>${existing.info.product_type || ""}</b>`;
     msg += formatRawEmailBlockForTelegram(emailText);
     await notifyIncomingChat(msg);
-    return "Уже есть такая заявка";
+    return {
+      outcome: "duplicate",
+      phone: normalizedPhone,
+      appealNumber: existing.info.appeal_id || existing.info.appeal_number || null,
+    };
   }
 
   const name = extractName(emailText);
@@ -87,7 +95,11 @@ async function insertAppealFromEmail(emailText) {
       formatRawEmailBlockForTelegram(emailText),
   );
 
-  return "Заявка создана";
+  return {
+    outcome: "created",
+    phone: normalizedPhone,
+    appealNumber: appeal_id,
+  };
 }
 
 module.exports = { insertAppealFromEmail };

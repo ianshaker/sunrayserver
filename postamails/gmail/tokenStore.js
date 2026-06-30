@@ -1,5 +1,5 @@
 const fs = require("fs");
-const { TOKEN_PATH, CACHE_PATH } = require("../config");
+const { TOKEN_PATH } = require("../config");
 const { supabase } = require("../supabaseClient");
 
 const TOKEN_ROW_ID = "sunray";
@@ -83,30 +83,8 @@ async function isTokenPersistedInSupabase() {
   return Boolean(remote);
 }
 
-// ---- Кэш обработанных писем (на диске, дедуп всё равно по телефону) ----
-function ensureCacheFile() {
-  if (!fs.existsSync(CACHE_PATH)) {
-    fs.writeFileSync(
-      CACHE_PATH,
-      JSON.stringify({ date: "", emailIds: [] }, null, 2),
-    );
-  }
-}
-
-function readCache() {
-  ensureCacheFile();
-  return JSON.parse(fs.readFileSync(CACHE_PATH, "utf8"));
-}
-
-function writeCache(cache) {
-  fs.writeFileSync(CACHE_PATH, JSON.stringify(cache, null, 2));
-}
-
 module.exports = {
   readToken,
   writeToken,
   isTokenPersistedInSupabase,
-  readCache,
-  writeCache,
-  ensureCacheFile,
 };
