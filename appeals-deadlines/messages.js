@@ -99,6 +99,36 @@ function formatMissingInfoUpdates(appealNumber) {
   );
 }
 
+/** Дедлайн не закрывается без переноса / погрузки / отказа (plain text для parser). */
+function getNeedsDeadlineResolutionReason(appealNumber) {
+  const num = appealNumber || "заявке";
+  return (
+    `Не могу закрыть дедлайн по ${num} без решения по заявке. ` +
+    `Карточка закрывается только если вы: перенесёте дедлайн на новую дату, ` +
+    `добавите инфо вместе с новой датой, отправите в погрузку или поставите отказ. ` +
+    `Просто дописать телефон или комментарий без переноса/погрузки/отказа — недостаточно.`
+  );
+}
+
+/** То же для Telegram (HTML). */
+function formatNeedsDeadlineResolution(appealNumber) {
+  const num = escHtml(appealNumber || "заявке");
+  return (
+    `⚠️ Не могу закрыть дедлайн по <b>${num}</b> без решения по заявке.\n\n` +
+    `Карточка дедлайна закрывается только если вы:\n` +
+    `• перенесёте дедлайн на новую дату\n` +
+    `• добавите инфо <b>и</b> укажете новую дату\n` +
+    `• отправите заявку в погрузку\n` +
+    `• поставите отказ\n\n` +
+    `Просто дописать телефон или комментарий без переноса / погрузки / отказа — недостаточно, заявка останется «висящей».\n\n` +
+    `Примеры:\n` +
+    `<code>@SUNRAYY_bot ${num} перенести на 10 июля</code>\n` +
+    `<code>@SUNRAYY_bot ${num} добавить тел 8(903)111-22-33, перенести на завтра</code>\n` +
+    `<code>@SUNRAYY_bot ${num} в погрузку</code>\n` +
+    `<code>@SUNRAYY_bot ${num} отказ</code>`
+  );
+}
+
 function formatAlreadyInLoading(appealNumber) {
   return `⚠️ ${escHtml(appealNumber)} уже есть в погрузке (eventsnew). Проверьте отдел «Погрузка» в CRM.`;
 }
@@ -255,6 +285,8 @@ module.exports = {
   formatAppealNotFound,
   formatInvalidDate,
   formatMissingInfoUpdates,
+  getNeedsDeadlineResolutionReason,
+  formatNeedsDeadlineResolution,
   formatAlreadyInLoading,
   formatAlreadyRejected,
   formatRejectConfirm,

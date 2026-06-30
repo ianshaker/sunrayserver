@@ -19,6 +19,7 @@ const {
   formatAppealNotFound,
   formatInvalidDate,
   formatMissingInfoUpdates,
+  formatNeedsDeadlineResolution,
   formatAlreadyInLoading,
   formatAlreadyRejected,
   buildPreviewMessage,
@@ -214,15 +215,7 @@ async function handle(ctx) {
   }
 
   if (!newDate) {
-    await reply(
-      ctx,
-      `⚠️ Не указана новая дата для ${appealNumber}.\n` +
-        `Пример: <code>@SUNRAYY_bot ${appealNumber} перенести на 10 июля</code>` +
-        (action === "info_added"
-          ? `\nили: <code>@SUNRAYY_bot ${appealNumber} добавить инфо: имя клиента Иван, доп тел 8(903)111-22-33, адрес ул. Ленина 5, перенести на сегодня</code>`
-          : ""),
-      "HTML",
-    );
+    await reply(ctx, formatNeedsDeadlineResolution(appealNumber), "HTML");
     return;
   }
 

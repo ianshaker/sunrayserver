@@ -11,6 +11,7 @@ const { generateContent } = require("../call-ai/geminiClient");
 const { SUMMARY } = require("../call-ai/config");
 const { getMskTodayDate } = require("./queries");
 const { normalizeInfoUpdates, hasAnyInfoUpdate } = require("./infoUpdates");
+const { getNeedsDeadlineResolutionReason } = require("./messages");
 
 const GEMINI_MODEL = SUMMARY.MODEL;
 const VERTEX_LOCATION = SUMMARY.VERTEX_LOCATION;
@@ -34,17 +35,26 @@ function buildSystemPrompt() {
   const year = today.slice(0, 4);
   return `Ты — парсер команд менеджера по входящим заявкам компании SUNRAY.
 
+КОНТЕКСТ: менеджер отвечает на карточку дедлайна входящей заявки в Telegram.
+Заявка считается «решённой» (карточка закроется) ТОЛЬКО если выполнено одно из:
+• перенос дедлайна на новую дату (reschedule или info_added с new_date)
+• отправка в погрузку (loading)
+• отказ (reject)
+
+Просто дописать телефон, комментарий или описание БЕЗ новой даты / погрузки / отказа — НЕ закрывает дедлайн.
+Такие команды НЕ выполняй — верни status=rejected с понятным reason.
+
 Сегодня (Москва): ${today}. Год для дат — ${year}, если не указан.
 «Сегодня» → ${today}. «Завтра» → следующий день. «Послезавтра» → через два дня.
 
 Ты получаешь текст сообщения менеджера и должен извлечь:
 1. Номер заявки (appeal_number) — обычно #NNNNN или просто 5 цифр. Может быть только в контексте отсечки.
 2. action — одно из: reschedule | reject | loading | info_added
-   - reschedule: перенести дедлайн
-   - reject: отказ (любые формулировки: «в отказ», «отказали», «кинь в отказ», «заапдейть как отказ» и т.п.)
+   - reschedule: только перенести дедлайн (без доп. полей)
+   - reject: отказ (любые формулировки: «в отказ», «отказали», «кинь в отказ» и т.п.)
    - loading: отправить в погрузку (= «на замер», «в замеры», «кинь на замер» — тот же флоу)
-   - info_added: добавить/обновить/заапдейтить инфо по заявке + перенести дедлайн (БЕЗ погрузки)
-3. new_date — только если action=reschedule или info_added (не для loading/reject). Формат YYYY-MM-DD.
+   - info_added: добавить/обновить инфо по заявке И перенести дедлайн (обязательно new_date!)
+3. new_date — ОБЯЗАТЕЛЬНО для reschedule и info_added. Формат YYYY-MM-DD. Без даты — status=rejected.
 4. reject_reason — только если action=reject: причина в свободной форме (если менеджер указал).
 5. info_updates — если action=loading или info_added. Объект с любыми непустыми полями:
    - client_name — имя клиента
@@ -55,6 +65,13 @@ function buildSystemPrompt() {
    - dialog_text — любой свободный текст для диалога (комментарии, заметки, что сказал клиент)
    Если менеджер говорит «адрес» без уточнения — клади в detailed_address.
    Основной адрес Google Maps (поле address) МЕНЯТЬ НЕЛЬЗЯ — если просят его, верни status=rejected.
+
+ОБЯЗАТЕЛЬНО status=rejected если:
+- просят только добавить/обновить инфо БЕЗ new_date, без loading, без reject
+- action reschedule или info_added, но new_date не указана и не выводится однозначно из текста
+- команда не содержит ни переноса дедлайна, ни погрузки, ни отказа
+
+При rejection reason объясни по-русски: без переноса дедлайна / погрузки / отказа карточка не закроется.
 
 ФОРМАТ ОТВЕТА — только JSON:
 {
@@ -74,6 +91,12 @@ function buildSystemPrompt() {
 {
   "status": "rejected",
   "reason": "Основной адрес (Google Maps) можно изменить только в CRM. Укажите детальный адрес."
+}
+
+Если просят только инфо без переноса / погрузки / отказа:
+{
+  "status": "rejected",
+  "reason": "Не могу закрыть дедлайн без решения: укажите новую дату переноса, погрузку или отказ. Просто дописать данные недостаточно."
 }
 
 Если не удалось разобрать:
@@ -164,6 +187,16 @@ async function parseDeadlineCommand(text, { replyText } = {}) {
   if (parsed.reject_reason) {
     const reason = String(parsed.reject_reason).trim();
     if (reason) result.rejectReason = reason;
+  }
+
+  if ((action === "reschedule" || action === "info_added") && !result.newDate) {
+    console.log(
+      `[appeals-deadlines/parser] отказ: ${appealNumber} ${action} без new_date`,
+    );
+    return {
+      status: "rejected",
+      reason: getNeedsDeadlineResolutionReason(appealNumber),
+    };
   }
 
   console.log(
