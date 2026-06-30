@@ -8,11 +8,12 @@
 
 const { hasCredentials } = require("../call-ai/googleAuth");
 const { generateContent } = require("../call-ai/geminiClient");
+const { SUMMARY } = require("../call-ai/config");
 const { getMskTodayDate } = require("./queries");
 const { normalizeInfoUpdates, hasAnyInfoUpdate } = require("./infoUpdates");
 
-const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash-001";
-const VERTEX_LOCATION = process.env.VERTEX_LOCATION || "us-central1";
+const GEMINI_MODEL = SUMMARY.MODEL;
+const VERTEX_LOCATION = SUMMARY.VERTEX_LOCATION;
 
 const ACTIONS = ["reschedule", "reject", "loading", "info_added"];
 
