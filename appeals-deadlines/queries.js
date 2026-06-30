@@ -95,7 +95,35 @@ async function markDeadlineNotifSent(id, tgMsgId) {
 }
 
 /**
- * Помечает заявку как «менеджер отреагировал».
+ * Перенос дедлайна: новая дата + сброс трекинга уведомлений.
+ *
+ * Заявка выпадает из «активной» очереди на сегодня (reminder_date уже не сегодня),
+ * а в новую дату снова попадёт в очередь как новая карточка.
+ *
+ * @param {number} id
+ * @param {string} newDate YYYY-MM-DD
+ */
+async function rescheduleAppealDeadline(id, newDate) {
+  const { error } = await supabase
+    .from("appeals")
+    .update({
+      reminder_date: newDate,
+      deadline_notif_sent_at: null,
+      deadline_notif_tg_msg_id: null,
+      deadline_resolved_at: null,
+      deadline_resolution: null,
+    })
+    .eq("id", id);
+
+  if (error) {
+    console.error("[appeals-deadlines/queries] rescheduleAppealDeadline:", error.message);
+    throw error;
+  }
+}
+
+/**
+ * Помечает заявку как «менеджер отреагировал» (отказ, погрузка и т.д.).
+ * Для переноса дедлайна используйте rescheduleAppealDeadline — там сброс трекинга.
  *
  * @param {number} id
  * @param {'reschedule'|'reject'|'loading'|'info_added'|'manual'} resolution
@@ -163,6 +191,7 @@ module.exports = {
   getNextDeadlineAppeal,
   markDeadlineNotifSent,
   markDeadlineResolved,
+  rescheduleAppealDeadline,
   updateAppealReminderDate,
   findAppealByNumber,
 };

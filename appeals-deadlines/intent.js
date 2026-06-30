@@ -13,8 +13,7 @@ const { getTelegramBot } = require("../tgwebhook/bot");
 const { parseDeadlineCommand, formatDateHuman } = require("./parser");
 const {
   findAppealByNumber,
-  updateAppealReminderDate,
-  markDeadlineResolved,
+  rescheduleAppealDeadline,
 } = require("./queries");
 const {
   formatRescheduleConfirm,
@@ -104,12 +103,9 @@ async function handle(ctx) {
     return;
   }
 
-  // Обновляем reminder_date и помечаем дедлайн решённым
+  // Новая дата + сброс трекинга → сегодня очередь разблокируется, в новую дату заявка снова встанет в очередь
   try {
-    await updateAppealReminderDate(appeal.id, newDate);
-    if (!appeal.deadline_resolved_at) {
-      await markDeadlineResolved(appeal.id, "reschedule");
-    }
+    await rescheduleAppealDeadline(appeal.id, newDate);
   } catch (err) {
     console.error("[appeals-deadlines/intent] update:", err.message);
     await reply(ctx, "Ошибка при обновлении дедлайна. Попробуйте позже.");
