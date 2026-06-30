@@ -23,7 +23,10 @@ function registerDeadlineFastPath() {
     priority: 10,
     // Слова, на которые реагирует это правило в тексте команды.
     // При добавлении нового отдела — сюда смотреть в первую очередь на предмет конфликта.
-    keywords: ["перенес", "перенос", "дедлайн", "отказ", "погруз", "инфо", "замер"],
+    keywords: [
+      "перенес", "перенос", "дедлайн", "отказ", "погруз", "инфо", "замер",
+      "тел", "телефон", "опис", "добав", "остав",
+    ],
     detect: (text, replyText) => {
       if (!replyText) return null;
 
@@ -31,7 +34,13 @@ function registerDeadlineFastPath() {
         /ДЕДЛАЙН\s*#?\d{5}/i.test(replyText) || /#\d{5}/.test(replyText);
       if (!isDeadlineCard) return null;
 
-      if (!/перенес|перенос|дедлайн|отказ|погруз|инфо|замер/i.test(text)) return null;
+      if (
+        !/перенес|перенос|дедлайн|отказ|погруз|инфо|замер|тел|телефон|опис|добав|остав/i.test(
+          text,
+        )
+      ) {
+        return null;
+      }
 
       return {
         confidence: 0.96,

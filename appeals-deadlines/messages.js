@@ -4,6 +4,18 @@
 
 const { DIALOG_MAX_CHARS } = require("./config");
 
+const MONTHS_RU = [
+  "января", "февраля", "марта", "апреля", "мая", "июня",
+  "июля", "августа", "сентября", "октября", "ноября", "декабря",
+];
+
+function formatIsoDateHuman(isoDate) {
+  if (!isoDate) return isoDate;
+  const [, m, d] = isoDate.match(/^\d{4}-(\d{2})-(\d{2})$/) || [];
+  if (!m || !d) return isoDate;
+  return `${parseInt(d, 10)} ${MONTHS_RU[parseInt(m, 10) - 1]}`;
+}
+
 const MEMO = `\
 ---
 Чтобы закрыть этот дедлайн, отметьте @SUNRAYY_bot с номером заявки и укажите:
@@ -22,6 +34,9 @@ function formatDeadlineCard(appeal) {
   const lines = [];
 
   lines.push(`⏰ <b>ДЕДЛАЙН ${escHtml(appeal.appeal_number)}</b>`);
+  if (appeal.reminder_date) {
+    lines.push(`📅 ${escHtml(formatIsoDateHuman(appeal.reminder_date))}`);
+  }
   lines.push("");
 
   const name = (appeal.client_name || "").trim();

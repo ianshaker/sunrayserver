@@ -17,6 +17,15 @@ const GEMINI_MODEL = SUMMARY.MODEL;
 const VERTEX_LOCATION = SUMMARY.VERTEX_LOCATION;
 
 const ACTIONS = ["reschedule", "reject", "loading", "info_added"];
+const GEMINI_TIMEOUT_MS = parseInt(process.env.DEADLINE_PARSER_GEMINI_TIMEOUT_MS || "45000", 10);
+
+function extractAppealNumberFromReply(replyText) {
+  if (!replyText) return null;
+  const m =
+    replyText.match(/ДЕДЛАЙН\s*#?(\d{5})/i) ||
+    replyText.match(/#(\d{5})\b/);
+  return m ? `#${m[1]}` : null;
+}
 
 function parseModelJson(raw) {
   if (!raw) return null;
@@ -46,6 +55,15 @@ function buildSystemPrompt() {
 
 Сегодня (Москва): ${today}. Год для дат — ${year}, если не указан.
 «Сегодня» → ${today}. «Завтра» → следующий день. «Послезавтра» → через два дня.
+
+ДАТА ДЕДЛАЙНА — важно:
+• «перенести на 10 июля», «на завтра» → new_date
+• «оставить дедлайн на 1 июля», «дедлайн оставить на сегодня», «не менять — оставить на X» → это ТОЖЕ new_date (даже если дата совпадает с текущей в карточке)
+• «1 июля» без года → ${year}-07-01
+
+ИНФО ПО ЗАЯВКЕ:
+• «новый номер телефона» / «добавить тел» → extra_phone (если основной уже есть) или phone
+• «описание» / «новое описание» / «клиенту дорого» → dialog_text
 
 Ты получаешь текст сообщения менеджера и должен извлечь:
 1. Номер заявки (appeal_number) — обычно #NNNNN или просто 5 цифр. Может быть только в контексте отсечки.
@@ -99,6 +117,18 @@ function buildSystemPrompt() {
   "reason": "Не могу закрыть дедлайн без решения: укажите новую дату переноса, погрузку или отказ. Просто дописать данные недостаточно."
 }
 
+Пример: тел + описание + оставить дедлайн на 1 июля (reply на карточку #08056):
+{
+  "status": "ok",
+  "appeal_number": "#08056",
+  "action": "info_added",
+  "new_date": "${year}-07-01",
+  "info_updates": {
+    "extra_phone": "8(993)601-41-36",
+    "dialog_text": "Клиенту дорого у нас цена"
+  }
+}
+
 Если не удалось разобрать:
 {
   "status": "rejected",
@@ -131,20 +161,39 @@ async function parseDeadlineCommand(text, { replyText } = {}) {
     userParts.push(`\nКонтекст (сообщение, на которое менеджер сделал отсечку):\n${replyText.slice(0, 400)}`);
   }
 
-  console.log(`[appeals-deadlines/parser] → Gemini`);
+  const startedAt = Date.now();
+  console.log(`[appeals-deadlines/parser] → Gemini (timeout ${GEMINI_TIMEOUT_MS}ms)`);
 
-  const { text: raw, finishReason } = await generateContent({
-    systemPrompt: buildSystemPrompt(),
-    userPrompt: userParts.join("\n"),
-    model: GEMINI_MODEL,
-    location: VERTEX_LOCATION,
-    generationConfig: {
-      temperature: 0,
-      maxOutputTokens: 512,
-      responseMimeType: "application/json",
-      thinkingConfig: { thinkingBudget: 0 },
-    },
-  });
+  let raw;
+  let finishReason;
+  try {
+    const geminiPromise = generateContent({
+      systemPrompt: buildSystemPrompt(),
+      userPrompt: userParts.join("\n"),
+      model: GEMINI_MODEL,
+      location: VERTEX_LOCATION,
+      generationConfig: {
+        temperature: 0,
+        maxOutputTokens: 512,
+        responseMimeType: "application/json",
+        thinkingConfig: { thinkingBudget: 0 },
+      },
+    });
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error("gemini_timeout")), GEMINI_TIMEOUT_MS);
+    });
+    ({ text: raw, finishReason } = await Promise.race([geminiPromise, timeoutPromise]));
+  } catch (err) {
+    console.error(
+      `[appeals-deadlines/parser] Gemini ошибка ${Date.now() - startedAt}ms:`,
+      err.message,
+    );
+    return { status: "error", error: err.message === "gemini_timeout" ? "gemini_timeout" : "gemini_failed" };
+  }
+
+  console.log(
+    `[appeals-deadlines/parser] Gemini ← ${Date.now() - startedAt}ms finish=${finishReason || "?"} len=${raw?.length || 0}`,
+  );
 
   if (!raw) {
     return {
@@ -155,14 +204,23 @@ async function parseDeadlineCommand(text, { replyText } = {}) {
 
   const parsed = parseModelJson(raw);
   if (!parsed) {
+    console.warn(`[appeals-deadlines/parser] JSON parse failed: ${raw.slice(0, 200)}`);
     return { status: "error", error: "parse_failed" };
   }
 
   if (parsed.status === "rejected") {
-    return { status: "rejected", reason: String(parsed.reason || "Не удалось разобрать команду.") };
+    const reason = String(parsed.reason || "Не удалось разобрать команду.");
+    console.log(`[appeals-deadlines/parser] rejected: ${reason.slice(0, 160)}`);
+    return { status: "rejected", reason };
   }
 
-  const appealNumber = String(parsed.appeal_number || "").trim() || null;
+  let appealNumber = String(parsed.appeal_number || "").trim() || null;
+  if (!appealNumber && replyText) {
+    appealNumber = extractAppealNumberFromReply(replyText);
+    if (appealNumber) {
+      console.log(`[appeals-deadlines/parser] appeal_number из reply: ${appealNumber}`);
+    }
+  }
   const action = String(parsed.action || "").trim();
 
   if (!appealNumber) {
