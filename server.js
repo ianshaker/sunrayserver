@@ -19,6 +19,7 @@ const { registerTaskCallbackHandlers } = require("./tasks/callbacks");
 const { registerTaskCreateCallbacks } = require("./tasks/create/callbacks");
 const { registerTaskManageCallbacks } = require("./tasks/manage/callbacks");
 const { registerAppealDeadlineCallbacks } = require("./appeals-deadlines/callbacks");
+const { startAppealDeadlineWorker, registerDeadlineFastPath } = require("./appeals-deadlines");
 const { registerAssistant, startAssistant } = require("./assistant");
 const { registerIntent } = require("./assistant/registry");
 const { startBotChatsRefresh } = require("./lib/telegramBotChats");
@@ -60,9 +61,6 @@ const removeDuplicates = require("./remove_duplicates"); // пусть буде�
 
 // --- Почта Gmail → заявки в CRM --- //
 const { registerGmailAuthRoutes, startEmailChecker } = require("./postamails");
-
-// --- Модуль дедлайнов входящих (очередь уведомлений + интент управления) --- //
-const { startAppealDeadlineWorker, registerDeadlineFastPath } = require("./appeals-deadlines");
 
 // --- Обработка звонков: расшифровка (Google STT) + саммари (Gemini) --- //
 const { startCallAiWorkers, triggerTranscription, setTelegramBot, registerAskRoute } = require("./call-ai");
