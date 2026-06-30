@@ -277,8 +277,13 @@ function buildPreviewMessage(draft) {
     } else {
       lines.push("—");
     }
-    lines.push("");
-    lines.push("<i>Адрес из команды → в детальный адрес. Основной адрес (Google Maps) не меняем.</i>");
+    if (draft.infoUpdates?.detailedAddress) {
+      lines.push("");
+      lines.push(
+        "<i>Адрес из команды обновлю в «детальный адрес». " +
+          "Основной адрес с координатами (Google Maps) — только через CRM.</i>",
+      );
+    }
   }
 
   lines.push("---");
