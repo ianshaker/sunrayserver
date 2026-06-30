@@ -1,0 +1,41 @@
+// ============================================================================
+// Конфиг модуля «Дедлайны входящих».
+// ============================================================================
+
+/** Telegram-чат для уведомлений о дедлайнах. */
+const DEADLINE_CHAT_ID = -1002585521272;
+
+/** ID топика (thread) внутри группы. */
+const DEADLINE_THREAD_ID = 3664;
+
+/**
+ * Часовой пояс для проверки рабочего окна и определения «сегодня».
+ * Все reminder_date хранятся как дата без времени — сравниваем с MSK-датой.
+ */
+const MSK_OFFSET_HOURS = 3;
+
+/** Рабочий час начала (включительно), MSK. */
+const WORK_HOUR_START = 9;
+
+/** Рабочий час конца (не включительно), MSK. */
+const WORK_HOUR_END = 20;
+
+/** Временно для теста: проверка круглосуточно, без окна 9–20 MSK. Вернуть false на проде. */
+const DEADLINE_24_7 = true;
+
+/** Cron-паттерн: каждые 30 минут (на 0-й секунде). */
+const DEADLINE_CRON_PATTERN = "0 */30 * * * *";
+
+/** Максимум символов диалога в карточке TG. */
+const DIALOG_MAX_CHARS = 800;
+
+module.exports = {
+  DEADLINE_CHAT_ID,
+  DEADLINE_THREAD_ID,
+  MSK_OFFSET_HOURS,
+  WORK_HOUR_START,
+  WORK_HOUR_END,
+  DEADLINE_24_7,
+  DEADLINE_CRON_PATTERN,
+  DIALOG_MAX_CHARS,
+};

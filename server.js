@@ -34,6 +34,7 @@ registerTaskCreateCallbacks();
 registerTaskManageCallbacks();
 registerIntent(require("./tasks/create/intent"));
 registerIntent(require("./tasks/manage/intent"));
+registerIntent(require("./appeals-deadlines/intent"));
 registerAssistant();
 
 // --- Импорт обработчика манго (прокидываем telegramBot) --- //
@@ -56,6 +57,9 @@ const removeDuplicates = require("./remove_duplicates"); // пусть буде�
 
 // --- Почта Gmail → заявки в CRM --- //
 const { registerGmailAuthRoutes, startEmailChecker } = require("./postamails");
+
+// --- Модуль дедлайнов входящих (очередь уведомлений + интент управления) --- //
+const { startAppealDeadlineWorker } = require("./appeals-deadlines");
 
 // --- Обработка звонков: расшифровка (Google STT) + саммари (Gemini) --- //
 const { startCallAiWorkers, triggerTranscription, setTelegramBot, registerAskRoute } = require("./call-ai");
@@ -162,6 +166,7 @@ fastify.listen(
     startBotChatsRefresh();
     startAssistant();
     startTaskReminderWorker(telegramBot);
+    startAppealDeadlineWorker(telegramBot);
     startWebhookSelfHeal();
   }
 );
