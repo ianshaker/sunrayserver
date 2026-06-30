@@ -1,5 +1,6 @@
 // ============================================================================
-// Триггер: когда сообщение адресовано боту (упоминание, reply, private).
+// Триггер: когда сообщение адресовано боту (@mention в группе, любой текст в private).
+// Reply на сообщение бота БЕЗ @mention — не вызов (иначе срабатывает на ответы к отбивкам).
 // ============================================================================
 
 const { getTelegramBot } = require("../tgwebhook/bot");
@@ -84,17 +85,10 @@ function messageMentionsBot(msg, bot) {
   return false;
 }
 
-function isReplyToBot(msg, bot) {
-  if (!bot || !msg?.reply_to_message) return false;
-  const replyFrom = msg.reply_to_message.from;
-  if (!replyFrom) return false;
-  return Number(replyFrom.id) === Number(bot.id);
-}
-
 /**
  * Сообщение адресовано боту?
  * - private: любой не-командный текст
- * - group/supergroup: @mention или reply на сообщение бота
+ * - group/supergroup: только явный @mention (reply на бота без mention — игнор)
  */
 async function shouldHandle(msg) {
   if (!msg || msg.from?.is_bot) return { ok: false, reason: "bot_or_empty" };
@@ -109,10 +103,10 @@ async function shouldHandle(msg) {
 
   if (chatType === "group" || chatType === "supergroup") {
     if (!bot) return { ok: false, reason: "bot_user_unknown" };
-    if (messageMentionsBot(msg, bot) || isReplyToBot(msg, bot)) {
+    if (messageMentionsBot(msg, bot)) {
       return { ok: true, bot };
     }
-    return { ok: false, reason: "no_mention_or_reply" };
+    return { ok: false, reason: "no_mention" };
   }
 
   return { ok: false, reason: `chat_type_${chatType || "unknown"}` };
