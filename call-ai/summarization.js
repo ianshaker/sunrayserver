@@ -102,13 +102,18 @@ async function generateSummary(row) {
 }
 
 // Саммари одной строки.
+//
+// Как и в transcription.js: все записи гейтятся direction=1, чтобы позднее
+// пришедший summary (определивший звонок как исходящий) не мог быть перезаписан
+// результатом, который был запущен, когда направление ещё не было известно.
 async function summarizeRow(row) {
   const { id, entry_id } = row;
 
   await supabase
     .from("mango_calls")
     .update({ summary_status: "processing", summary_error: null })
-    .eq("id", id);
+    .eq("id", id)
+    .eq("direction", 1);
 
   try {
     const { text, finishReason } = await generateSummary(row);
@@ -120,11 +125,12 @@ async function summarizeRow(row) {
           summary_status: "failed",
           summary_error: finishReason === "MAX_TOKENS" ? "обрезано лимитом токенов" : "неполный или пустой ответ",
         })
-        .eq("id", id);
+        .eq("id", id)
+        .eq("direction", 1);
       return;
     }
 
-    await supabase
+    const { data: updated } = await supabase
       .from("mango_calls")
       .update({
         summary: text || "",
@@ -132,7 +138,14 @@ async function summarizeRow(row) {
         summary_model: GEMINI_MODEL,
         summary_error: text ? null : "пустой ответ модели",
       })
-      .eq("id", id);
+      .eq("id", id)
+      .eq("direction", 1)
+      .select("id");
+
+    if (!updated || updated.length === 0) {
+      console.log(`⏭️ Саммари ${entry_id}: звонок оказался исходящим, результат отброшен (Telegram не шлём)`);
+      return;
+    }
 
     console.log(`📝 Саммари готово: ${entry_id} (${text.length} симв.)`);
 
@@ -145,7 +158,8 @@ async function summarizeRow(row) {
     await supabase
       .from("mango_calls")
       .update({ summary_status: "failed", summary_error: msg.slice(0, 500) })
-      .eq("id", id);
+      .eq("id", id)
+      .eq("direction", 1);
   }
 }
 
@@ -167,6 +181,7 @@ async function pollOnce() {
       .select(SELECT_FIELDS)
       .eq("summary_status", "pending")
       .eq("transcript_status", "done")
+      .eq("direction", 1)
       .not("transcript", "is", null)
       .order("created_at", { ascending: true })
       .limit(BATCH_LIMIT);
@@ -212,12 +227,15 @@ async function triggerSummary(entryId) {
     return { status: "error", message: error.message };
   }
   if (!data) return { status: "not_found" };
+  // Исходящие звонки не саммаризируем — только храним аудио для истории.
+  if (data.direction === 2) return { status: "skipped_outgoing" };
   if (data.transcript_status !== "done") return { status: "transcript_not_ready" };
   if (data.summary_status === "done") {
     sendSummaryToTelegram({ ...data, summary: data.summary }).catch(() => {});
     return { status: "already_done" };
   }
   if (data.summary_status === "processing") return { status: "already_processing" };
+  if (data.summary_status === "skipped") return { status: "already_skipped" };
 
   if (!data.transcript || !data.transcript.trim()) {
     await supabase

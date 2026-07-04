@@ -109,20 +109,27 @@ async function recognize(audioBuffer, objectName) {
 }
 
 // Расшифровываем одну строку звонка.
+//
+// Все записи в БД гейтятся условием direction=1: если между select и записью
+// результата придёт summary, определивший звонок как исходящий (direction=2,
+// transcript_status='skipped' — см. saveCallSummary), эти UPDATE просто не
+// найдут строку по direction=1 и ничего не перезапишут — 'skipped' останется.
+// Актуально, т.к. Google STT может идти до OP_TIMEOUT_MS (по умолчанию 20 мин).
 async function transcribeRow(row) {
   const { id, entry_id, storage_bucket, storage_path } = row;
 
   await supabase
     .from("mango_calls")
     .update({ transcript_status: "processing", transcript_error: null })
-    .eq("id", id);
+    .eq("id", id)
+    .eq("direction", 1);
 
   try {
     const buffer = await downloadAudio(storage_bucket, storage_path);
     const objectName = `stt/${String(entry_id).replace(/[^A-Za-z0-9._-]/g, "_")}-${Date.now()}.mp3`;
     const text = await recognize(buffer, objectName);
 
-    await supabase
+    const { data: updated } = await supabase
       .from("mango_calls")
       .update({
         transcript: text || "",
@@ -130,7 +137,14 @@ async function transcribeRow(row) {
         transcript_model: MODEL_LABEL,
         transcript_error: text ? null : "пустой результат распознавания",
       })
-      .eq("id", id);
+      .eq("id", id)
+      .eq("direction", 1)
+      .select("id");
+
+    if (!updated || updated.length === 0) {
+      console.log(`⏭️ Расшифровка ${entry_id}: звонок оказался исходящим, результат отброшен`);
+      return;
+    }
 
     console.log(`✅ Расшифровка готова: ${entry_id} (${text.length} симв.)`);
 
@@ -151,7 +165,8 @@ async function transcribeRow(row) {
         transcript_status: "failed",
         transcript_error: String(e.message).slice(0, 500),
       })
-      .eq("id", id);
+      .eq("id", id)
+      .eq("direction", 1);
   }
 }
 
@@ -173,6 +188,7 @@ async function pollOnce() {
       .select("id, entry_id, storage_bucket, storage_path")
       .eq("transcript_status", "pending")
       .eq("recording_status", "ready")
+      .eq("direction", 1)
       .not("storage_path", "is", null)
       .order("created_at", { ascending: true })
       .limit(BATCH_LIMIT);
@@ -200,7 +216,7 @@ async function triggerTranscription(entryId) {
 
   const { data, error } = await supabase
     .from("mango_calls")
-    .select("id, entry_id, storage_bucket, storage_path, transcript_status, recording_status")
+    .select("id, entry_id, storage_bucket, storage_path, transcript_status, recording_status, direction")
     .eq("entry_id", entryId)
     .maybeSingle();
 
@@ -209,11 +225,14 @@ async function triggerTranscription(entryId) {
     return { status: "error", message: error.message };
   }
   if (!data) return { status: "not_found" };
+  // Исходящие звонки не расшифровываем — только храним аудио для истории.
+  if (data.direction === 2) return { status: "skipped_outgoing" };
   if (data.recording_status !== "ready" || !data.storage_path) {
     return { status: "recording_not_ready" };
   }
   if (data.transcript_status === "done") return { status: "already_done" };
   if (data.transcript_status === "processing") return { status: "already_processing" };
+  if (data.transcript_status === "skipped") return { status: "already_skipped" };
 
   await transcribeRow(data);
   return { status: "started", entry_id: entryId };

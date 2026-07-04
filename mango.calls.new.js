@@ -651,11 +651,34 @@ async function handleMangoWebhook(request, reply, telegramBot) {
 
     // === ИТОГ ЗВОНКА (когда звонок завершился) ===
     if (body.hasOwnProperty('call_direction') && body.hasOwnProperty('from') && body.hasOwnProperty('to')) {
-        if (isOutgoingCall(body)) return reply.send({ status: "outgoing_ignored" });
+        const entryId = body.entry_id;
+
+        // === Исходящий звонок: сохраняем в Supabase (история + аудио потом),
+        // но без Telegram-чата "входящие" и без расшифровки/нейроанализа
+        // (transcript_status/summary_status='skipped' — см. saveCallSummary) ===
+        if (isOutgoingCall(body)) {
+            if (entryId) delete entryCallMeta[entryId];
+
+            const lineNumber = resolveLineNumber(body, entryId);
+            const timing = buildCallTiming(body);
+            const disconnectLabel = getDisconnectLabel(body.disconnect_reason);
+
+            try {
+                await saveCallSummary(body, {
+                    timing,
+                    disconnectLabel,
+                    lineNumber,
+                    lineName: getCompanyLineName(lineNumber),
+                });
+            } catch (e) {
+                console.log("⚠️ Не удалось сохранить исходящий звонок в Supabase:", e.message);
+            }
+
+            return reply.send({ status: "outgoing_saved" });
+        }
 
         const fromNumber = body.from?.number;
         const toNumber = body.to?.number;
-        const entryId = body.entry_id;
         const lineNumber = resolveLineNumber(body, entryId);
         const formattedFromNumber = formatPhoneNumber(fromNumber);
         const timing = buildCallTiming(body);
@@ -1103,19 +1126,41 @@ async function saveCallSummary(body, info) {
     const entryId = body.entry_id;
     if (!entryId) return;
 
-    const fromNumber = body.from?.number;
-    const clientPhone = info.formattedFromNumber || formatPhoneNumber(fromNumber);
-    const digits = phoneToDigits(fromNumber);
+    const outgoing = isOutgoingCall(body);
+
+    // Входящий: клиент = from, менеджер = to (как раньше).
+    // Исходящий: клиент = to (кому звонили), менеджер = from (кто звонил).
+    let clientPhone, digits, managerName, managerExtension, managerPhone;
+    if (outgoing) {
+        const toNumber = body.to?.number;
+        const fromNumber = body.from?.number;
+        clientPhone = formatPhoneNumber(toNumber);
+        digits = phoneToDigits(toNumber);
+        managerName = getManagerName(fromNumber);
+        managerExtension = body.from?.extension || null;
+        managerPhone = fromNumber || null;
+    } else {
+        const fromNumber = body.from?.number;
+        clientPhone = info.formattedFromNumber || formatPhoneNumber(fromNumber);
+        digits = phoneToDigits(fromNumber);
+        managerName = info.acceptedManager || info.managerName || null;
+        managerExtension = body.to?.extension || null;
+        managerPhone = body.to?.number || null;
+    }
 
     const row = {
         entry_id: entryId,
         call_id: body.call_id || null,
         client_phone: clientPhone || "",
         client_phone_digits: digits || "",
-        direction: body.call_direction || 1,
-        manager_name: info.acceptedManager || info.managerName || null,
-        manager_extension: body.to?.extension || null,
-        manager_phone: body.to?.number || null,
+        // direction должен быть согласован с полями выше (client/manager уже
+        // переставлены под outgoing) — не берём body.call_direction напрямую,
+        // т.к. isOutgoingCall() иногда решает "исходящий" по isManager(from)
+        // даже если call_direction сам явно не равен 2.
+        direction: outgoing ? 2 : (body.call_direction || 1),
+        manager_name: managerName,
+        manager_extension: managerExtension,
+        manager_phone: managerPhone,
         line_number: info.lineNumber ? String(info.lineNumber) : null,
         line_name: info.lineName || null,
         call_started_at: unixToISO(body.create_time),
@@ -1129,6 +1174,15 @@ async function saveCallSummary(body, info) {
         disconnect_reason: body.disconnect_reason || null,
         disconnect_label: info.disconnectLabel || null,
     };
+
+    // Исходящие не расшифровываем и не анализируем нейронкой — только храним
+    // историю звонка и (позже) аудио. Ручной запуск расшифровки — отдельная задача.
+    if (outgoing) {
+        row.transcript_status = "skipped";
+        row.transcript_error = "исходящий звонок — расшифровка не требуется";
+        row.summary_status = "skipped";
+        row.summary_error = "исходящий звонок — саммари не требуется";
+    }
 
     // upsert по entry_id: при конфликте обновятся только переданные поля,
     // поля записи (recording_status/storage_path) останутся нетронутыми
