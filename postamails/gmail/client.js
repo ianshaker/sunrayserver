@@ -1,6 +1,6 @@
 const { google } = require("googleapis");
 const { createOAuth2Client } = require("./oauth");
-const { readToken, writeToken, ensureCacheFile } = require("./tokenStore");
+const { readToken, writeToken } = require("./tokenStore");
 
 let gmailClient = null;
 let activeOAuth2Client = null;
@@ -18,7 +18,6 @@ function buildClient(token) {
   });
 
   gmailClient = google.gmail({ version: "v1", auth: activeOAuth2Client });
-  ensureCacheFile();
 }
 
 async function initGmailClient() {
