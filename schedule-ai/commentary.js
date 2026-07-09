@@ -30,7 +30,7 @@ function buildCommentaryPrompt() {
 - Если событий нет — прямо скажи, что на эту дату/время у мастера пусто (свободен).
 - Если событий много (5+) — не перечисляй все, обобщи (например «5 событий: 2 замера, 3 монтажа»), полный список менеджер увидит ниже отдельно.
 - Пиши по-русски, кратко, по-деловому, без лишних вводных фраз («Хорошо», «Конечно» и т.п.).
-- Не придумывай имена клиентов, время или ID, которых нет в JSON.
+- Не придумывай имена клиентов, время или номера заявок, которых нет в JSON.
 
 ФОРМАТ ОТВЕТА — только валидный JSON, без markdown:
 { "comment": "У Леши завтра два слота: замер утром и монтаж вечером." }`;
@@ -51,24 +51,31 @@ function extractTokens(text) {
   return { times, ids };
 }
 
-/** Проверка: все времена/ID, упомянутые в комментарии, встречаются в реальных данных. */
+/** Номер заявки для sanity-check (без дублирования «#»). */
+function appealDigits(num) {
+  const s = String(num || "").trim().replace(/^#+/, "");
+  return s || null;
+}
+
+/** Проверка: все времена/номера заявок в комментарии есть в реальных данных. */
 function isCommentaryGrounded(comment, events) {
   const { times: commentTimes, ids: commentIds } = extractTokens(comment);
-  if (!commentTimes.size && !commentIds.size) return true; // ничего конкретного не утверждает — безопасно
+  if (!commentTimes.size && !commentIds.size) return true;
 
   const knownTimes = new Set();
-  const knownIds = new Set();
+  const knownAppeals = new Set();
   for (const ev of events) {
     if (ev.start_time) knownTimes.add(String(ev.start_time).slice(0, 5));
     if (ev.end_time) knownTimes.add(String(ev.end_time).slice(0, 5));
-    knownIds.add(String(ev.id));
+    const appeal = appealDigits(ev.appeal_number);
+    if (appeal) knownAppeals.add(appeal);
   }
 
   for (const t of commentTimes) {
     if (!knownTimes.has(t)) return false;
   }
   for (const id of commentIds) {
-    if (!knownIds.has(id)) return false;
+    if (!knownAppeals.has(id)) return false;
   }
   return true;
 }
@@ -100,7 +107,7 @@ async function buildCommentary(originalQuestion, mastersResults, queryContext = 
   const dataForModel = mastersResults.map((mr) => ({
     master: mr.canonical,
     events: (mr.events || []).map((ev) => ({
-      id: ev.id,
+      appeal_number: ev.appeal_number || null,
       start_time: ev.start_time ? String(ev.start_time).slice(0, 5) : null,
       end_time: ev.end_time ? String(ev.end_time).slice(0, 5) : null,
       type: ev.type,

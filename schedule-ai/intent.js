@@ -16,8 +16,9 @@ const { sendText } = require("../assistant/reply");
 const { parseScheduleQuery } = require("./parser");
 const { resolveMasterName } = require("./masterAliases");
 const { getMasterEventsForDate, filterByTimeRange } = require("./queries");
-const { renderScheduleAnswer } = require("./render");
+const { renderScheduleAnswer, renderNearestCityAnswer } = require("./render");
 const { buildCommentary } = require("./commentary");
+const { findNearestCitySchedule, buildRowMatchKey } = require("./nearestCity");
 
 async function reply(ctx, text) {
   if (ctx.statusMsg?.messageId) {
@@ -38,6 +39,28 @@ async function buildMasterResult(rawName, date, queryType, timeFrom, timeTo) {
     events = filterByTimeRange(events, timeFrom, timeTo);
   }
   return { ...resolved, events };
+}
+
+async function handleNearestCity(ctx, parsed) {
+  const { chatId } = ctx;
+  const { mastersRaw, cityRaw, typeFilterRaw } = parsed;
+
+  let result;
+  try {
+    result = await findNearestCitySchedule({ cityRaw, mastersRaw, typeFilterRaw });
+  } catch (error) {
+    console.error("[schedule-ai] ошибка поиска nearest_city:", error.message);
+    await reply(ctx, "Не удалось получить расписание из базы — попробуйте позже.");
+    return;
+  }
+
+  console.log(
+    `[schedule-ai] nearest_city chat=${chatId} город="${cityRaw}" мастера=[${(mastersRaw || []).join(",")}] → ${result.status}` +
+      (result.status === "ok" || result.status === "ok_nearby" ? `, найдено групп=${result.groups.length}` : ""),
+  );
+
+  const answer = renderNearestCityAnswer(result, buildRowMatchKey);
+  await reply(ctx, answer);
 }
 
 async function handle(ctx) {
@@ -72,6 +95,11 @@ async function handle(ctx) {
   if (parsed.status === "clarify") {
     console.log(`[schedule-ai] clarify: ${parsed.question}`);
     await reply(ctx, `❓ ${parsed.question}`);
+    return;
+  }
+
+  if (parsed.queryType === "nearest_city") {
+    await handleNearestCity(ctx, parsed);
     return;
   }
 
@@ -128,13 +156,15 @@ module.exports = {
   permission: PERMISSIONS.MASTER_SCHEDULE,
   title: "Расписание мастеров (AI)",
   description:
-    "Менеджер спрашивает про расписание, график или занятость мастера/монтажника/замерщика на определённый день или конкретное время: какие у него слоты, что запланировано, свободен ли в определённое время. Это ТОЛЬКО просмотр расписания — без создания задач и без действий над заявками.",
+    "Менеджер спрашивает про расписание, график или занятость мастера/монтажника/замерщика: на определённый день, на конкретное время, или когда мастер БЛИЖАЙШИЙ раз будет в конкретном городе. Это ТОЛЬКО просмотр расписания — без создания задач и без действий над заявками.",
   examples: [
     "Дай расписание Леши на завтра",
     "Что у Антона и Леши завтра?",
     "Что завтра у Леши в 13 часов?",
     "Покажи график Алексея на понедельник",
     "Свободен ли Тимур завтра в 15:30?",
+    "Когда у Леши ближайший Можайск?",
+    "Где ближайший замер в Подольске?",
   ],
   handle,
 };

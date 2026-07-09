@@ -12,17 +12,75 @@ const { supabase } = require("../lib/supabaseClient");
  * @param {string} date — "YYYY-MM-DD"
  */
 async function getMasterEventsForDate(canonicalMaster, date) {
-  // dialog/note намеренно не выбираем — это внутренние заметки, а не факты
-  // для расписания, и они раздувают ответ менеджеру (см. обсуждение).
+  // dialog/note/client_name/phone/address намеренно не выбираем — по
+  // договорённости в ответе только время, тип, ID заявки и город (см. render.js).
   const { data, error } = await supabase
     .from("eventsnew")
-    .select("id, master, date, type, start_time, end_time, client_name, phone, city, address, appeal_number")
+    .select("master, date, type, start_time, end_time, city, appeal_number")
     .ilike("master", canonicalMaster)
     .eq("date", date)
     .order("start_time", { ascending: true, nullsFirst: false });
 
   if (error) {
     console.error("[schedule-ai/queries] getMasterEventsForDate:", error.message);
+    throw error;
+  }
+  return data || [];
+}
+
+/**
+ * Все события в конкретном городе, начиная с указанной даты (включительно),
+ * отсортированные по дате и времени — сырьё для поиска «ближайшего события
+ * в городе X» (nearestCity.js). Таблица небольшая (~150 строк) — фильтрация
+ * по мастеру/типу делается уже в JS после выборки, без лишних round-trip'ов.
+ * @param {string} canonicalCity — точное значение из cityAliases.CITIES
+ * @param {string} fromDateStr — "YYYY-MM-DD", включительно
+ * @param {string|null} typeFilterResolved — точный тип из eventsnew.type или null
+ */
+async function getCityEventsFromDate(canonicalCity, fromDateStr, typeFilterResolved = null) {
+  let query = supabase
+    .from("eventsnew")
+    .select("master, date, type, start_time, end_time, city, appeal_number")
+    .ilike("city", canonicalCity)
+    .gte("date", fromDateStr)
+    .order("date", { ascending: true })
+    .order("start_time", { ascending: true, nullsFirst: false });
+
+  if (typeFilterResolved) {
+    query = query.eq("type", typeFilterResolved);
+  }
+
+  const { data, error } = await query;
+  if (error) {
+    console.error("[schedule-ai/queries] getCityEventsFromDate:", error.message);
+    throw error;
+  }
+  return data || [];
+}
+
+/**
+ * Все события от указанной даты (включительно) во ВСЕХ городах — сырьё для
+ * фолбэка «похожий город» (nearestCity.js), когда в искомом городе совпадений
+ * нет. Таблица небольшая (~150 строк) — фильтрация по расстоянию (Хаверсин)
+ * делается в JS после одной этой выборки, без запроса на каждый город.
+ * @param {string} fromDateStr — "YYYY-MM-DD", включительно
+ * @param {string|null} typeFilterResolved — точный тип из eventsnew.type или null
+ */
+async function getUpcomingEvents(fromDateStr, typeFilterResolved = null) {
+  let query = supabase
+    .from("eventsnew")
+    .select("master, date, type, start_time, end_time, city, appeal_number")
+    .gte("date", fromDateStr)
+    .order("date", { ascending: true })
+    .order("start_time", { ascending: true, nullsFirst: false });
+
+  if (typeFilterResolved) {
+    query = query.eq("type", typeFilterResolved);
+  }
+
+  const { data, error } = await query;
+  if (error) {
+    console.error("[schedule-ai/queries] getUpcomingEvents:", error.message);
     throw error;
   }
   return data || [];
@@ -55,4 +113,4 @@ function filterByTimeRange(events, timeFrom, timeTo) {
   });
 }
 
-module.exports = { getMasterEventsForDate, filterByTimeRange };
+module.exports = { getMasterEventsForDate, getCityEventsFromDate, getUpcomingEvents, filterByTimeRange };

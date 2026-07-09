@@ -64,11 +64,12 @@ const ALIASES = {
 };
 
 // Имена, которые реально неоднозначны между двумя разными людьми — здесь
-// диминутив «Леха»/«Лешка» одинаково годится и для Леши, и для Алексея.
+// диминутив «Леха»/«Лешка»/«Лешенька» одинаково годится и для Леши, и для Алексея.
 // Первый элемент — вариант по умолчанию (если менеджер не уточнит).
 const AMBIGUOUS = {
   "леха": ["Леша", "Алексей"],
   "лешка": ["Леша", "Алексей"],
+  "лешенка": ["Леша", "Алексей"],
   "лёха": ["Леша", "Алексей"],
 };
 
@@ -76,7 +77,31 @@ function normalize(raw) {
   return String(raw || "")
     .trim()
     .toLowerCase()
-    .replace(/ё/g, "е");
+    .replace(/ё/g, "е")
+    .replace(/[ьъ]/g, ""); // «Лешенька» → «лешенка»
+}
+
+/** Падежная форма того же имени («Леши», «Антону») — не повод для предупреждения. */
+function matchesNameStem(cand, baseName) {
+  const base = normalize(baseName);
+  if (!base || !cand) return false;
+  if (cand === base) return true;
+  const stem = base.length > 3 ? base.slice(0, -1) : base;
+  return cand.startsWith(stem) && cand.length <= base.length + 2;
+}
+
+function resolveFromStem(cand) {
+  for (const canonical of CANONICAL_MASTERS) {
+    if (matchesNameStem(cand, canonical)) {
+      return { canonical, assumed: false, alternatives: [] };
+    }
+  }
+  for (const [key, val] of Object.entries(ALIASES)) {
+    if (matchesNameStem(cand, key)) {
+      return { canonical: val.canonical, assumed: val.assumed, alternatives: [] };
+    }
+  }
+  return null;
 }
 
 /** Расстояние Левенштейна — только для опечаток, не для семантики. */
@@ -111,9 +136,7 @@ function levenshtein(a, b) {
  */
 function resolveMasterName(rawName) {
   const norm = normalize(rawName).replace(/[.,!?]+$/g, "");
-  // отбрасываем частые падежные окончания («лешу», «лешей», «антона») — грубая эвристика,
-  // без словаря; сначала пробуем как есть, затем срез хвоста.
-  const candidates = [norm, norm.replace(/(ой|ый|ого|ому|ому|ем|ей|ем|у|а|ы|и|е|ю)$/u, "")];
+  const candidates = [norm, norm.replace(/(ой|ый|ого|ому|ем|ей|ею|ом|ам|ами|ах|ы|и|а|у|е|ю)$/u, "")];
 
   for (const cand of candidates) {
     if (!cand) continue;
@@ -125,13 +148,18 @@ function resolveMasterName(rawName) {
       const [primary, ...rest] = AMBIGUOUS[cand];
       return { raw: rawName, canonical: primary, found: true, assumed: true, alternatives: rest };
     }
+    const stemHit = resolveFromStem(cand);
+    if (stemHit) {
+      return { raw: rawName, canonical: stemHit.canonical, found: true, assumed: stemHit.assumed, alternatives: stemHit.alternatives };
+    }
     const canonicalMatch = CANONICAL_MASTERS.find((m) => normalize(m) === cand);
     if (canonicalMatch) {
       return { raw: rawName, canonical: canonicalMatch, found: true, assumed: false, alternatives: [] };
     }
   }
 
-  // Fuzzy — только опечатки (расстояние ≤ 1), чтобы не подменить одного мастера другим.
+  // Fuzzy — только опечатки (расстояние ≤ 1). Падежные формы сюда не попадают
+  // (их ловит resolveFromStem выше), поэтому предупреждение не нужно.
   let best = null;
   for (const key of Object.keys(ALIASES)) {
     const dist = levenshtein(norm, key);
@@ -141,7 +169,7 @@ function resolveMasterName(rawName) {
   }
   if (best) {
     const { canonical } = ALIASES[best.key];
-    return { raw: rawName, canonical, found: true, assumed: true, alternatives: [] };
+    return { raw: rawName, canonical, found: true, assumed: false, alternatives: [] };
   }
 
   return { raw: rawName, canonical: null, found: false, assumed: false, alternatives: [] };

@@ -49,6 +49,7 @@ function isDateWithinRange(dateStr) {
  * @param {{ replyText?: string|null }} opts
  * @returns {Promise<
  *   | { status: "ok", mastersRaw: string[], date: string, queryType: "full_day"|"time_point", timeFrom: string|null, timeTo: string|null }
+ *   | { status: "ok", mastersRaw: string[], queryType: "nearest_city", cityRaw: string, typeFilterRaw: string|null }
  *   | { status: "clarify", question: string }
  *   | { status: "unsupported", message: string }
  *   | { status: "error", error: string }
@@ -107,6 +108,31 @@ async function parseScheduleQuery(text, { replyText } = {}) {
   const mastersRaw = Array.isArray(parsed.masters_raw)
     ? parsed.masters_raw.map((m) => String(m || "").trim()).filter(Boolean)
     : [];
+
+  const queryType =
+    parsed.query_type === "time_point"
+      ? "time_point"
+      : parsed.query_type === "nearest_city"
+        ? "nearest_city"
+        : "full_day";
+
+  // nearest_city: мастер не обязателен (пустой список = "любой мастер"),
+  // дата не спрашивается у модели — поиск идёт от сегодня вперёд по коду.
+  if (queryType === "nearest_city") {
+    const cityRaw = parsed.city_raw ? String(parsed.city_raw).trim() : "";
+    if (!cityRaw) {
+      return clarify("Не понял, какой город искать — уточните название.");
+    }
+    const typeFilterRaw = parsed.type_filter ? String(parsed.type_filter).trim() : null;
+    return {
+      status: "ok",
+      mastersRaw,
+      queryType,
+      cityRaw,
+      typeFilterRaw,
+    };
+  }
+
   if (!mastersRaw.length) {
     return clarify("Не понял, о каком мастере речь — уточните имя.");
   }
@@ -119,7 +145,6 @@ async function parseScheduleQuery(text, { replyText } = {}) {
     return clarify("Дата выглядит нереалистично далёкой — уточните, на какой день нужно расписание.");
   }
 
-  const queryType = parsed.query_type === "time_point" ? "time_point" : "full_day";
   let timeFrom = null;
   let timeTo = null;
   if (queryType === "time_point") {
