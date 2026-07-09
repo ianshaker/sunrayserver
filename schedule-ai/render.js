@@ -11,7 +11,6 @@ function formatDateHuman(dateStr) {
     timeZone: "Europe/Moscow",
     day: "numeric",
     month: "long",
-    year: "numeric",
   });
   const weekday = date.toLocaleDateString("ru-RU", {
     timeZone: "Europe/Moscow",
@@ -51,17 +50,24 @@ function formatAppealNumber(num) {
   return s.startsWith("#") ? s : `#${s}`;
 }
 
+function escapeHtml(text) {
+  return String(text)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
 // Формат строки события: смайлик типа + время + ID + город.
 //   🟢 9–10:15 · #08198 — Можайск
-// highlighted — для nearest_city: помечает строку, из-за которой мастер
-// попал в подборку (👉), остальные события того же дня показываются как контекст.
-function buildEventLine(ev, highlighted = false) {
+// highlighted — для nearest_city: совпавшая строка выделяется жирным (HTML).
+function buildEventLine(ev, highlighted = false, html = false) {
   const emoji = emojiForType(ev.type);
   const appeal = formatAppealNumber(ev.appeal_number);
-  const marker = highlighted ? "👉 " : "";
-  let line = `${marker}${emoji} ${formatEventTimeRange(ev)}`;
+  let line = `${emoji} ${formatEventTimeRange(ev)}`;
   if (appeal) line += ` · ${appeal}`;
   if (ev.city) line += ` — ${ev.city}`;
+  if (html) line = escapeHtml(line);
+  if (highlighted && html) line = `<b>${line}</b>`;
   return line;
 }
 
@@ -106,7 +112,7 @@ function buildGapLine(fromMin, toMin) {
  * @param {object[]} events
  * @param {(ev: object) => boolean} [isHighlighted] — для nearest_city
  */
-function buildEventLinesWithGaps(events, isHighlighted = () => false) {
+function buildEventLinesWithGaps(events, isHighlighted = () => false, html = false) {
   const lines = [];
   let cursor = WORKDAY_START_MIN;
 
@@ -114,9 +120,9 @@ function buildEventLinesWithGaps(events, isHighlighted = () => false) {
     const start = timeToMinutes(ev.start_time);
     if (start != null && start > cursor) {
       const gap = buildGapLine(cursor, start);
-      if (gap) lines.push(gap);
+      if (gap) lines.push(html ? escapeHtml(gap) : gap);
     }
-    lines.push(buildEventLine(ev, isHighlighted(ev)));
+    lines.push(buildEventLine(ev, isHighlighted(ev), html));
     const end = timeToMinutes(ev.end_time);
     if (end != null) cursor = Math.max(cursor, end);
     else if (start != null) cursor = Math.max(cursor, start);
@@ -124,7 +130,7 @@ function buildEventLinesWithGaps(events, isHighlighted = () => false) {
 
   if (cursor < WORKDAY_END_MIN) {
     const gap = buildGapLine(cursor, WORKDAY_END_MIN);
-    if (gap) lines.push(gap);
+    if (gap) lines.push(html ? escapeHtml(gap) : gap);
   }
 
   return lines;
@@ -163,7 +169,7 @@ function renderMasterBlock(masterResult, date, queryType, timeFrom, timeTo) {
     queryType === "time_point"
       ? `на ${formatDateHuman(date)}, ${timeFrom === timeTo ? timeFrom : `${timeFrom}–${timeTo}`}`
       : `на ${formatDateHuman(date)}`;
-  lines.push(`📅 Расписание ${masterResult.canonical} ${headerScope}:`);
+  lines.push(`Расписание ${masterResult.canonical} ${headerScope}:`);
 
   if (!masterResult.events.length) {
     if (queryType === "full_day") {
@@ -224,22 +230,15 @@ function renderScheduleAnswer({ mastersResults, date, queryType, timeFrom, timeT
 
 /**
  * Рендер одной группы (мастер, дата) для "nearest_city" — показывает ПОЛНЫЙ
- * день мастера (с промежутками, как в full_day), но помечает 👉 те строки,
- * из-за которых мастер попал в подборку (совпадение по искомому городу).
- * Если группа найдена не в самом искомом городе, а рядом (fallback по
- * расстоянию) — в заголовке честно указан реальный город и km до искомого.
- * @param {{ master: string, date: string, events: object[], matchKeys: Set<string>, matchedCity: string|null, distanceKm: number|null }} group
+ * день мастера (с промежутками, как в full_day), совпавшие строки — жирным.
+ * @param {{ master: string, date: string, events: object[], matchKeys: Set<string> }} group
  */
 function renderNearestCityGroup(group, buildRowMatchKey) {
   const lines = [];
-  const nearbyNote =
-    group.matchedCity && group.distanceKm != null
-      ? ` · ${group.matchedCity} (~${Math.round(group.distanceKm)} км от искомого города)`
-      : "";
-  lines.push(`📍 ${group.master} — ${formatDateHuman(group.date)}${nearbyNote}:`);
+  lines.push(`${escapeHtml(group.master)} — ${escapeHtml(formatDateHuman(group.date))}:`);
 
   const isHighlighted = (ev) => group.matchKeys.has(buildRowMatchKey(ev));
-  lines.push(...buildEventLinesWithGaps(group.events, isHighlighted));
+  lines.push(...buildEventLinesWithGaps(group.events, isHighlighted, true));
 
   return lines.join("\n");
 }
@@ -271,34 +270,40 @@ function buildNearestCityVerdict(groups, cityCanonical, typeFilterResolved, isNe
  */
 function renderNearestCityAnswer(result, buildRowMatchKey) {
   if (result.status === "city_not_found") {
-    return `❓ Город «${result.cityRaw}» не нашёл в списке — уточните название.`;
+    return { text: `❓ Город «${result.cityRaw}» не нашёл в списке — уточните название.` };
   }
   if (result.status === "masters_not_found") {
     const names = result.mastersRaw.map((m) => `«${m}»`).join(", ");
-    return `❓ Не нашёл мастера ${names} в списке — уточните имя.`;
+    return { text: `❓ Не нашёл мастера ${names} в списке — уточните имя.` };
   }
   if (result.status === "no_matches") {
     const what = result.typeFilterResolved ? ` (${result.typeFilterResolved.toLowerCase()})` : "";
     const nearbyNote = result.nearbyChecked
       ? " Рядом (в пределах разумного расстояния) тоже пусто."
       : "";
-    return `В обозримом будущем${what} в городе «${result.cityCanonical}» ничего не нашёл.${nearbyNote}`;
+    return {
+      text: `В обозримом будущем${what} в городе «${result.cityCanonical}» ничего не нашёл.${nearbyNote}`,
+    };
   }
 
   const lines = [];
   for (const w of result.masterWarnings || []) {
-    lines.push(`⚠️ УТОЧНЕНИЕ: «${w.raw}» распознано как ${w.canonical}. Если не так — напишите точнее.`);
+    lines.push(
+      escapeHtml(
+        `⚠️ УТОЧНЕНИЕ: «${w.raw}» распознано как ${w.canonical}. Если не так — напишите точнее.`,
+      ),
+    );
   }
 
   const isNearbyFallback = result.status === "ok_nearby";
   const verdict = buildNearestCityVerdict(result.groups, result.cityCanonical, result.typeFilterResolved, isNearbyFallback);
-  if (verdict) lines.push(verdict);
+  if (verdict) lines.push(escapeHtml(verdict));
   lines.push("");
 
   const blocks = result.groups.map((g) => renderNearestCityGroup(g, buildRowMatchKey));
   lines.push(blocks.join("\n\n"));
 
-  return lines.join("\n");
+  return { text: lines.join("\n"), parseMode: "HTML" };
 }
 
 module.exports = {

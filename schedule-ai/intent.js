@@ -20,11 +20,11 @@ const { renderScheduleAnswer, renderNearestCityAnswer } = require("./render");
 const { buildCommentary } = require("./commentary");
 const { findNearestCitySchedule, buildRowMatchKey } = require("./nearestCity");
 
-async function reply(ctx, text) {
+async function reply(ctx, text, options = {}) {
   if (ctx.statusMsg?.messageId) {
-    await ctx.statusMsg.update(text);
+    await ctx.statusMsg.update(text, undefined, options);
   } else {
-    await sendText(ctx.chatId, text);
+    await sendText(ctx.chatId, text, options);
   }
 }
 
@@ -60,7 +60,7 @@ async function handleNearestCity(ctx, parsed) {
   );
 
   const answer = renderNearestCityAnswer(result, buildRowMatchKey);
-  await reply(ctx, answer);
+  await reply(ctx, answer.text, answer.parseMode ? { parse_mode: answer.parseMode } : undefined);
 }
 
 async function handle(ctx) {

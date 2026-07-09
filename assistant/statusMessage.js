@@ -32,7 +32,7 @@ class StatusMessage {
     return this;
   }
 
-  async update(text, minMs = MIN_STATUS_MS) {
+  async update(text, minMs = MIN_STATUS_MS, options = {}) {
     if (!this._messageId || !this.bot) return;
     const elapsed = Date.now() - this._lastUpdateAt;
     if (elapsed < minMs) await sleep(minMs - elapsed);
@@ -41,6 +41,7 @@ class StatusMessage {
         chat_id: this.chatId,
         message_id: this._messageId,
         disable_web_page_preview: true,
+        ...options,
       });
       this._lastUpdateAt = Date.now();
     } catch (err) {
