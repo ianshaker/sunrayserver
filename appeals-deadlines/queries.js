@@ -375,8 +375,57 @@ async function updateIdsOtkaz(appealNumber) {
   }
 }
 
+const APPEAL_CARD_SELECT =
+  "id, appeal_number, client_name, phone, city, detailed_address, address, dialog, reminder_date, manager";
+
+/**
+ * Read-only список активных входящих по reminder_date (для Q&A менеджера).
+ * Не трогает deadline_notif_* — это не очередь push-уведомлений.
+ *
+ * @param {{ mode: 'by_date'|'urgent', date?: string, limit: number }} opts
+ * @returns {Promise<{ appeals: object[], truncated: boolean, totalMatched: number }>}
+ */
+async function listAppealsForDeadlineQuery({ mode, date, limit }) {
+  const fetchLimit = Math.max(1, limit) + 1; // +1 чтобы понять, что есть ещё
+
+  let q = supabase
+    .from("appeals")
+    .select(APPEAL_CARD_SELECT)
+    .eq("status", "Активно")
+    .or("is_spam.is.null,is_spam.eq.false");
+
+  if (mode === "urgent") {
+    const today = getMskTodayDate();
+    q = q
+      .lte("reminder_date", today)
+      .not("reminder_date", "is", null)
+      .order("reminder_date", { ascending: true })
+      .order("id", { ascending: false });
+  } else {
+    q = q.eq("reminder_date", date).order("id", { ascending: false });
+  }
+
+  const { data, error } = await q.limit(fetchLimit);
+
+  if (error) {
+    console.error("[appeals-deadlines/queries] listAppealsForDeadlineQuery:", error.message);
+    throw error;
+  }
+
+  const rows = data || [];
+  const truncated = rows.length > limit;
+  const appeals = truncated ? rows.slice(0, limit) : rows;
+
+  return {
+    appeals,
+    truncated,
+    totalMatched: truncated ? limit + 1 : appeals.length,
+  };
+}
+
 module.exports = {
   getMskTodayDate,
+  getMskDateOffset,
   validateNewDeadlineDate,
   getActiveDeadlineNotif,
   getNextDeadlineAppeal,
@@ -393,4 +442,5 @@ module.exports = {
   findExistingReject,
   insertAppealsOtkaz,
   updateIdsOtkaz,
+  listAppealsForDeadlineQuery,
 };

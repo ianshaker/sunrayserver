@@ -35,6 +35,15 @@ const DRAFT_TTL_MS = 60 * 60 * 1000;
 /** Префикс callback: ad:save:<draftId> / ad:cancel:<draftId> */
 const CALLBACK_PREFIX = "ad";
 
+/** Hard-cap карточек в ответе на «покажи все дедлайны». */
+const QUERY_LIST_CAP = 10;
+
+/**
+ * Пауза между отдельными TG-сообщениями при пачке карточек (до QUERY_LIST_CAP).
+ * ~2 msg/s — с запасом относительно лимитов Telegram на группу.
+ */
+const QUERY_SEND_GAP_MS = 450;
+
 module.exports = {
   DEADLINE_CHAT_ID,
   DEADLINE_THREAD_ID,
@@ -46,4 +55,6 @@ module.exports = {
   DIALOG_MAX_CHARS,
   DRAFT_TTL_MS,
   CALLBACK_PREFIX,
+  QUERY_LIST_CAP,
+  QUERY_SEND_GAP_MS,
 };

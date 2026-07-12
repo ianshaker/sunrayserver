@@ -38,6 +38,7 @@ registerAppealDeadlineCallbacks();
 registerIntent(require("./tasks/create/intent"));
 registerIntent(require("./tasks/manage/intent"));
 registerIntent(require("./appeals-deadlines/intent"));
+registerIntent(require("./appeals-deadlines/queryIntent"));
 registerIntent(require("./schedule-ai/intent"));
 registerDeadlineFastPath();
 registerAssistant();
