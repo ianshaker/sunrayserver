@@ -64,13 +64,14 @@ function formatQueryCard(event) {
 
 /**
  * @param {{
- *   mode: 'by_date'|'urgent',
+ *   mode: 'by_date'|'urgent'|'recent_past',
  *   date: string|null,
  *   events: object[],
  *   truncated: boolean,
+ *   limit?: number,
  * }} opts
  */
-function buildDeadlineQueryMessages({ mode, date, events, truncated }) {
+function buildDeadlineQueryMessages({ mode, date, events, truncated, limit }) {
   if (!events.length) {
     if (mode === "urgent") {
       return {
@@ -83,12 +84,23 @@ function buildDeadlineQueryMessages({ mode, date, events, truncated }) {
         parseMode: "HTML",
       };
     }
+    if (mode === "recent_past") {
+      return {
+        empty: true,
+        header:
+          "Прошедших дедлайнов по погрузке нет.\n" +
+          "Можно спросить на конкретную дату («на вчера») или «дедлайны по погрузке на сегодня».",
+        cards: [],
+        footer: null,
+        parseMode: "HTML",
+      };
+    }
     const human = formatIsoDateHuman(date);
     return {
       empty: true,
       header:
         `На <b>${escHtml(human)}</b> событий погрузки с дедлайном нет.\n` +
-        `Можно спросить про вчера или другую дату.`,
+        `Можно спросить прошедшие («дай 5 прошедших») или другую дату.`,
       cards: [],
       footer: null,
       parseMode: "HTML",
@@ -101,14 +113,26 @@ function buildDeadlineQueryMessages({ mode, date, events, truncated }) {
       events.length === 1
         ? "Самый срочный дедлайн по погрузке:"
         : `Срочные дедлайны по погрузке (${events.length}):`;
+  } else if (mode === "recent_past") {
+    header =
+      events.length === 1
+        ? "Ближайший прошедший дедлайн по погрузке:"
+        : `Прошедшие дедлайны по погрузке (ближе к сегодня) — ${events.length}:`;
   } else {
     const human = formatIsoDateHuman(date);
     header = `Дедлайны по погрузке на <b>${escHtml(human)}</b> (${events.length}):`;
   }
 
-  const footer = truncated
-    ? `<i>Показаны первые ${events.length}. Чтобы сузить — попросите число, например «две заявки».</i>`
-    : null;
+  let footer = null;
+  if (truncated) {
+    footer = `<i>Показаны первые ${events.length}. Чтобы сузить — попросите число, например «две заявки».</i>`;
+  } else if (
+    mode === "recent_past" &&
+    limit != null &&
+    events.length < limit
+  ) {
+    footer = `<i>Прошедших нашлось только ${events.length} (просили ${limit}).</i>`;
+  }
 
   return {
     empty: false,

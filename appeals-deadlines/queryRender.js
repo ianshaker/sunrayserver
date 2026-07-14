@@ -84,10 +84,11 @@ function formatQueryCard(appeal) {
  * Карточки намеренно разделены — менеджер сможет reply на конкретную заявку.
  *
  * @param {{
- *   mode: 'by_date'|'urgent',
+ *   mode: 'by_date'|'urgent'|'recent_past',
  *   date: string|null,
  *   appeals: object[],
  *   truncated: boolean,
+ *   limit?: number,
  * }} opts
  * @returns {{
  *   empty: boolean,
@@ -97,7 +98,7 @@ function formatQueryCard(appeal) {
  *   parseMode: 'HTML',
  * }}
  */
-function buildDeadlineQueryMessages({ mode, date, appeals, truncated }) {
+function buildDeadlineQueryMessages({ mode, date, appeals, truncated, limit }) {
   if (!appeals.length) {
     if (mode === "urgent") {
       return {
@@ -110,12 +111,23 @@ function buildDeadlineQueryMessages({ mode, date, appeals, truncated }) {
         parseMode: "HTML",
       };
     }
+    if (mode === "recent_past") {
+      return {
+        empty: true,
+        header:
+          "Прошедших дедлайнов по входящим нет.\n" +
+          "Можно спросить на конкретную дату («на вчера») или «дедлайны по входящим на сегодня».",
+        cards: [],
+        footer: null,
+        parseMode: "HTML",
+      };
+    }
     const human = formatIsoDateHuman(date);
     return {
       empty: true,
       header:
         `На <b>${escHtml(human)}</b> активных входящих с дедлайном нет.\n` +
-        `Можно спросить про вчера или другую дату.`,
+        `Можно спросить прошедшие («дай 5 прошедших») или другую дату.`,
       cards: [],
       footer: null,
       parseMode: "HTML",
@@ -128,14 +140,26 @@ function buildDeadlineQueryMessages({ mode, date, appeals, truncated }) {
       appeals.length === 1
         ? "Самый срочный дедлайн по входящим:"
         : `Срочные дедлайны по входящим (${appeals.length}):`;
+  } else if (mode === "recent_past") {
+    header =
+      appeals.length === 1
+        ? "Ближайший прошедший дедлайн по входящим:"
+        : `Прошедшие дедлайны по входящим (ближе к сегодня) — ${appeals.length}:`;
   } else {
     const human = formatIsoDateHuman(date);
     header = `Дедлайны по входящим на <b>${escHtml(human)}</b> (${appeals.length}):`;
   }
 
-  const footer = truncated
-    ? `<i>Показаны первые ${appeals.length}. Чтобы сузить — попросите число, например «две заявки».</i>`
-    : null;
+  let footer = null;
+  if (truncated) {
+    footer = `<i>Показаны первые ${appeals.length}. Чтобы сузить — попросите число, например «две заявки».</i>`;
+  } else if (
+    mode === "recent_past" &&
+    limit != null &&
+    appeals.length < limit
+  ) {
+    footer = `<i>Прошедших нашлось только ${appeals.length} (просили ${limit}).</i>`;
+  }
 
   return {
     empty: false,

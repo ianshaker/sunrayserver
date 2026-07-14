@@ -317,7 +317,7 @@ async function deleteLoadingEventById(id) {
  * Read-only список событий погрузки с дедлайном (для Q&A менеджера).
  * Не трогает deadline_notif_* — это не очередь push-уведомлений.
  *
- * @param {{ mode: 'by_date'|'urgent', date?: string, limit: number }} opts
+ * @param {{ mode: 'by_date'|'urgent'|'recent_past', date?: string, limit: number }} opts
  * @returns {Promise<{ events: object[], truncated: boolean, totalMatched: number }>}
  */
 async function listLoadingDeadlinesForQuery({ mode, date, limit }) {
@@ -334,6 +334,13 @@ async function listLoadingDeadlinesForQuery({ mode, date, limit }) {
     q = q
       .lte("deadline", today)
       .order("deadline", { ascending: true })
+      .order("id", { ascending: false });
+  } else if (mode === "recent_past") {
+    // N ближайших к сегодня, но строго раньше сегодня (не угадывать «вчера»).
+    const today = getMskTodayDate();
+    q = q
+      .lt("deadline", today)
+      .order("deadline", { ascending: false })
       .order("id", { ascending: false });
   } else {
     q = q.eq("deadline", date).order("id", { ascending: false });

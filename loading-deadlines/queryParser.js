@@ -98,7 +98,12 @@ async function parseDeadlineQuery(text, { replyText } = {}) {
     return clarify(String(parsed.clarification_question || "").trim());
   }
 
-  const mode = parsed.mode === "urgent" ? "urgent" : "by_date";
+  const mode =
+    parsed.mode === "urgent"
+      ? "urgent"
+      : parsed.mode === "recent_past"
+        ? "recent_past"
+        : "by_date";
   const domainOk = parsed.domain_ok === true;
   const all = parsed.all === true;
 

@@ -405,7 +405,7 @@ const APPEAL_CARD_SELECT =
  * Read-only список активных входящих по reminder_date (для Q&A менеджера).
  * Не трогает deadline_notif_* — это не очередь push-уведомлений.
  *
- * @param {{ mode: 'by_date'|'urgent', date?: string, limit: number }} opts
+ * @param {{ mode: 'by_date'|'urgent'|'recent_past', date?: string, limit: number }} opts
  * @returns {Promise<{ appeals: object[], truncated: boolean, totalMatched: number }>}
  */
 async function listAppealsForDeadlineQuery({ mode, date, limit }) {
@@ -423,6 +423,14 @@ async function listAppealsForDeadlineQuery({ mode, date, limit }) {
       .lte("reminder_date", today)
       .not("reminder_date", "is", null)
       .order("reminder_date", { ascending: true })
+      .order("id", { ascending: false });
+  } else if (mode === "recent_past") {
+    // N ближайших к сегодня, но строго раньше сегодня (не угадывать «вчера»).
+    const today = getMskTodayDate();
+    q = q
+      .lt("reminder_date", today)
+      .not("reminder_date", "is", null)
+      .order("reminder_date", { ascending: false })
       .order("id", { ascending: false });
   } else {
     q = q.eq("reminder_date", date).order("id", { ascending: false });
