@@ -20,6 +20,11 @@ const { registerTaskCreateCallbacks } = require("./tasks/create/callbacks");
 const { registerTaskManageCallbacks } = require("./tasks/manage/callbacks");
 const { registerAppealDeadlineCallbacks } = require("./appeals-deadlines/callbacks");
 const { startAppealDeadlineWorker, registerDeadlineFastPath } = require("./appeals-deadlines");
+const { registerLoadingDeadlineCallbacks } = require("./loading-deadlines/callbacks");
+const {
+  startLoadingDeadlineWorker,
+  registerLoadingDeadlineFastPath,
+} = require("./loading-deadlines");
 const { registerAssistant, startAssistant } = require("./assistant");
 const { registerIntent } = require("./assistant/registry");
 const { startBotChatsRefresh } = require("./lib/telegramBotChats");
@@ -35,19 +40,23 @@ registerTaskCallbackHandlers();
 registerTaskCreateCallbacks();
 registerTaskManageCallbacks();
 registerAppealDeadlineCallbacks();
+registerLoadingDeadlineCallbacks();
 registerIntent(require("./tasks/create/intent"));
 registerIntent(require("./tasks/manage/intent"));
 registerIntent(require("./appeals-deadlines/intent"));
 registerIntent(require("./appeals-deadlines/queryIntent"));
+registerIntent(require("./loading-deadlines/intent"));
+registerIntent(require("./loading-deadlines/queryIntent"));
 registerIntent(require("./schedule-ai/intent"));
 registerDeadlineFastPath();
+registerLoadingDeadlineFastPath();
 registerAssistant();
 
 // --- Импорт обработчика манго (прокидываем telegramBot) --- //
 const { handleMangoWebhook } = require("./mango.calls.new");
 
-// --- Импорт новой функции для отправки замера --- //
-const { registerZamerRoute } = require("./infonazamer");
+// --- Инфо на замер: TG по событиям (замер/монтаж/рекламация/погрузка) --- //
+const { registerZamerRoute } = require("./info-na-zamer");
 
 // --- Импорт модуля push-уведомлений --- //
 const { registerPushRoutes } = require("./pushmodul");
@@ -128,10 +137,9 @@ fastify.post("/internal/transcribe-ready", { preHandler: checkSelectelIP }, asyn
   return reply.send(result);
 });
 
-// --- Новый endpoint для назначения замера --- //
+// --- Инфо на замер: POST /events/zamer --- //
 registerZamerRoute(fastify, telegramBot);
 
-// И после registerZamerRoute добавьте:
 registerTaskRoute(fastify, telegramBot);
 
 // --- Регистрация маршрута готовности (добавить после других register) --- //
@@ -170,6 +178,7 @@ fastify.listen(
     startAssistant();
     startTaskReminderWorker(telegramBot);
     startAppealDeadlineWorker(telegramBot);
+    startLoadingDeadlineWorker(telegramBot);
     startWebhookSelfHeal();
   }
 );

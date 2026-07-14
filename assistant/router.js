@@ -50,9 +50,12 @@ function parseRouterResponse(raw, enabledIntents) {
 }
 
 /**
+ * @param {string} text
+ * @param {object[]} enabledIntents
+ * @param {{ replyText?: string|null, chat?: { title?: string, chatId?: number, permissions?: string[] } | null }} [opts]
  * @returns {Promise<{ intent: string, confidence: number, reason: string, aiDisabled?: boolean }>}
  */
-async function classifyIntent(text, enabledIntents, { replyText } = {}) {
+async function classifyIntent(text, enabledIntents, { replyText, chat } = {}) {
   if (!enabledIntents.length) {
     return { intent: "unknown", confidence: 0, reason: "Нет доступных интентов для чата" };
   }
@@ -64,8 +67,16 @@ async function classifyIntent(text, enabledIntents, { replyText } = {}) {
     return { intent: "unknown", confidence: 0, reason: "AI недоступен", aiDisabled: true };
   }
 
-  const systemPrompt = buildRouterPrompt(enabledIntents);
-  const userPrompt = buildRouterUserPrompt(text, replyText);
+  const chatContext = chat
+    ? {
+        title: chat.title,
+        chatId: chat.chatId,
+        permissions: chat.permissions,
+      }
+    : null;
+
+  const systemPrompt = buildRouterPrompt(enabledIntents, chatContext);
+  const userPrompt = buildRouterUserPrompt(text, replyText, chatContext);
 
   const { text: raw, finishReason } = await generateContent({
     systemPrompt,

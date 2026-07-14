@@ -198,6 +198,7 @@ function registerAssistant() {
 
       const classification = await classifyIntent(ctx.text, ctx.enabledIntents, {
         replyText: ctx.replyText,
+        chat: ctx.chat,
       });
 
       if (classification.aiDisabled) {
