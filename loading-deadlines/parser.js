@@ -1,8 +1,7 @@
 // ============================================================================
 // Парсер команд для модуля дедлайнов погрузки.
 //
-// Реализованы: reschedule | info_added | reject | assign_zamer.
-// return_appeals — заглушка.
+// Реализованы: reschedule | info_added | reject | assign_zamer | return_appeals.
 // ============================================================================
 
 const { hasCredentials } = require("../call-ai/googleAuth");
@@ -19,7 +18,13 @@ const GEMINI_MODEL = SUMMARY.MODEL;
 const VERTEX_LOCATION = SUMMARY.VERTEX_LOCATION;
 
 const ACTIONS = ["reschedule", "info_added", "reject", "assign_zamer", "return_appeals"];
-const IMPLEMENTED = new Set(["reschedule", "info_added", "reject", "assign_zamer"]);
+const IMPLEMENTED = new Set([
+  "reschedule",
+  "info_added",
+  "reject",
+  "assign_zamer",
+  "return_appeals",
+]);
 const GEMINI_TIMEOUT_MS = parseInt(process.env.DEADLINE_PARSER_GEMINI_TIMEOUT_MS || "45000", 10);
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -47,8 +52,8 @@ function getNeedsDeadlineResolutionReason(appealNumber) {
   const num = appealNumber || "заявке";
   return (
     `Не могу закрыть дедлайн погрузки по ${num} без решения. ` +
-    `Укажите перенос дедлайна, добавьте инфо с новой датой, поставьте отказ ` +
-    `или назначьте замер (мастер + дата + время).`
+    `Укажите перенос дедлайна, добавьте инфо с новой датой, поставьте отказ, ` +
+    `верните во входящие или назначьте замер (мастер + дата + время).`
   );
 }
 
@@ -65,6 +70,7 @@ function buildSystemPrompt() {
 • info_added — обновить поля И обязательно new_date
 • reject — отказ
 • assign_zamer — назначить замер мастеру на дату и время
+• return_appeals — вернуть во входящие обращения
 
 Сегодня (Москва): ${today}. Год для дат — ${year}, если не указан.
 «Сегодня» → ${today}. «Завтра» → следующий день. «Послезавтра» → через два дня.
@@ -82,7 +88,7 @@ action — одно из:
 - info_added: добавить инфо И перенести дедлайн (обязательно new_date)
 - reject: отказ («в отказ», «отказали») — new_date не нужен; reject_reason если указали
 - assign_zamer: назначить замер («назначь на Антона завтра в 14», «замер Роме на 10 июля в 11:00»)
-- return_appeals: вернуть во входящие (пока не реализовано — всё равно распознай)
+- return_appeals: вернуть во входящие («верни во входящие», «вернуть в обращения», «назад во входящие») — new_date не нужен
 
 Для assign_zamer ОБЯЗАТЕЛЬНО извлеки:
 - master_raw — как менеджер назвал мастера (Антон, Роме, Тимуру, Семёну…)
@@ -123,6 +129,13 @@ action — одно из:
   "appeal_number": "#08044",
   "action": "reject",
   "reject_reason": "клиент передумал"
+}
+
+Пример возврата во входящие:
+{
+  "status": "ok",
+  "appeal_number": "#08044",
+  "action": "return_appeals"
 }`;
 }
 

@@ -13,6 +13,8 @@ const {
   formatEventNotFound,
   formatRejectConfirm,
   formatAlreadyRejected,
+  formatAlreadyInAppeals,
+  formatReturnAppealsConfirm,
   formatAssignConfirm,
   formatAssignTelegramFailed,
   formatNoAddressForAssign,
@@ -25,6 +27,7 @@ const {
 } = require("./queries");
 const { deleteDeadlineReminderMessage } = require("./notifier");
 const { executeLoadingReject } = require("./reject");
+const { executeLoadingReturnAppeals } = require("./returnAppeals");
 const { executeAssignZamer } = require("./assign");
 const { runDeadlineCheck } = require("./worker");
 
@@ -166,6 +169,17 @@ function registerLoadingDeadlineCallbacks() {
         return;
       }
 
+      if (confirmed.action === "return_appeals") {
+        await executeLoadingReturnAppeals(event);
+        await editMessage(ctx, formatReturnAppealsConfirm(confirmed.appealNumber), "HTML");
+        await answerCallback(callbackQuery, `${confirmed.appealNumber} возвращена во входящие`);
+        console.log(
+          `[loading-deadlines/callbacks] return_appeals ${confirmed.appealNumber} (chat ${chatId})`,
+        );
+        triggerDeadlineCheck();
+        return;
+      }
+
       if (confirmed.action === "assign_zamer") {
         await executeAssignZamer({
           eventId: confirmed.eventId || event.id,
@@ -200,6 +214,19 @@ function registerLoadingDeadlineCallbacks() {
       if (error.message === "already_rejected") {
         await editMessage(ctx, formatAlreadyRejected(confirmed.appealNumber), "HTML");
         await answerCallback(callbackQuery, "Уже в отказах");
+        return;
+      }
+      if (error.message === "already_in_appeals") {
+        await editMessage(ctx, formatAlreadyInAppeals(confirmed.appealNumber), "HTML");
+        await answerCallback(callbackQuery, "Уже во входящих");
+        return;
+      }
+      if (error.message === "missing_appeal_number") {
+        await editMessage(
+          ctx,
+          "⚠️ У события нет номера заявки — возврат во входящие невозможен.",
+        );
+        await answerCallback(callbackQuery, "Нет номера заявки");
         return;
       }
       if (error.message === "address_invalid") {

@@ -1,8 +1,7 @@
 // ============================================================================
 // Интент: управление дедлайном погрузки из Telegram.
 //
-// Реализованы: reschedule / info_added / reject / assign_zamer.
-// return_appeals — заглушка.
+// Реализованы: reschedule / info_added / reject / assign_zamer / return_appeals.
 // ============================================================================
 
 const { PERMISSIONS } = require("../lib/telegramBotChats");
@@ -13,6 +12,7 @@ const {
   findLoadingEventByNumber,
   validateNewDeadlineDate,
   findExistingAppealsOtkaz,
+  findExistingAppealByNumber,
 } = require("./queries");
 const {
   formatActionStub,
@@ -21,6 +21,7 @@ const {
   formatMissingInfoUpdates,
   formatNeedsDeadlineResolution,
   formatAlreadyRejected,
+  formatAlreadyInAppeals,
   formatNoAddressForAssign,
   formatSlotBusy,
   buildPreviewMessage,
@@ -181,7 +182,8 @@ async function handle(ctx) {
     action !== "reschedule" &&
     action !== "info_added" &&
     action !== "reject" &&
-    action !== "assign_zamer"
+    action !== "assign_zamer" &&
+    action !== "return_appeals"
   ) {
     await reply(ctx, formatActionStub(appealNumber, action), "HTML");
     return;
@@ -207,6 +209,37 @@ async function handle(ctx) {
   }
 
   const managerLabel = await resolveManagerLabel(profileId, msg?.from);
+
+  if (action === "return_appeals") {
+    let existingAppeal = null;
+    try {
+      existingAppeal = await findExistingAppealByNumber(event.appeal_number || appealNumber);
+    } catch (err) {
+      console.error("[loading-deadlines/intent] findExistingAppealByNumber:", err.message);
+    }
+
+    if (existingAppeal) {
+      await reply(ctx, formatAlreadyInAppeals(event.appeal_number || appealNumber), "HTML");
+      return;
+    }
+
+    const draftData = {
+      chatId,
+      authorProfileId: profileId,
+      action,
+      eventId: event.id,
+      appealNumber: event.appeal_number || appealNumber,
+      clientName: event.client_name,
+      phone: event.phone,
+      managerLabel,
+    };
+
+    console.log(
+      `[loading-deadlines/intent] превью ${draftData.appealNumber} → return_appeals`,
+    );
+    await sendPreview(ctx, draftData);
+    return;
+  }
 
   if (action === "reject") {
     let existingReject = null;
@@ -304,14 +337,16 @@ module.exports = {
   description:
     "Менеджер ДЕЙСТВУЕТ по событию в отделе погрузки: переносит дедлайн, " +
     "добавляет инфо (телефон, детальный адрес, диалог) вместе с новой датой, " +
-    "отправляет в отказ, или назначает замер мастеру (мастер + дата + время). " +
+    "отправляет в отказ, возвращает во входящие, или назначает замер мастеру (мастер + дата + время). " +
     "Обычно есть номер заявки (#NNNNN) или reply на карточку «ДЕДЛАЙН ПОГРУЗКИ #…». " +
-    "В чате с правом loading_deadline команды «перенеси дедлайн» / «отказ» / «назначь на Антона» — про погрузку. " +
+    "В чате с правом loading_deadline команды «перенеси дедлайн» / «отказ» / «верни во входящие» / «назначь на Антона» — про погрузку. " +
     "НЕ для вопросов «какие/дай/скинь дедлайны» — это loading_deadline_query. " +
     "НЕ путать с дедлайнами входящих (appeal_deadline_*).",
   examples: [
     "#08044 перенести дедлайн на 10 июля",
     "#08044 отказ",
+    "#08044 вернуть во входящие",
+    "верни во входящие (reply на карточку ДЕДЛАЙН ПОГРУЗКИ)",
     "#08044 назначить на Антона завтра в 14:00",
     "назначь замер Роме на 10 июля в 11 (reply на карточку ДЕДЛАЙН ПОГРУЗКИ)",
     "#08044 замер Тимуру сегодня в 16",

@@ -36,8 +36,7 @@ const MEMO = `\
 • добавить инфо (телефон / адрес / диалог) и перенести дедлайн
 • отказ
 • назначить замер (мастер + дата + время)
-
-Скоро научусь: возврат во входящие.`;
+• вернуть во входящие`;
 
 /**
  * @param {object} event — строка eventsnew
@@ -102,10 +101,7 @@ function formatDeadlineCard(event) {
 
 function formatActionStub(appealNumber, action) {
   const num = escHtml(normalizeAppealNumber(appealNumber));
-  const labels = {
-    return_appeals: "возврат во входящие",
-  };
-  const label = labels[action] || action || "это действие";
+  const label = action || "это действие";
 
   return (
     `🧠 Пока не умею делать «${escHtml(label)}» автоматически для погрузки` +
@@ -115,8 +111,9 @@ function formatActionStub(appealNumber, action) {
     `• переносить дедлайн\n` +
     `• обновлять телефон / детальный адрес / диалог вместе с переносом\n` +
     `• отправлять в отказ\n` +
-    `• назначать замер мастеру\n\n` +
-    `Остальное — вручную в CRM. Скоро научусь.`
+    `• назначать замер мастеру\n` +
+    `• возвращать во входящие\n\n` +
+    `Остальное — вручную в CRM.`
   );
 }
 
@@ -145,9 +142,10 @@ function formatNeedsDeadlineResolution(appealNumber) {
   const num = escHtml(normalizeAppealNumber(appealNumber || "заявке"));
   return (
     `⚠️ Не могу закрыть дедлайн погрузки по <b>${num}</b> без решения.\n\n` +
-    `Укажите перенос, отказ или назначение замера, например:\n` +
+    `Укажите перенос, отказ, возврат во входящие или назначение замера, например:\n` +
     `<code>@SUNRAYY_bot ${num} перенести на 10 июля</code>\n` +
     `<code>@SUNRAYY_bot ${num} отказ</code>\n` +
+    `<code>@SUNRAYY_bot ${num} вернуть во входящие</code>\n` +
     `<code>@SUNRAYY_bot ${num} назначить на Антона завтра в 14:00</code>`
   );
 }
@@ -206,13 +204,28 @@ function formatRejectConfirm(appealNumber) {
   );
 }
 
+function formatAlreadyInAppeals(appealNumber) {
+  return (
+    `⚠️ ${escHtml(normalizeAppealNumber(appealNumber))} уже есть во входящих обращениях.\n` +
+    `Сначала разберите дубль в CRM — иначе возврат из погрузки заблокирован.`
+  );
+}
+
+function formatReturnAppealsConfirm(appealNumber) {
+  return (
+    `✅ ${escHtml(normalizeAppealNumber(appealNumber))} возвращена во <b>входящие</b>.\n` +
+    `Событие удалено из погрузки.\n` +
+    `Следующая карточка дедлайна появится в течение нескольких минут.`
+  );
+}
+
 function buildPreviewDismissedMessage() {
   return "❌ Отменено. Действие не выполнено — пришлите команду заново при необходимости.";
 }
 
 /**
  * @param {{
- *   action: "reschedule" | "info_added" | "reject" | "assign_zamer",
+ *   action: "reschedule" | "info_added" | "reject" | "assign_zamer" | "return_appeals",
  *   appealNumber: string,
  *   clientName?: string | null,
  *   phone?: string | null,
@@ -230,6 +243,21 @@ function buildPreviewDismissedMessage() {
  * }} draft
  */
 function buildPreviewMessage(draft) {
+  if (draft.action === "return_appeals") {
+    const lines = [
+      `↩️ Вернуть ${escHtml(normalizeAppealNumber(draft.appealNumber))} из погрузки во <b>входящие</b>?`,
+      "---",
+      `Клиент: ${escHtml(String(draft.clientName || "Без имени").trim())}`,
+      `Телефон: ${escHtml(String(draft.phone || "—").trim() || "—")}`,
+      "",
+      "Будет создана активная заявка во входящих (как в CRM).",
+      "⚠️ <b>Событие будет удалено из погрузки</b>.",
+      "---",
+      "Нажмите «Сохранить» или «Отменить».",
+    ];
+    return { text: lines.join("\n"), parseMode: "HTML" };
+  }
+
   if (draft.action === "reject") {
     const lines = [
       `❌ Отправить ${escHtml(normalizeAppealNumber(draft.appealNumber))} из погрузки в <b>отказ</b>?`,
@@ -328,6 +356,8 @@ module.exports = {
   formatRescheduleConfirm,
   formatAlreadyRejected,
   formatRejectConfirm,
+  formatAlreadyInAppeals,
+  formatReturnAppealsConfirm,
   buildPreviewMessage,
   buildPreviewDismissedMessage,
   formatIsoDateHuman,

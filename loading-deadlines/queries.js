@@ -314,6 +314,51 @@ async function deleteLoadingEventById(id) {
 }
 
 /**
+ * Уже есть строка в appeals с этим номером? (unique / блок возврата из погрузки)
+ *
+ * @param {string} appealNumber
+ */
+async function findExistingAppealByNumber(appealNumber) {
+  const normalized = String(appealNumber || "").trim();
+  if (!normalized) return null;
+
+  const variants = [normalized];
+  const bare = normalized.replace(/^#/, "");
+  if (bare !== normalized) variants.push(bare);
+  else variants.push(`#${bare}`);
+
+  const { data, error } = await supabase
+    .from("appeals")
+    .select("id, appeal_number, status")
+    .in("appeal_number", variants)
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    console.error("[loading-deadlines/queries] findExistingAppealByNumber:", error.message);
+    throw error;
+  }
+
+  return data;
+}
+
+/**
+ * INSERT во входящие при возврате из погрузки (зеркало CRM).
+ *
+ * @param {object} row
+ */
+async function insertAppealFromLoadingReturn(row) {
+  const { data, error } = await supabase.from("appeals").insert(row).select().single();
+
+  if (error) {
+    console.error("[loading-deadlines/queries] insertAppealFromLoadingReturn:", error.message);
+    throw error;
+  }
+
+  return data;
+}
+
+/**
  * Read-only список событий погрузки с дедлайном (для Q&A менеджера).
  * Не трогает deadline_notif_* — это не очередь push-уведомлений.
  *
@@ -379,5 +424,7 @@ module.exports = {
   insertAppealsOtkaz,
   updateIdsOtkazFromLoading,
   deleteLoadingEventById,
+  findExistingAppealByNumber,
+  insertAppealFromLoadingReturn,
   listLoadingDeadlinesForQuery,
 };
