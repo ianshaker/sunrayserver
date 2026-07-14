@@ -38,7 +38,9 @@ async function getActiveDeadlineNotif() {
 
   const { data, error } = await supabase
     .from("appeals")
-    .select("id, appeal_number, deadline_notif_sent_at, deadline_notif_tg_msg_id")
+    .select(
+      "id, appeal_number, deadline_notif_sent_at, deadline_notif_tg_msg_id, deadline_reminder_tg_msg_id",
+    )
     .eq("reminder_date", today)
     .not("deadline_notif_sent_at", "is", null)
     .is("deadline_resolved_at", null)
@@ -98,11 +100,30 @@ async function markDeadlineNotifSent(id, tgMsgId) {
     .update({
       deadline_notif_sent_at: new Date().toISOString(),
       deadline_notif_tg_msg_id: tgMsgId,
+      deadline_reminder_tg_msg_id: null,
     })
     .eq("id", id);
 
   if (error) {
     console.error("[appeals-deadlines/queries] markDeadlineNotifSent:", error.message);
+    throw error;
+  }
+}
+
+/**
+ * Сохраняет message_id последнего ⏰-пинга (после удаления предыдущего).
+ *
+ * @param {number} id
+ * @param {number|null} tgMsgId
+ */
+async function updateDeadlineReminderMsgId(id, tgMsgId) {
+  const { error } = await supabase
+    .from("appeals")
+    .update({ deadline_reminder_tg_msg_id: tgMsgId })
+    .eq("id", id);
+
+  if (error) {
+    console.error("[appeals-deadlines/queries] updateDeadlineReminderMsgId:", error.message);
     throw error;
   }
 }
@@ -123,6 +144,7 @@ async function rescheduleAppealDeadline(id, newDate) {
       reminder_date: newDate,
       deadline_notif_sent_at: null,
       deadline_notif_tg_msg_id: null,
+      deadline_reminder_tg_msg_id: null,
       deadline_resolved_at: null,
       deadline_resolution: null,
     })
@@ -219,6 +241,7 @@ async function applyInfoAddedAndRescheduleAppeal(id, newDate, { fieldPatch = {},
     reminder_date: newDate,
     deadline_notif_sent_at: null,
     deadline_notif_tg_msg_id: null,
+    deadline_reminder_tg_msg_id: null,
     deadline_resolved_at: null,
     deadline_resolution: null,
   };
@@ -252,7 +275,7 @@ async function findAppealByNumber(appealNumber) {
   const { data, error } = await supabase
     .from("appeals")
     .select(
-      "id, appeal_number, client_name, phone, city, address, detailed_address, reminder_date, reminder_time, status, deadline_resolved_at, dialog, product_type, source, manager, task_description",
+      "id, appeal_number, client_name, phone, city, address, detailed_address, reminder_date, reminder_time, status, deadline_resolved_at, deadline_reminder_tg_msg_id, dialog, product_type, source, manager, task_description",
     )
     .ilike("appeal_number", `%${normalized}%`)
     .limit(1)
@@ -430,6 +453,7 @@ module.exports = {
   getActiveDeadlineNotif,
   getNextDeadlineAppeal,
   markDeadlineNotifSent,
+  updateDeadlineReminderMsgId,
   markDeadlineResolved,
   rescheduleAppealDeadline,
   appendDialogAndRescheduleAppeal,

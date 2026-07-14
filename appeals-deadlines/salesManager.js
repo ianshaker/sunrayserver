@@ -15,7 +15,7 @@ const USERNAME_TO_SALES = {
   yaqudzo: "Гена",
   elenamira70: "Настя",
   bravekate19: "Таня",
-  albalyxs: "Саша",
+  albaluxs: "Саша",
   dvmironova: "Другой",
 };
 

@@ -4,7 +4,27 @@
 
 const { DEADLINE_CHAT_ID, DEADLINE_THREAD_ID } = require("./config");
 const { formatDeadlineCard } = require("./messages");
-const { markDeadlineNotifSent } = require("./queries");
+const { markDeadlineNotifSent, updateDeadlineReminderMsgId } = require("./queries");
+
+/**
+ * Удаляет сообщение ⏰-пинга в чате дедлайнов (ошибку «уже нет» игнорируем).
+ *
+ * @param {object} bot
+ * @param {number|null|undefined} tgMsgId
+ */
+async function deleteDeadlineReminderMessage(bot, tgMsgId) {
+  if (!bot || tgMsgId == null) return;
+
+  try {
+    await bot.deleteMessage(DEADLINE_CHAT_ID, tgMsgId);
+    console.log(`[appeals-deadlines/notifier] 🗑 удалён старый пинг msg_id=${tgMsgId}`);
+  } catch (err) {
+    console.warn(
+      `[appeals-deadlines/notifier] не удалось удалить пинг msg_id=${tgMsgId}:`,
+      err.message,
+    );
+  }
+}
 
 /**
  * Отправляет полную карточку дедлайна в Telegram-чат и сохраняет message_id в БД.
@@ -42,9 +62,9 @@ async function sendDeadlineNotification(appeal, bot) {
 
 /**
  * Отправляет напоминание-реплай на исходную карточку.
- * Вызывается при каждой плановой проверке, если активная заявка не была закрыта.
+ * Перед отправкой удаляет предыдущий ⏰-пинг (если был) и сохраняет новый message_id.
  *
- * @param {object} appeal   — строка appeals (нужны appeal_number, deadline_notif_tg_msg_id)
+ * @param {object} appeal   — строка appeals (нужны appeal_number, deadline_notif_tg_msg_id, deadline_reminder_tg_msg_id)
  * @param {object} bot
  */
 async function sendDeadlineReminder(appeal, bot) {
@@ -52,15 +72,31 @@ async function sendDeadlineReminder(appeal, bot) {
     `⏰ Напоминаю: дедлайн по заявке <b>${appeal.appeal_number}</b> ещё не закрыт.\n` +
     `Отметьте @SUNRAYY_bot с номером заявки и укажите действие.`;
 
+  await deleteDeadlineReminderMessage(bot, appeal.deadline_reminder_tg_msg_id);
+
   try {
-    await bot.sendMessage(DEADLINE_CHAT_ID, replyText, {
+    const sentMsg = await bot.sendMessage(DEADLINE_CHAT_ID, replyText, {
       parse_mode: "HTML",
       message_thread_id: DEADLINE_THREAD_ID,
       reply_to_message_id: appeal.deadline_notif_tg_msg_id ?? undefined,
       disable_web_page_preview: true,
     });
+
+    const newMsgId = sentMsg?.message_id ?? null;
+    if (newMsgId != null) {
+      try {
+        await updateDeadlineReminderMsgId(appeal.id, newMsgId);
+      } catch (dbErr) {
+        console.error(
+          `[appeals-deadlines/notifier] пинг ушёл, но id не сохранён ${appeal.appeal_number}:`,
+          dbErr.message,
+        );
+      }
+    }
+
     console.log(
-      `[appeals-deadlines/notifier] ⏰ напоминание отправлено для ${appeal.appeal_number}`,
+      `[appeals-deadlines/notifier] ⏰ напоминание отправлено для ${appeal.appeal_number}` +
+        ` → msg_id=${newMsgId}`,
     );
   } catch (err) {
     console.error(
@@ -71,4 +107,8 @@ async function sendDeadlineReminder(appeal, bot) {
   }
 }
 
-module.exports = { sendDeadlineNotification, sendDeadlineReminder };
+module.exports = {
+  sendDeadlineNotification,
+  sendDeadlineReminder,
+  deleteDeadlineReminderMessage,
+};

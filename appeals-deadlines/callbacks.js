@@ -21,6 +21,7 @@ const {
   rescheduleAppealDeadline,
   applyInfoAddedAndRescheduleAppeal,
 } = require("./queries");
+const { deleteDeadlineReminderMessage } = require("./notifier");
 const { executeAppealLoading } = require("./loading");
 const { executeAppealReject } = require("./reject");
 const { runDeadlineCheck } = require("./worker");
@@ -114,6 +115,9 @@ function registerAppealDeadlineCallbacks() {
       await answerCallback(callbackQuery, "Заявка не найдена");
       return;
     }
+
+    // Убрать висящий ⏰-пинг до сброса трекинга / удаления заявки.
+    await deleteDeadlineReminderMessage(getTelegramBot(), appeal.deadline_reminder_tg_msg_id);
 
     try {
       if (confirmed.action === "reschedule") {
