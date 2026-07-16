@@ -6,8 +6,8 @@
 const LOADING_DEADLINE_CHAT_ID = -1002669673493;
 
 /**
- * Часовой пояс для проверки рабочего окна и определения «сегодня».
- * eventsnew.deadline хранится как дата без времени — сравниваем с MSK-датой.
+ * Часовой пояс для проверки рабочего окна и «сейчас».
+ * eventsnew.deadline — календарный день; deadline_time — MSK wall-clock.
  */
 const MSK_OFFSET_HOURS = 3;
 

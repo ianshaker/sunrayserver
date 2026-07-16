@@ -6,7 +6,7 @@ const { supabase } = require("../lib/supabaseClient");
 const { MSK_OFFSET_HOURS } = require("./config");
 
 const EVENT_CARD_SELECT =
-  "id, appeal_number, client_name, phone, city, detailed_address, address, place_id, dialog, note, deadline, salemanager, type";
+  "id, appeal_number, client_name, phone, city, detailed_address, address, place_id, dialog, note, deadline, deadline_time, salemanager, type";
 
 /**
  * Возвращает дату «сегодня» по московскому времени в формате YYYY-MM-DD.
@@ -15,6 +15,48 @@ function getMskTodayDate() {
   const now = new Date();
   const msk = new Date(now.getTime() + MSK_OFFSET_HOURS * 60 * 60 * 1000);
   return msk.toISOString().slice(0, 10);
+}
+
+/**
+ * Текущее время MSK как HH:mm.
+ */
+function getMskNowTime() {
+  const now = new Date();
+  const msk = new Date(now.getTime() + MSK_OFFSET_HOURS * 60 * 60 * 1000);
+  return msk.toISOString().slice(11, 16);
+}
+
+/**
+ * PG TIME / HH:mm:ss → HH:mm.
+ * @param {string|null|undefined} raw
+ * @returns {string|null}
+ */
+function normalizeDeadlineTime(raw) {
+  if (raw == null || raw === "") return null;
+  const m = String(raw).trim().match(/^(\d{1,2}):(\d{2})/);
+  if (!m) return null;
+  const h = parseInt(m[1], 10);
+  const min = parseInt(m[2], 10);
+  if (!Number.isFinite(h) || !Number.isFinite(min) || h > 23 || min > 59) return null;
+  return `${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
+}
+
+/**
+ * Дедлайн уже наступил по MSK?
+ * deadline < сегодня → да; deadline > сегодня → нет;
+ * deadline = сегодня → deadline_time <= сейчас (NULL time = с начала дня).
+ *
+ * @param {{ deadline?: string|null, deadline_time?: string|null }} event
+ * @param {string} [today]
+ * @param {string} [nowTime]
+ */
+function isDeadlineDue(event, today = getMskTodayDate(), nowTime = getMskNowTime()) {
+  if (!event?.deadline) return false;
+  if (event.deadline < today) return true;
+  if (event.deadline > today) return false;
+  const t = normalizeDeadlineTime(event.deadline_time);
+  if (!t) return true;
+  return t <= nowTime;
 }
 
 /**
@@ -42,26 +84,27 @@ async function getActiveDeadlineNotif() {
   const { data, error } = await supabase
     .from("eventsnew")
     .select(
-      "id, appeal_number, deadline_notif_sent_at, deadline_notif_tg_msg_id, deadline_reminder_tg_msg_id",
+      "id, appeal_number, deadline, deadline_time, deadline_notif_sent_at, deadline_notif_tg_msg_id, deadline_reminder_tg_msg_id",
     )
     .eq("type", "Погрузка")
     .eq("deadline", today)
     .not("deadline_notif_sent_at", "is", null)
     .order("deadline_notif_sent_at", { ascending: true })
-    .limit(1)
-    .maybeSingle();
+    .limit(5);
 
   if (error) {
     console.error("[loading-deadlines/queries] getActiveDeadlineNotif:", error.message);
     throw error;
   }
 
-  return data;
+  const rows = data || [];
+  // Пинги только после наступления времени (и для legacy без time).
+  return rows.find((row) => isDeadlineDue(row)) || null;
 }
 
 /**
- * Следующее событие из очереди на сегодня:
- * type=Погрузка, deadline=сегодня, deadline_notif_sent_at IS NULL.
+ * Следующее событие из очереди:
+ * type=Погрузка, deadline <= сегодня MSK, время уже наступило, notif не отправляли.
  *
  * @returns {Promise<object|null>}
  */
@@ -72,18 +115,20 @@ async function getNextDeadlineEvent() {
     .from("eventsnew")
     .select(EVENT_CARD_SELECT)
     .eq("type", "Погрузка")
-    .eq("deadline", today)
+    .lte("deadline", today)
     .is("deadline_notif_sent_at", null)
+    .order("deadline", { ascending: true })
+    .order("deadline_time", { ascending: true, nullsFirst: true })
     .order("id", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .limit(25);
 
   if (error) {
     console.error("[loading-deadlines/queries] getNextDeadlineEvent:", error.message);
     throw error;
   }
 
-  return data;
+  const rows = data || [];
+  return rows.find((row) => isDeadlineDue(row)) || null;
 }
 
 /**
@@ -175,21 +220,27 @@ async function findLoadingEventByNumber(appealNumber) {
 }
 
 /**
- * Перенос дедлайна погрузки: новая дата + сброс трекинга уведомлений.
+ * Перенос дедлайна погрузки: новая дата (+ опц. время) + сброс трекинга уведомлений.
  *
  * @param {number} id
  * @param {string} newDate YYYY-MM-DD
+ * @param {string|null|undefined} newTime HH:mm — если undefined, время не трогаем;
+ *   если null — очищаем; если строка — пишем MSK wall-clock.
  */
-async function rescheduleLoadingDeadline(id, newDate) {
-  const { error } = await supabase
-    .from("eventsnew")
-    .update({
-      deadline: newDate,
-      deadline_notif_sent_at: null,
-      deadline_notif_tg_msg_id: null,
-      deadline_reminder_tg_msg_id: null,
-    })
-    .eq("id", id);
+async function rescheduleLoadingDeadline(id, newDate, newTime) {
+  const updatePayload = {
+    deadline: newDate,
+    deadline_notif_sent_at: null,
+    deadline_notif_tg_msg_id: null,
+    deadline_reminder_tg_msg_id: null,
+  };
+
+  if (newTime !== undefined) {
+    const normalized = normalizeDeadlineTime(newTime);
+    updatePayload.deadline_time = normalized ? `${normalized}:00` : null;
+  }
+
+  const { error } = await supabase.from("eventsnew").update(updatePayload).eq("id", id);
 
   if (error) {
     console.error("[loading-deadlines/queries] rescheduleLoadingDeadline:", error.message);
@@ -202,9 +253,13 @@ async function rescheduleLoadingDeadline(id, newDate) {
  *
  * @param {number} id
  * @param {string} newDate YYYY-MM-DD
- * @param {{ fieldPatch?: object, dialogAppend?: string | null }} payload
+ * @param {{ fieldPatch?: object, dialogAppend?: string | null, newTime?: string|null }} payload
  */
-async function applyInfoAddedAndRescheduleLoading(id, newDate, { fieldPatch = {}, dialogAppend = null }) {
+async function applyInfoAddedAndRescheduleLoading(
+  id,
+  newDate,
+  { fieldPatch = {}, dialogAppend = null, newTime } = {},
+) {
   const { data: row, error: readErr } = await supabase
     .from("eventsnew")
     .select("dialog")
@@ -227,6 +282,11 @@ async function applyInfoAddedAndRescheduleLoading(id, newDate, { fieldPatch = {}
     deadline_notif_tg_msg_id: null,
     deadline_reminder_tg_msg_id: null,
   };
+
+  if (newTime !== undefined) {
+    const normalized = normalizeDeadlineTime(newTime);
+    updatePayload.deadline_time = normalized ? `${normalized}:00` : null;
+  }
 
   if (append) {
     updatePayload.dialog = newDialog;
@@ -379,6 +439,7 @@ async function listLoadingDeadlinesForQuery({ mode, date, limit }) {
     q = q
       .lte("deadline", today)
       .order("deadline", { ascending: true })
+      .order("deadline_time", { ascending: true, nullsFirst: true })
       .order("id", { ascending: false });
   } else if (mode === "recent_past") {
     // N ближайших к сегодня, но строго раньше сегодня (не угадывать «вчера»).
@@ -386,9 +447,13 @@ async function listLoadingDeadlinesForQuery({ mode, date, limit }) {
     q = q
       .lt("deadline", today)
       .order("deadline", { ascending: false })
+      .order("deadline_time", { ascending: false, nullsFirst: false })
       .order("id", { ascending: false });
   } else {
-    q = q.eq("deadline", date).order("id", { ascending: false });
+    q = q
+      .eq("deadline", date)
+      .order("deadline_time", { ascending: true, nullsFirst: true })
+      .order("id", { ascending: false });
   }
 
   const { data, error } = await q.limit(fetchLimit);
@@ -411,7 +476,10 @@ async function listLoadingDeadlinesForQuery({ mode, date, limit }) {
 
 module.exports = {
   getMskTodayDate,
+  getMskNowTime,
   getMskDateOffset,
+  normalizeDeadlineTime,
+  isDeadlineDue,
   validateNewDeadlineDate,
   getActiveDeadlineNotif,
   getNextDeadlineEvent,

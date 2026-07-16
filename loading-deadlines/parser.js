@@ -66,7 +66,7 @@ function buildSystemPrompt() {
 Это НЕ входящие обращения и НЕ manager-задачи — только события eventsnew со статусом «Погрузка».
 
 Заявка считается «решённой» если:
-• reschedule — перенос дедлайна на новую дату
+• reschedule — перенос дедлайна на новую дату (и опционально время МСК)
 • info_added — обновить поля И обязательно new_date
 • reject — отказ
 • assign_zamer — назначить замер мастеру на дату и время
@@ -74,11 +74,14 @@ function buildSystemPrompt() {
 
 Сегодня (Москва): ${today}. Год для дат — ${year}, если не указан.
 «Сегодня» → ${today}. «Завтра» → следующий день. «Послезавтра» → через два дня.
+Все даты и время дедлайна — по Москве (МСК).
 
-ДАТА ДЕДЛАЙНА (reschedule / info_added):
+ДАТА И ВРЕМЯ ДЕДЛАЙНА (reschedule / info_added):
 • «перенести на 10 июля», «на завтра» → new_date
+• «перенести на завтра в 14:00», «на 26 июля в 13» → new_date + new_time (HH:mm)
 • «оставить дедлайн на 1 июля» → тоже new_date
 • «1 июля» без года → ${year}-07-01
+• если время не указано — new_time не заполняй (null)
 
 ИНФО ПО ЗАЯВКЕ (action=info_added):
 • телефон / доп. тел / город / detailed_address / dialog_text / client_name
@@ -112,6 +115,15 @@ action — одно из:
   "master_raw": "Антон",
   "date": "${today}",
   "start_time": "14:00"
+}
+
+Пример переноса с временем:
+{
+  "status": "ok",
+  "appeal_number": "#08044",
+  "action": "reschedule",
+  "new_date": "2026-07-26",
+  "new_time": "13:00"
 }
 
 Пример переноса:
@@ -246,6 +258,11 @@ async function parseDeadlineCommand(text, { replyText } = {}) {
     result.newDate = String(parsed.new_date).trim();
   }
 
+  if (parsed.new_time != null && String(parsed.new_time).trim()) {
+    const newTime = normalizeStartTime(parsed.new_time);
+    if (newTime) result.newTime = newTime;
+  }
+
   const infoUpdates = normalizeInfoUpdates(parsed);
   if (hasAnyInfoUpdate(infoUpdates)) {
     result.infoUpdates = infoUpdates;
@@ -305,6 +322,7 @@ async function parseDeadlineCommand(text, { replyText } = {}) {
   console.log(
     `[loading-deadlines/parser] Gemini → ${appealNumber} ${action}` +
       (result.newDate ? ` → ${result.newDate}` : "") +
+      (result.newTime ? ` ${result.newTime}` : "") +
       (result.date ? ` date=${result.date}` : "") +
       (result.startTime ? ` ${result.startTime}-${result.endTime}` : "") +
       (result.masterRaw ? ` master=${result.masterRaw}` : "") +
@@ -326,4 +344,22 @@ function formatDateHuman(isoDate) {
   return `${parseInt(d, 10)} ${months[parseInt(m, 10) - 1]}`;
 }
 
-module.exports = { parseDeadlineCommand, formatDateHuman };
+/** Дата + опц. время → «15 июля в 13:00» */
+function formatDeadlineDateTimeHuman(isoDate, timeRaw) {
+  const day = formatDateHuman(isoDate);
+  if (!day) return day;
+  let time = normalizeStartTime(String(timeRaw || "").trim());
+  if (!time) {
+    const m = String(timeRaw || "").trim().match(/^(\d{1,2}):(\d{2})/);
+    if (m) {
+      const h = parseInt(m[1], 10);
+      const min = parseInt(m[2], 10);
+      if (h <= 23 && min <= 59) {
+        time = `${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
+      }
+    }
+  }
+  return time ? `${day} в ${time}` : day;
+}
+
+module.exports = { parseDeadlineCommand, formatDateHuman, formatDeadlineDateTimeHuman };

@@ -7,12 +7,13 @@
 const { PERMISSIONS } = require("../lib/telegramBotChats");
 const { sendText } = require("../assistant/reply");
 const { getTelegramBot } = require("../tgwebhook/bot");
-const { parseDeadlineCommand, formatDateHuman } = require("./parser");
+const { parseDeadlineCommand, formatDateHuman, formatDeadlineDateTimeHuman } = require("./parser");
 const {
   findLoadingEventByNumber,
   validateNewDeadlineDate,
   findExistingAppealsOtkaz,
   findExistingAppealByNumber,
+  normalizeDeadlineTime,
 } = require("./queries");
 const {
   formatActionStub,
@@ -176,7 +177,7 @@ async function handle(ctx) {
     return;
   }
 
-  const { appealNumber, action, newDate, infoUpdates, rejectReason } = parsed;
+  const { appealNumber, action, newDate, newTime, infoUpdates, rejectReason } = parsed;
 
   if (
     action !== "reschedule" &&
@@ -290,8 +291,11 @@ async function handle(ctx) {
     return;
   }
 
-  const newDateHuman = formatDateHuman(newDate);
-  const currentDeadlineHuman = event.deadline ? formatDateHuman(event.deadline) : null;
+  const effectiveTime = newTime || normalizeDeadlineTime(event.deadline_time) || null;
+  const newDateHuman = formatDeadlineDateTimeHuman(newDate, effectiveTime);
+  const currentDeadlineHuman = event.deadline
+    ? formatDeadlineDateTimeHuman(event.deadline, event.deadline_time)
+    : null;
 
   let fieldPatch = null;
   let dialogAppend = null;
@@ -314,6 +318,7 @@ async function handle(ctx) {
     currentDeadline: event.deadline,
     currentDeadlineHuman,
     newDate,
+    newTime: newTime || undefined,
     newDateHuman,
     infoUpdates: infoUpdates || null,
     fieldPatch,
@@ -324,6 +329,7 @@ async function handle(ctx) {
 
   console.log(
     `[loading-deadlines/intent] превью ${draftData.appealNumber} → ${action} → ${newDate}` +
+      (draftData.newTime ? ` ${draftData.newTime}` : "") +
       ` (profile=${profileId})`,
   );
 

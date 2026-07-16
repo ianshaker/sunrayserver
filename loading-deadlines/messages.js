@@ -16,6 +16,22 @@ function formatIsoDateHuman(isoDate) {
   return `${parseInt(d, 10)} ${MONTHS_RU[parseInt(m, 10) - 1]}`;
 }
 
+/** HH:mm / HH:mm:ss → HH:mm */
+function formatTimeHuman(raw) {
+  if (raw == null || raw === "") return null;
+  const m = String(raw).trim().match(/^(\d{1,2}):(\d{2})/);
+  if (!m) return null;
+  return `${String(parseInt(m[1], 10)).padStart(2, "0")}:${m[2]}`;
+}
+
+/** Дата + опц. время MSK → «15 июля в 13:00» */
+function formatDeadlineDateTimeHuman(isoDate, timeRaw) {
+  const day = formatIsoDateHuman(isoDate);
+  const time = formatTimeHuman(timeRaw);
+  if (!day) return day;
+  return time ? `${day} в ${time}` : day;
+}
+
 function escHtml(str) {
   return String(str || "")
     .replace(/&/g, "&amp;")
@@ -32,7 +48,7 @@ function normalizeAppealNumber(appealNumber) {
 const MEMO = `\
 ---
 Чтобы закрыть этот дедлайн, отметьте @SUNRAYY_bot с номером заявки и укажите:
-• перенести дедлайн на новую дату
+• перенести дедлайн на новую дату и время (МСК)
 • добавить инфо (телефон / адрес / диалог) и перенести дедлайн
 • отказ
 • назначить замер (мастер + дата + время)
@@ -48,7 +64,9 @@ function formatDeadlineCard(event) {
 
   lines.push(`⏰ <b>ДЕДЛАЙН ПОГРУЗКИ ${escHtml(num)}</b>`);
   if (event.deadline) {
-    lines.push(`📅 ${escHtml(formatIsoDateHuman(event.deadline))}`);
+    lines.push(
+      `📅 ${escHtml(formatDeadlineDateTimeHuman(event.deadline, event.deadline_time))} <i>(МСК)</i>`,
+    );
   }
   lines.push("");
 
@@ -315,7 +333,7 @@ function buildPreviewMessage(draft) {
   if (draft.currentDeadlineHuman) {
     lines.push(`Дедлайн сейчас: ${escHtml(draft.currentDeadlineHuman)}`);
   }
-  lines.push(`Новый дедлайн: ${escHtml(draft.newDateHuman)}`);
+  lines.push(`Новый дедлайн: ${escHtml(draft.newDateHuman)} <i>(МСК)</i>`);
 
   if (draft.action === "info_added") {
     lines.push("");
@@ -361,6 +379,8 @@ module.exports = {
   buildPreviewMessage,
   buildPreviewDismissedMessage,
   formatIsoDateHuman,
+  formatDeadlineDateTimeHuman,
+  formatTimeHuman,
   escHtml,
   normalizeAppealNumber,
 };

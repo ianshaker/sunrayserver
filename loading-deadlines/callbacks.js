@@ -125,7 +125,11 @@ function registerLoadingDeadlineCallbacks() {
 
     try {
       if (confirmed.action === "reschedule") {
-        await rescheduleLoadingDeadline(event.id, confirmed.newDate);
+        await rescheduleLoadingDeadline(
+          event.id,
+          confirmed.newDate,
+          confirmed.newTime !== undefined ? confirmed.newTime : undefined,
+        );
         await editMessage(
           ctx,
           formatRescheduleConfirm(confirmed.appealNumber, confirmed.newDateHuman),
@@ -133,7 +137,9 @@ function registerLoadingDeadlineCallbacks() {
         );
         await answerCallback(callbackQuery, `Дедлайн ${confirmed.appealNumber} перенесён`);
         console.log(
-          `[loading-deadlines/callbacks] reschedule ${confirmed.appealNumber} → ${confirmed.newDate} (chat ${chatId})`,
+          `[loading-deadlines/callbacks] reschedule ${confirmed.appealNumber} → ${confirmed.newDate}` +
+            (confirmed.newTime ? ` ${confirmed.newTime}` : "") +
+            ` (chat ${chatId})`,
         );
         triggerDeadlineCheck();
         return;
@@ -143,6 +149,7 @@ function registerLoadingDeadlineCallbacks() {
         await applyInfoAddedAndRescheduleLoading(event.id, confirmed.newDate, {
           fieldPatch: confirmed.fieldPatch || {},
           dialogAppend: confirmed.dialogAppend,
+          newTime: confirmed.newTime !== undefined ? confirmed.newTime : undefined,
         });
         await editMessage(
           ctx,
@@ -152,7 +159,9 @@ function registerLoadingDeadlineCallbacks() {
         );
         await answerCallback(callbackQuery, "Инфо добавлено, дедлайн перенесён");
         console.log(
-          `[loading-deadlines/callbacks] info_added ${confirmed.appealNumber} → ${confirmed.newDate} (chat ${chatId})`,
+          `[loading-deadlines/callbacks] info_added ${confirmed.appealNumber} → ${confirmed.newDate}` +
+            (confirmed.newTime ? ` ${confirmed.newTime}` : "") +
+            ` (chat ${chatId})`,
         );
         triggerDeadlineCheck();
         return;
