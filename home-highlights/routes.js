@@ -1,13 +1,20 @@
 // ============================================================================
-// HTTP: ручная генерация / статус фактов дня.
+// HTTP: ручная генерация / статус / админ превью+commit фактов дня.
 //   POST /api/daily-highlights/generate?key=...
 //   GET  /api/daily-highlights/status?key=...
+//   GET  /api/daily-highlights/admin?date=...          Bearer superadmin
+//   POST /api/daily-highlights/preview                 Bearer superadmin
+//   POST /api/daily-highlights/commit                  Bearer superadmin
 // ============================================================================
 
 const { supabase } = require("../lib/supabaseClient");
 const { SETUP_SECRET } = require("./config");
+const { assertSuperAdminFromRequest } = require("../lib/telegramBotChatsAdmin");
 const {
   generateDailyHighlights,
+  getLatestBatchForDate,
+  previewHighlightSlots,
+  commitHighlightBatch,
   mskDateString,
   yesterdayMskDateString,
   isValidDateStr,
@@ -67,6 +74,111 @@ function registerHomeHighlightsRoutes(fastify) {
       rows: latestBatchRows,
       all_rows: rows,
     });
+  });
+
+  // —— CRM Settings (superadmin) ——
+
+  fastify.get("/api/daily-highlights/admin", async (request, reply) => {
+    const user = await assertSuperAdminFromRequest(request, reply);
+    if (!user) return;
+
+    const date = request.query?.date || yesterdayMskDateString();
+    if (!isValidDateStr(date)) {
+      return reply.code(400).send({ status: "error", error: "invalid_date" });
+    }
+
+    try {
+      const batch = await getLatestBatchForDate(date);
+      const ids = batch.rows.map((r) => r.id).filter(Boolean);
+      let repliesByHighlight = {};
+
+      if (ids.length > 0) {
+        const { data: replies, error: repliesError } = await supabase
+          .from("home_daily_highlight_replies")
+          .select("id, highlight_id, author_name, body, created_at")
+          .in("highlight_id", ids)
+          .order("created_at", { ascending: true });
+
+        if (repliesError) {
+          console.warn("[home-highlights] admin replies:", repliesError.message);
+        } else {
+          for (const r of replies || []) {
+            if (!repliesByHighlight[r.highlight_id]) repliesByHighlight[r.highlight_id] = [];
+            repliesByHighlight[r.highlight_id].push(r);
+          }
+        }
+      }
+
+      return reply.send({
+        status: "ok",
+        highlight_date: date,
+        today_msk: mskDateString(),
+        yesterday_msk: yesterdayMskDateString(),
+        batch_id: batch.batch_id,
+        rows: batch.rows.map((row) => ({
+          ...row,
+          replies: repliesByHighlight[row.id] || [],
+        })),
+      });
+    } catch (e) {
+      return reply.code(500).send({ status: "error", message: e.message });
+    }
+  });
+
+  fastify.post("/api/daily-highlights/preview", async (request, reply) => {
+    const user = await assertSuperAdminFromRequest(request, reply);
+    if (!user) return;
+
+    const body = request.body || {};
+    const date = body.date || yesterdayMskDateString();
+    if (!isValidDateStr(date)) {
+      return reply.code(400).send({ status: "error", error: "invalid_date" });
+    }
+
+    let slots = body.slots;
+    if (body.slot != null && !slots) slots = [body.slot];
+    if (!Array.isArray(slots) || slots.length === 0) {
+      return reply.code(400).send({
+        status: "error",
+        error: "slots_required",
+        hint: "slots: [1,2] или slot: 1",
+      });
+    }
+
+    const result = await previewHighlightSlots(date, slots);
+    const code =
+      result.status === "error" ? 500 : result.status === "disabled" ? 503 : result.status === "already_running" ? 409 : 200;
+    console.log(
+      `[home-highlights] preview CRM (${user.email || user.id}) → ${result.status}`
+    );
+    return reply.code(code).send(result);
+  });
+
+  fastify.post("/api/daily-highlights/commit", async (request, reply) => {
+    const user = await assertSuperAdminFromRequest(request, reply);
+    if (!user) return;
+
+    const body = request.body || {};
+    const date = body.date || yesterdayMskDateString();
+    if (!isValidDateStr(date)) {
+      return reply.code(400).send({ status: "error", error: "invalid_date" });
+    }
+
+    const items = body.items || body.replacements || [];
+    if (!Array.isArray(items) || items.length === 0) {
+      return reply.code(400).send({ status: "error", error: "items_required" });
+    }
+
+    try {
+      const result = await commitHighlightBatch(date, items);
+      const code = result.status === "ok" ? 200 : 400;
+      console.log(
+        `[home-highlights] commit CRM (${user.email || user.id}) → ${result.status} batch=${result.batch_id || "-"}`
+      );
+      return reply.code(code).send(result);
+    } catch (e) {
+      return reply.code(500).send({ status: "error", message: e.message });
+    }
   });
 }
 

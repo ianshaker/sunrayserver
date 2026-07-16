@@ -211,9 +211,227 @@ async function generateDailyHighlights(forDate) {
   }
 }
 
+async function fetchCallByEntryId(entryId) {
+  if (!entryId) return null;
+  const { data, error } = await supabase
+    .from("mango_calls")
+    .select("entry_id, transcript, talk_seconds")
+    .eq("entry_id", entryId)
+    .maybeSingle();
+  if (error) throw new Error(`звонок ${entryId}: ${error.message}`);
+  return data || null;
+}
+
+/**
+ * Последний batch за дату (все слоты), плюс meta.
+ */
+async function getLatestBatchForDate(dateStr) {
+  const { data, error } = await supabase
+    .from("home_daily_highlights")
+    .select(
+      "id, batch_id, highlight_date, slot, status, text, bot_comment, source_entry_id, model, created_at"
+    )
+    .eq("highlight_date", dateStr)
+    .order("created_at", { ascending: false });
+
+  if (error) throw new Error(`чтение highlights: ${error.message}`);
+  const rows = data || [];
+  if (rows.length === 0) {
+    return { highlight_date: dateStr, batch_id: null, rows: [] };
+  }
+  const batchId = rows[0].batch_id;
+  const batchRows = rows
+    .filter((r) => r.batch_id === batchId)
+    .sort((a, b) => a.slot - b.slot);
+  return { highlight_date: dateStr, batch_id: batchId, rows: batchRows };
+}
+
+/**
+ * Превью перегенерации слотов БЕЗ записи в БД.
+ * @param {string} dateStr
+ * @param {number[]} slotNumbers 1..5
+ */
+async function previewHighlightSlots(dateStr, slotNumbers) {
+  const slots = [...new Set((slotNumbers || []).map(Number))]
+    .filter((s) => s >= 1 && s <= 5)
+    .sort((a, b) => a - b);
+
+  if (slots.length === 0) {
+    return { status: "error", highlight_date: dateStr, message: "укажите slots: [1..5]" };
+  }
+
+  if (!hasCredentials()) {
+    return { status: "disabled", highlight_date: dateStr };
+  }
+  if (isGenerating) {
+    return { status: "already_running", highlight_date: dateStr };
+  }
+
+  isGenerating = true;
+  console.log(
+    `[home-highlights] preview date=${dateStr} slots=${slots.join(",")}`
+  );
+
+  try {
+    const latest = await getLatestBatchForDate(dateStr);
+    const bySlot = new Map(latest.rows.map((r) => [r.slot, r]));
+    const topCalls = await fetchTopTranscripts(dateStr);
+    const previews = [];
+
+    for (const slot of slots) {
+      const existing = bySlot.get(slot);
+      let entryId = existing?.source_entry_id || null;
+      let transcript = null;
+
+      if (entryId) {
+        const call = await fetchCallByEntryId(entryId);
+        transcript = call?.transcript || null;
+      }
+      if ((!transcript || transcript.trim().length < 40) && topCalls[slot - 1]) {
+        entryId = topCalls[slot - 1].entry_id;
+        transcript = topCalls[slot - 1].transcript;
+      }
+
+      if (!transcript || transcript.trim().length < 40) {
+        previews.push({
+          slot,
+          source_entry_id: entryId,
+          text: null,
+          bot_comment: null,
+          status: "failed",
+          model: GEMINI_MODEL,
+          error: "no_transcript",
+        });
+        continue;
+      }
+
+      try {
+        const parsed = await generateHighlightFromTranscript(transcript);
+        if (!parsed || !parsed.situation) {
+          previews.push({
+            slot,
+            source_entry_id: entryId,
+            text: null,
+            bot_comment: null,
+            status: "failed",
+            model: GEMINI_MODEL,
+            error: "skip",
+          });
+          continue;
+        }
+        previews.push({
+          slot,
+          source_entry_id: entryId,
+          text: parsed.situation,
+          bot_comment: parsed.bot_comment,
+          status: "ready",
+          model: GEMINI_MODEL,
+        });
+      } catch (e) {
+        previews.push({
+          slot,
+          source_entry_id: entryId,
+          text: null,
+          bot_comment: null,
+          status: "failed",
+          model: GEMINI_MODEL,
+          error: String(e.message || e).slice(0, 200),
+        });
+      }
+    }
+
+    return { status: "ok", highlight_date: dateStr, previews };
+  } catch (e) {
+    console.error("[home-highlights] preview ошибка:", e.message);
+    return { status: "error", highlight_date: dateStr, message: e.message };
+  } finally {
+    isGenerating = false;
+  }
+}
+
+/**
+ * Сохранить новый batch: replacements перекрывают слоты последнего batch,
+ * остальные слоты копируются как были.
+ * @param {string} dateStr
+ * @param {Array<{slot, source_entry_id?, text, bot_comment?, status?}>} replacements
+ */
+async function commitHighlightBatch(dateStr, replacements) {
+  const list = Array.isArray(replacements) ? replacements : [];
+  if (list.length === 0) {
+    return { status: "error", highlight_date: dateStr, message: "пустой replacements" };
+  }
+
+  const latest = await getLatestBatchForDate(dateStr);
+  const bySlot = new Map();
+
+  for (const row of latest.rows) {
+    bySlot.set(row.slot, {
+      slot: row.slot,
+      source_entry_id: row.source_entry_id,
+      text: row.text,
+      bot_comment: row.bot_comment,
+      status: row.status,
+      model: row.model || GEMINI_MODEL,
+    });
+  }
+
+  for (const item of list) {
+    const slot = Number(item.slot);
+    if (!(slot >= 1 && slot <= 5)) continue;
+    const text = (item.text || "").trim();
+    if (!text) continue;
+    bySlot.set(slot, {
+      slot,
+      source_entry_id: item.source_entry_id || bySlot.get(slot)?.source_entry_id || null,
+      text,
+      bot_comment: item.bot_comment != null ? String(item.bot_comment) : null,
+      status: item.status === "failed" ? "failed" : "ready",
+      model: item.model || GEMINI_MODEL,
+    });
+  }
+
+  if (bySlot.size === 0) {
+    return { status: "error", highlight_date: dateStr, message: "нечего сохранять" };
+  }
+
+  const batchId = crypto.randomUUID();
+  const slots = [...bySlot.keys()].sort((a, b) => a - b);
+
+  for (const slot of slots) {
+    const row = bySlot.get(slot);
+    await insertHighlight({
+      batch_id: batchId,
+      highlight_date: dateStr,
+      slot,
+      type: "call_highlight",
+      manager_name: null,
+      source_entry_id: row.source_entry_id,
+      text: row.text,
+      bot_comment: row.bot_comment,
+      model: row.model,
+      status: row.status === "ready" ? "ready" : "failed",
+    });
+  }
+
+  console.log(
+    `[home-highlights] commit date=${dateStr} batch=${batchId} slots=${slots.join(",")}`
+  );
+
+  return {
+    status: "ok",
+    highlight_date: dateStr,
+    batch_id: batchId,
+    slots: slots.length,
+    replaced: list.map((i) => Number(i.slot)).filter((s) => s >= 1 && s <= 5),
+  };
+}
+
 module.exports = {
   generateDailyHighlights,
   hasReadyHighlights,
+  getLatestBatchForDate,
+  previewHighlightSlots,
+  commitHighlightBatch,
   mskDateString,
   yesterdayMskDateString,
   mskDayRangeUtc,
