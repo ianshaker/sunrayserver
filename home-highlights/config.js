@@ -13,6 +13,8 @@ module.exports = {
     process.env.DAILY_HIGHLIGHTS_SETUP_SECRET ||
     process.env.TELEGRAM_SETUP_SECRET ||
     "",
-  VERTEX_LOCATION: process.env.VERTEX_LOCATION || "us-central1",
-  MODEL: process.env.GEMINI_MODEL || "gemini-2.5-flash",
+  // Только home-highlights. НЕ трогаем GEMINI_MODEL / VERTEX_LOCATION call-ai.
+  // Gemini 3 Flash на Vertex — global endpoint.
+  VERTEX_LOCATION: process.env.DAILY_HIGHLIGHTS_VERTEX_LOCATION || "global",
+  MODEL: process.env.DAILY_HIGHLIGHTS_GEMINI_MODEL || "gemini-3-flash-preview",
 };
