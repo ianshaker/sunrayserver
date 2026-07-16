@@ -1,9 +1,22 @@
 // ============================================================================
 // Ежедневные «факты дня» для главной плитки CRM.
 //
-// Раз в сутки (04:00 МСК = 01:00 UTC): топ-5 самых длинных расшифровок
-// входящих звонков за вчера → Gemini → 5 анонимизированных фраз в
-// home_daily_highlights. CRM только читает таблицу.
+// Поток:
+//   cron 04:00 МСК (01:00 UTC) → топ-5 входящих звонков за вчера
+//   (direction=1, transcript_status=done, ORDER BY talk_seconds DESC)
+//   → 5 отдельных запросов в Gemini по СЫРОЙ расшифровке (не summary)
+//   → upsert в public.home_daily_highlights (highlight_date, slot 1..5)
+//   → CRM читает таблицу напрямую из Supabase, на сервер не ходит.
+//
+// Таблица: supabase/migrations/20260716140000_home_daily_highlights.sql
+//   (нужно применить в Supabase SQL Editor до первой генерации)
+//
+// Ручной прогон без ожидания 4 утра:
+//   POST /api/daily-highlights/generate?key=<SECRET>&date=YYYY-MM-DD
+//   GET  /api/daily-highlights/status?key=<SECRET>
+//   SECRET = DAILY_HIGHLIGHTS_SETUP_SECRET || TELEGRAM_SETUP_SECRET
+//
+// Boot: через ~15с после старта, если за вчера нет ready-строк — генерирует.
 // ============================================================================
 
 const schedule = require("node-schedule");
