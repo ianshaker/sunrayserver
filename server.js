@@ -74,7 +74,13 @@ const removeDuplicates = require("./remove_duplicates"); // пусть буде�
 const { registerGmailAuthRoutes, startEmailChecker } = require("./postamails");
 
 // --- Обработка звонков: расшифровка (Google STT) + саммари (Gemini) --- //
-const { startCallAiWorkers, triggerTranscription, setTelegramBot, registerAskRoute } = require("./call-ai");
+const {
+  startCallAiWorkers,
+  triggerTranscription,
+  setTelegramBot,
+  registerAskRoute,
+  registerDailyHighlightsRoute,
+} = require("./call-ai");
 setTelegramBot(telegramBot);
 startCallAiWorkers();
 
@@ -150,6 +156,9 @@ registerPushRoutes(fastify);
 
 // --- AI: вопрос по истории звонков клиента (CRM) --- //
 registerAskRoute(fastify);
+
+// --- AI: ручная генерация «фактов дня» для главной плитки --- //
+registerDailyHighlightsRoute(fastify);
 
 // --- Gmail OAuth (страница активации, без Telegram polling) --- //
 registerGmailAuthRoutes(fastify);

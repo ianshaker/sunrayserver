@@ -31,4 +31,19 @@ module.exports = {
     VERTEX_LOCATION: process.env.VERTEX_LOCATION || "us-central1",
     MODEL: process.env.GEMINI_MODEL || "gemini-2.5-flash",
   },
+
+  // --- Ежедневные факты дня для главной плитки CRM ---
+  DAILY_HIGHLIGHTS: {
+    // 01:00 UTC = 04:00 MSK (node-schedule 6-field cron)
+    CRON_PATTERN: process.env.DAILY_HIGHLIGHTS_CRON || "0 0 1 * * *",
+    TOP_N: 5,
+    MAX_CHARS: 220,
+    // DAILY_HIGHLIGHTS_SETUP_SECRET, иначе TELEGRAM_SETUP_SECRET (уже есть на Render)
+    SETUP_SECRET:
+      process.env.DAILY_HIGHLIGHTS_SETUP_SECRET ||
+      process.env.TELEGRAM_SETUP_SECRET ||
+      "",
+    VERTEX_LOCATION: process.env.VERTEX_LOCATION || "us-central1",
+    MODEL: process.env.GEMINI_MODEL || "gemini-2.5-flash",
+  },
 };
