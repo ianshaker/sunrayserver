@@ -5,7 +5,7 @@
 // ============================================================================
 
 const { hasCredentials, getCredentials, getAuthClient } = require("../call-ai/googleAuth");
-const { MAX_CHARS, MAX_COMMENT_CHARS, VERTEX_LOCATION, MODEL } = require("./config");
+const { VERTEX_LOCATION, MODEL } = require("./config");
 const { HIGHLIGHT_SYSTEM_PROMPT } = require("./prompts");
 
 function buildGeminiUrl(projectId, location, model) {
@@ -22,7 +22,7 @@ function extractText(resp) {
   return (cand?.content?.parts || []).map((p) => p.text || "").join("").trim();
 }
 
-function clipText(raw, maxChars) {
+function stripWrappingQuotes(raw) {
   let t = (raw || "").trim();
   if (!t) return "";
   if (
@@ -31,13 +31,24 @@ function clipText(raw, maxChars) {
   ) {
     t = t.slice(1, -1).trim();
   }
-  if (t.length > maxChars) {
-    const cut = t.slice(0, maxChars);
-    const lastSpace = cut.lastIndexOf(" ");
-    t = (lastSpace > 80 ? cut.slice(0, lastSpace) : cut).trim();
-    if (!/[.!?…]$/.test(t)) t += "…";
-  }
   return t;
+}
+
+/**
+ * Только явный обрыв («Саша,…»). Лимит длины сервер НЕ режет —
+ * в промпте мягкая подсказка боту, в БД пишем как пришло.
+ */
+function looksIncomplete(t) {
+  if (!t) return true;
+  if (/…\s*$/.test(t) || /\.\.\.\s*$/.test(t)) return true;
+  if (/[,;:—–]\s*$/.test(t)) return true;
+  return false;
+}
+
+function cleanField(raw) {
+  const t = stripWrappingQuotes(raw);
+  if (!t) return null;
+  return looksIncomplete(t) ? null : t;
 }
 
 /**
@@ -56,11 +67,10 @@ function parseHighlightResponse(raw) {
     try {
       const obj = JSON.parse(jsonMatch[0]);
       if (obj && (obj.skip === true || obj.SKIP === true)) return null;
-      const situation = clipText(obj.situation || obj.text || "", MAX_CHARS);
+      const situation = cleanField(obj.situation || obj.text || "");
       if (!situation) return null;
-      const botComment = clipText(
-        obj.bot_comment || obj.comment || obj.aside || "",
-        MAX_COMMENT_CHARS || 140
+      const botComment = cleanField(
+        obj.bot_comment || obj.comment || obj.aside || ""
       );
       return { situation, bot_comment: botComment || null };
     } catch (_) {
@@ -68,7 +78,7 @@ function parseHighlightResponse(raw) {
     }
   }
 
-  const situation = clipText(t, MAX_CHARS);
+  const situation = cleanField(t);
   return situation ? { situation, bot_comment: null } : null;
 }
 
