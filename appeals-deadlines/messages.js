@@ -85,6 +85,34 @@ function formatRescheduleConfirm(appealNumber, newDateHuman) {
   return `✅ Дедлайн по ${escHtml(appealNumber)} перенесён на <b>${escHtml(newDateHuman)}</b>.\nСледующая заявка появится в течение нескольких минут.`;
 }
 
+/**
+ * Отдельное SMS после сохранения переноса «сегодня → сегодня».
+ * Не часть превью/нейросети — жёсткий текст про блокировку очереди входящих.
+ *
+ * @param {string} appealNumber
+ * @param {string} newDateHuman
+ */
+function formatSameDayRescheduleQueueWarning(appealNumber, newDateHuman) {
+  const num = escHtml(appealNumber);
+  const when = escHtml(newDateHuman);
+  return (
+    `⚠️ <b>ВНИМАНИЕ!</b>\n\n` +
+    `Дедлайн по ${num} сохранён на <b>${when}</b> (сегодня).\n\n` +
+    `НО: в чате входящих очередь — <b>одна незакрытая карточка</b>. ` +
+    `Если уже висит заявка с более ранним дедлайном, карточку по ${num} ` +
+    `в это время АВТОМАТИЧЕСКИ НЕ СКИНУ: предыдущая блокирует очередь.\n\n` +
+    `Чтобы точно получить пинг в нужное время — ответьте @SUNRAYY_bot ` +
+    `на сообщение «✅ Дедлайн…» выше и попросите напоминание, например:\n` +
+    `<code>напомни в ${escHtml(extractTimeHint(newDateHuman))}</code>`
+  );
+}
+
+/** Достаёт HH:mm из human-строки или fallback «нужное время». */
+function extractTimeHint(newDateHuman) {
+  const m = String(newDateHuman || "").match(/(\d{1,2}:\d{2})/);
+  return m ? m[1] : "нужное время";
+}
+
 /** Заглушка для неимплементированных действий. */
 function formatNotImplemented(action) {
   const labels = {
@@ -301,6 +329,7 @@ function escHtml(str) {
 module.exports = {
   formatDeadlineCard,
   formatRescheduleConfirm,
+  formatSameDayRescheduleQueueWarning,
   formatNotImplemented,
   formatAppealNotFound,
   formatInvalidDate,

@@ -73,8 +73,12 @@ function getMskDateOffset(dayOffset) {
 }
 
 /**
- * Есть ли событие погрузки, по которому бот уже кинул уведомление сегодня
- * (менеджер ещё не сменил дедлайн в CRM — notif_* не сброшены).
+ * Есть ли событие погрузки, по которому бот уже кинул карточку, а менеджер
+ * ещё не сменил дедлайн (notif_* не сброшены) — и дедлайн всё ещё due.
+ *
+ * Важно: фильтр deadline <= сегодня (как в getNextDeadlineEvent), а не == сегодня.
+ * Иначе просроченная карточка «выпадает» из активных после полуночи / при overdue,
+ * и воркер начинает слать новые заявки вместо ⏰-пинга.
  *
  * @returns {Promise<object|null>}
  */
@@ -87,10 +91,12 @@ async function getActiveDeadlineNotif() {
       "id, appeal_number, deadline, deadline_time, deadline_notif_sent_at, deadline_notif_tg_msg_id, deadline_reminder_tg_msg_id",
     )
     .eq("type", "Погрузка")
-    .eq("deadline", today)
+    .lte("deadline", today)
     .not("deadline_notif_sent_at", "is", null)
+    .order("deadline", { ascending: true })
+    .order("deadline_time", { ascending: true, nullsFirst: true })
     .order("deadline_notif_sent_at", { ascending: true })
-    .limit(5);
+    .limit(25);
 
   if (error) {
     console.error("[loading-deadlines/queries] getActiveDeadlineNotif:", error.message);
@@ -98,7 +104,7 @@ async function getActiveDeadlineNotif() {
   }
 
   const rows = data || [];
-  // Пинги только после наступления времени (и для legacy без time).
+  // Самая ранняя due-карточка блокирует очередь; пинги только по ней.
   return rows.find((row) => isDeadlineDue(row)) || null;
 }
 

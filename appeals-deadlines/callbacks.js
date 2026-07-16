@@ -10,6 +10,7 @@ const { parsePreviewCallback } = require("./keyboards");
 const {
   buildPreviewDismissedMessage,
   formatRescheduleConfirm,
+  formatSameDayRescheduleQueueWarning,
   formatAppealNotFound,
   formatLoadingConfirm,
   formatRejectConfirm,
@@ -20,6 +21,7 @@ const {
   findAppealByNumber,
   rescheduleAppealDeadline,
   applyInfoAddedAndRescheduleAppeal,
+  getMskTodayDate,
 } = require("./queries");
 const { deleteDeadlineReminderMessage } = require("./notifier");
 const { executeAppealLoading } = require("./loading");
@@ -56,6 +58,40 @@ function triggerDeadlineCheck() {
       console.error("[appeals-deadlines/callbacks] внеочередной чек:", err.message),
     );
   });
+}
+
+/**
+ * Перенос «сегодня → сегодня»: отдельное SMS про блокировку очереди входящих.
+ */
+async function maybeSendSameDayQueueWarning(chatId, replyToMsgId, appeal, confirmed) {
+  const today = getMskTodayDate();
+  const fromToday = appeal.reminder_date === today;
+  const toToday = confirmed.newDate === today;
+  if (!fromToday || !toToday) return;
+
+  const bot = getTelegramBot();
+  if (!bot) return;
+
+  const text = formatSameDayRescheduleQueueWarning(
+    confirmed.appealNumber,
+    confirmed.newDateHuman,
+  );
+
+  try {
+    await bot.sendMessage(chatId, text, {
+      parse_mode: "HTML",
+      disable_web_page_preview: true,
+      ...(replyToMsgId != null ? { reply_to_message_id: replyToMsgId } : {}),
+    });
+    console.log(
+      `[appeals-deadlines/callbacks] same-day queue warning ${confirmed.appealNumber} (chat ${chatId})`,
+    );
+  } catch (err) {
+    console.error(
+      "[appeals-deadlines/callbacks] same-day queue warning failed:",
+      err.message,
+    );
+  }
 }
 
 function registerAppealDeadlineCallbacks() {
@@ -127,6 +163,7 @@ function registerAppealDeadlineCallbacks() {
           formatRescheduleConfirm(confirmed.appealNumber, confirmed.newDateHuman),
           "HTML",
         );
+        await maybeSendSameDayQueueWarning(chatId, messageId, appeal, confirmed);
         await answerCallback(callbackQuery, `Дедлайн ${confirmed.appealNumber} перенесён`);
         console.log(
           `[appeals-deadlines/callbacks] reschedule ${confirmed.appealNumber} → ${confirmed.newDate} (chat ${chatId})`,
@@ -146,6 +183,7 @@ function registerAppealDeadlineCallbacks() {
             "\n💬 Данные по заявке обновлены.",
           "HTML",
         );
+        await maybeSendSameDayQueueWarning(chatId, messageId, appeal, confirmed);
         await answerCallback(callbackQuery, `Инфо добавлено, дедлайн перенесён`);
         console.log(
           `[appeals-deadlines/callbacks] info_added ${confirmed.appealNumber} → ${confirmed.newDate} (chat ${chatId})`,

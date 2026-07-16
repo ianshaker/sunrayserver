@@ -40,7 +40,7 @@ function startTaskReminderWorker(telegramBot) {
   });
 
   console.log(
-    `[tasks/reminder] Cron запущен: ${REMINDER_CRON_PATTERN} (каждую минуту, повтор каждые 30 мин)`,
+    `[tasks/reminder] Cron запущен: ${REMINDER_CRON_PATTERN} (каждые 5 мин, повтор каждые 30 мин)`,
   );
 }
 
