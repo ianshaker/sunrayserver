@@ -3,8 +3,9 @@
 //   POST /api/daily-highlights/generate?key=...
 //   GET  /api/daily-highlights/status?key=...
 //   GET  /api/daily-highlights/admin?date=...          Bearer superadmin
-//   POST /api/daily-highlights/preview                 Bearer superadmin
-//   POST /api/daily-highlights/commit                  Bearer superadmin
+//   POST /api/daily-highlights/preview                 Bearer superadmin → INSERT preview
+//   POST /api/daily-highlights/commit                  Bearer superadmin → preview→ready
+//   POST /api/daily-highlights/discard                 Bearer superadmin → DELETE preview
 // ============================================================================
 
 const { supabase } = require("../lib/supabaseClient");
@@ -12,9 +13,10 @@ const { SETUP_SECRET } = require("./config");
 const { assertSuperAdminFromRequest } = require("../lib/telegramBotChatsAdmin");
 const {
   generateDailyHighlights,
-  getLatestBatchForDate,
+  getAdminSlotsForDate,
   previewHighlightSlots,
   commitHighlightBatch,
+  discardPreview,
   mskDateString,
   yesterdayMskDateString,
   isValidDateStr,
@@ -88,7 +90,7 @@ function registerHomeHighlightsRoutes(fastify) {
     }
 
     try {
-      const batch = await getLatestBatchForDate(date);
+      const batch = await getAdminSlotsForDate(date);
       const ids = batch.rows.map((r) => r.id).filter(Boolean);
       let repliesByHighlight = {};
 
@@ -140,8 +142,15 @@ function registerHomeHighlightsRoutes(fastify) {
     if (!Array.isArray(slots) || slots.length === 0) {
       return reply.code(400).send({
         status: "error",
-        error: "slots_required",
-        hint: "slots: [1,2] или slot: 1",
+        error: "slot_required",
+        hint: "ровно один слот: { slot: 1 } или { slots: [1] }",
+      });
+    }
+    if (slots.length !== 1) {
+      return reply.code(400).send({
+        status: "error",
+        error: "one_slot_only",
+        hint: "из настроек CRM — только по одной шутке; пачка — у ночного cron",
       });
     }
 
@@ -159,21 +168,46 @@ function registerHomeHighlightsRoutes(fastify) {
     if (!user) return;
 
     const body = request.body || {};
-    const date = body.date || yesterdayMskDateString();
-    if (!isValidDateStr(date)) {
-      return reply.code(400).send({ status: "error", error: "invalid_date" });
-    }
-
-    const items = body.items || body.replacements || [];
-    if (!Array.isArray(items) || items.length === 0) {
-      return reply.code(400).send({ status: "error", error: "items_required" });
+    const previewId = body.id || body.preview_id || body.items?.[0]?.id;
+    if (!previewId) {
+      return reply.code(400).send({
+        status: "error",
+        error: "id_required",
+        hint: "{ id: \"<preview uuid>\" }",
+      });
     }
 
     try {
-      const result = await commitHighlightBatch(date, items);
+      const result = await commitHighlightBatch(null, [{ id: previewId }]);
       const code = result.status === "ok" ? 200 : 400;
       console.log(
-        `[home-highlights] commit CRM (${user.email || user.id}) → ${result.status} batch=${result.batch_id || "-"}`
+        `[home-highlights] commit CRM (${user.email || user.id}) → ${result.status} id=${previewId}`
+      );
+      return reply.code(code).send(result);
+    } catch (e) {
+      return reply.code(500).send({ status: "error", message: e.message });
+    }
+  });
+
+  fastify.post("/api/daily-highlights/discard", async (request, reply) => {
+    const user = await assertSuperAdminFromRequest(request, reply);
+    if (!user) return;
+
+    const body = request.body || {};
+    const previewId = body.id || body.preview_id;
+    if (!previewId) {
+      return reply.code(400).send({
+        status: "error",
+        error: "id_required",
+        hint: "{ id: \"<preview uuid>\" }",
+      });
+    }
+
+    try {
+      const result = await discardPreview(previewId);
+      const code = result.status === "ok" ? 200 : 400;
+      console.log(
+        `[home-highlights] discard CRM (${user.email || user.id}) → ${result.status} id=${previewId}`
       );
       return reply.code(code).send(result);
     } catch (e) {

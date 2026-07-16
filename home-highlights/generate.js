@@ -59,8 +59,13 @@ async function fetchTopTranscripts(dateStr) {
 
 /** INSERT новой строки (новый id). Никогда не перезаписывает старый highlight. */
 async function insertHighlight(row) {
-  const { error } = await supabase.from("home_daily_highlights").insert(row);
+  const { data, error } = await supabase
+    .from("home_daily_highlights")
+    .insert(row)
+    .select("id")
+    .single();
   if (error) throw new Error(`insert slot ${row.slot}: ${error.message}`);
+  return data;
 }
 
 async function hasReadyHighlights(dateStr) {
@@ -223,9 +228,10 @@ async function fetchCallByEntryId(entryId) {
 }
 
 /**
- * Последний batch за дату (все слоты), плюс meta.
+ * Актуальные ready/failed слоты за дату (+ опционально preview для админки).
+ * Главная фильтрует status=ready отдельно; preview на главной не показывается.
  */
-async function getLatestBatchForDate(dateStr) {
+async function getLatestSlotsForDate(dateStr, { withPreviews = false } = {}) {
   const { data, error } = await supabase
     .from("home_daily_highlights")
     .select(
@@ -236,20 +242,59 @@ async function getLatestBatchForDate(dateStr) {
 
   if (error) throw new Error(`чтение highlights: ${error.message}`);
   const rows = data || [];
-  if (rows.length === 0) {
-    return { highlight_date: dateStr, batch_id: null, rows: [] };
+
+  const publishedBySlot = new Map();
+  const previewBySlot = new Map();
+
+  for (const row of rows) {
+    if (row.status === "preview") {
+      if (withPreviews && !previewBySlot.has(row.slot)) previewBySlot.set(row.slot, row);
+      continue;
+    }
+    if (!publishedBySlot.has(row.slot)) publishedBySlot.set(row.slot, row);
   }
-  const batchId = rows[0].batch_id;
-  const batchRows = rows
-    .filter((r) => r.batch_id === batchId)
-    .sort((a, b) => a.slot - b.slot);
-  return { highlight_date: dateStr, batch_id: batchId, rows: batchRows };
+
+  const latestRows = [...publishedBySlot.values()].sort((a, b) => a.slot - b.slot);
+
+  if (withPreviews) {
+    return {
+      highlight_date: dateStr,
+      batch_id: latestRows[0]?.batch_id || null,
+      rows: latestRows.map((row) => ({
+        ...row,
+        preview: previewBySlot.get(row.slot) || null,
+      })),
+    };
+  }
+
+  return {
+    highlight_date: dateStr,
+    batch_id: latestRows[0]?.batch_id || null,
+    rows: latestRows,
+  };
+}
+
+async function getLatestBatchForDate(dateStr) {
+  return getLatestSlotsForDate(dateStr);
+}
+
+async function getAdminSlotsForDate(dateStr) {
+  return getLatestSlotsForDate(dateStr, { withPreviews: true });
+}
+
+async function deletePreviewsForSlot(dateStr, slot) {
+  const { error } = await supabase
+    .from("home_daily_highlights")
+    .delete()
+    .eq("highlight_date", dateStr)
+    .eq("slot", slot)
+    .eq("status", "preview");
+  if (error) throw new Error(`очистка preview slot ${slot}: ${error.message}`);
 }
 
 /**
- * Превью перегенерации слотов БЕЗ записи в БД.
- * @param {string} dateStr
- * @param {number[]} slotNumbers 1..5
+ * Перегенерация слота → сразу INSERT status=preview в БД.
+ * На главной не видно, пока не confirmPreview.
  */
 async function previewHighlightSlots(dateStr, slotNumbers) {
   const slots = [...new Set((slotNumbers || []).map(Number))]
@@ -269,11 +314,11 @@ async function previewHighlightSlots(dateStr, slotNumbers) {
 
   isGenerating = true;
   console.log(
-    `[home-highlights] preview date=${dateStr} slots=${slots.join(",")}`
+    `[home-highlights] preview→DB date=${dateStr} slots=${slots.join(",")}`
   );
 
   try {
-    const latest = await getLatestBatchForDate(dateStr);
+    const latest = await getLatestSlotsForDate(dateStr);
     const bySlot = new Map(latest.rows.map((r) => [r.slot, r]));
     const topCalls = await fetchTopTranscripts(dateStr);
     const previews = [];
@@ -319,12 +364,30 @@ async function previewHighlightSlots(dateStr, slotNumbers) {
           });
           continue;
         }
+
+        await deletePreviewsForSlot(dateStr, slot);
+        const batchId = crypto.randomUUID();
+        const inserted = await insertHighlight({
+          batch_id: batchId,
+          highlight_date: dateStr,
+          slot,
+          type: "call_highlight",
+          manager_name: null,
+          source_entry_id: entryId,
+          text: parsed.situation,
+          bot_comment: parsed.bot_comment,
+          model: GEMINI_MODEL,
+          status: "preview",
+        });
+
         previews.push({
+          id: inserted.id,
+          batch_id: batchId,
           slot,
           source_entry_id: entryId,
           text: parsed.situation,
           bot_comment: parsed.bot_comment,
-          status: "ready",
+          status: "preview",
           model: GEMINI_MODEL,
         });
       } catch (e) {
@@ -350,88 +413,78 @@ async function previewHighlightSlots(dateStr, slotNumbers) {
 }
 
 /**
- * Сохранить новый batch: replacements перекрывают слоты последнего batch,
- * остальные слоты копируются как были.
- * @param {string} dateStr
- * @param {Array<{slot, source_entry_id?, text, bot_comment?, status?}>} replacements
+ * Закрепить preview → ready (на главной станет актуальной).
+ * Старая ready-строка остаётся в архиве.
  */
-async function commitHighlightBatch(dateStr, replacements) {
-  const list = Array.isArray(replacements) ? replacements : [];
-  if (list.length === 0) {
-    return { status: "error", highlight_date: dateStr, message: "пустой replacements" };
+async function confirmPreview(previewId) {
+  if (!previewId) {
+    return { status: "error", message: "нужен id preview" };
   }
 
-  const latest = await getLatestBatchForDate(dateStr);
-  const bySlot = new Map();
+  const { data, error } = await supabase
+    .from("home_daily_highlights")
+    .update({ status: "ready" })
+    .eq("id", previewId)
+    .eq("status", "preview")
+    .select("id, batch_id, highlight_date, slot, status, text, bot_comment")
+    .maybeSingle();
 
-  for (const row of latest.rows) {
-    bySlot.set(row.slot, {
-      slot: row.slot,
-      source_entry_id: row.source_entry_id,
-      text: row.text,
-      bot_comment: row.bot_comment,
-      status: row.status,
-      model: row.model || GEMINI_MODEL,
-    });
-  }
-
-  for (const item of list) {
-    const slot = Number(item.slot);
-    if (!(slot >= 1 && slot <= 5)) continue;
-    const text = (item.text || "").trim();
-    if (!text) continue;
-    bySlot.set(slot, {
-      slot,
-      source_entry_id: item.source_entry_id || bySlot.get(slot)?.source_entry_id || null,
-      text,
-      bot_comment: item.bot_comment != null ? String(item.bot_comment) : null,
-      status: item.status === "failed" ? "failed" : "ready",
-      model: item.model || GEMINI_MODEL,
-    });
-  }
-
-  if (bySlot.size === 0) {
-    return { status: "error", highlight_date: dateStr, message: "нечего сохранять" };
-  }
-
-  const batchId = crypto.randomUUID();
-  const slots = [...bySlot.keys()].sort((a, b) => a - b);
-
-  for (const slot of slots) {
-    const row = bySlot.get(slot);
-    await insertHighlight({
-      batch_id: batchId,
-      highlight_date: dateStr,
-      slot,
-      type: "call_highlight",
-      manager_name: null,
-      source_entry_id: row.source_entry_id,
-      text: row.text,
-      bot_comment: row.bot_comment,
-      model: row.model,
-      status: row.status === "ready" ? "ready" : "failed",
-    });
+  if (error) throw new Error(error.message);
+  if (!data) {
+    return { status: "error", message: "preview не найден или уже не черновик" };
   }
 
   console.log(
-    `[home-highlights] commit date=${dateStr} batch=${batchId} slots=${slots.join(",")}`
+    `[home-highlights] confirm preview id=${previewId} slot=${data.slot} → ready`
   );
+  return { status: "ok", ...data, slots: 1, replaced: [data.slot] };
+}
 
-  return {
-    status: "ok",
-    highlight_date: dateStr,
-    batch_id: batchId,
-    slots: slots.length,
-    replaced: list.map((i) => Number(i.slot)).filter((s) => s >= 1 && s <= 5),
-  };
+/**
+ * Удалить preview — остаётся прежняя ready-версия слота.
+ */
+async function discardPreview(previewId) {
+  if (!previewId) {
+    return { status: "error", message: "нужен id preview" };
+  }
+
+  const { data, error } = await supabase
+    .from("home_daily_highlights")
+    .delete()
+    .eq("id", previewId)
+    .eq("status", "preview")
+    .select("id, slot, highlight_date")
+    .maybeSingle();
+
+  if (error) throw new Error(error.message);
+  if (!data) {
+    return { status: "error", message: "preview не найден" };
+  }
+
+  console.log(`[home-highlights] discard preview id=${previewId} slot=${data.slot}`);
+  return { status: "ok", ...data };
+}
+
+/** Совместимость: commit по id preview → confirmPreview */
+async function commitHighlightBatch(_dateStr, replacements) {
+  const list = Array.isArray(replacements) ? replacements : [];
+  const item = list[0];
+  if (!item?.id) {
+    return { status: "error", message: "нужен id preview-строки" };
+  }
+  return confirmPreview(item.id);
 }
 
 module.exports = {
   generateDailyHighlights,
   hasReadyHighlights,
   getLatestBatchForDate,
+  getLatestSlotsForDate,
+  getAdminSlotsForDate,
   previewHighlightSlots,
   commitHighlightBatch,
+  confirmPreview,
+  discardPreview,
   mskDateString,
   yesterdayMskDateString,
   mskDayRangeUtc,
