@@ -1,8 +1,12 @@
 // ============================================================================
 // Генерация фактов дня → home_daily_highlights.
 // Читает mango_calls только как источник расшифровок (SELECT), pipeline call-ai не трогает.
+//
+// Каждая генерация — новый batch_id + INSERT (не upsert). Старые строки и
+// home_daily_highlight_replies сохраняются; CRM показывает последний batch за дату.
 // ============================================================================
 
+const crypto = require("crypto");
 const { supabase } = require("../lib/supabaseClient");
 const { TOP_N, MODEL: GEMINI_MODEL } = require("./config");
 const { hasCredentials, generateHighlightFromTranscript } = require("./gemini");
@@ -53,11 +57,10 @@ async function fetchTopTranscripts(dateStr) {
   return (data || []).filter((r) => r.transcript && r.transcript.trim().length > 40);
 }
 
-async function upsertHighlight(row) {
-  const { error } = await supabase.from("home_daily_highlights").upsert(row, {
-    onConflict: "highlight_date,slot",
-  });
-  if (error) throw new Error(`upsert slot ${row.slot}: ${error.message}`);
+/** INSERT новой строки (новый id). Никогда не перезаписывает старый highlight. */
+async function insertHighlight(row) {
+  const { error } = await supabase.from("home_daily_highlights").insert(row);
+  if (error) throw new Error(`insert slot ${row.slot}: ${error.message}`);
 }
 
 async function hasReadyHighlights(dateStr) {
@@ -77,6 +80,7 @@ async function hasReadyHighlights(dateStr) {
 /**
  * Сгенерировать факты дня для календарной даты МСК `forDate` (YYYY-MM-DD).
  * По умолчанию — вчера по МСК.
+ * Всегда создаёт новый batch_id (архив предыдущих генераций не трогается).
  */
 async function generateDailyHighlights(forDate) {
   const dateStr = forDate && isValidDateStr(forDate) ? forDate : yesterdayMskDateString();
@@ -91,13 +95,14 @@ async function generateDailyHighlights(forDate) {
   }
   isGenerating = true;
 
-  console.log(`[home-highlights] старт генерации за ${dateStr}`);
+  const batchId = crypto.randomUUID();
+  console.log(`[home-highlights] старт генерации за ${dateStr} batch=${batchId}`);
 
   try {
     const calls = await fetchTopTranscripts(dateStr);
     if (calls.length === 0) {
       console.log(`[home-highlights] нет подходящих расшифровок за ${dateStr}`);
-      return { status: "no_calls", highlight_date: dateStr, generated: 0 };
+      return { status: "no_calls", highlight_date: dateStr, batch_id: batchId, generated: 0 };
     }
 
     let ready = 0;
@@ -111,7 +116,8 @@ async function generateDailyHighlights(forDate) {
       try {
         const parsed = await generateHighlightFromTranscript(call.transcript);
         if (!parsed || !parsed.situation) {
-          await upsertHighlight({
+          await insertHighlight({
+            batch_id: batchId,
             highlight_date: dateStr,
             slot,
             type: "call_highlight",
@@ -128,7 +134,8 @@ async function generateDailyHighlights(forDate) {
           continue;
         }
 
-        await upsertHighlight({
+        await insertHighlight({
+          batch_id: batchId,
           highlight_date: dateStr,
           slot,
           type: "call_highlight",
@@ -156,7 +163,8 @@ async function generateDailyHighlights(forDate) {
           : String(e.message || e);
         console.error(`[home-highlights] slot ${slot} ошибка:`, msg);
         try {
-          await upsertHighlight({
+          await insertHighlight({
+            batch_id: batchId,
             highlight_date: dateStr,
             slot,
             type: "call_highlight",
@@ -167,10 +175,10 @@ async function generateDailyHighlights(forDate) {
             model: GEMINI_MODEL,
             status: "failed",
           });
-        } catch (upsertErr) {
+        } catch (insertErr) {
           console.error(
-            `[home-highlights] upsert failed slot:`,
-            upsertErr.message || JSON.stringify(upsertErr)
+            `[home-highlights] insert failed slot:`,
+            insertErr.message || JSON.stringify(insertErr)
           );
         }
         failed += 1;
@@ -183,10 +191,13 @@ async function generateDailyHighlights(forDate) {
       }
     }
 
-    console.log(`[home-highlights] готово: ready=${ready} failed=${failed} date=${dateStr}`);
+    console.log(
+      `[home-highlights] готово: ready=${ready} failed=${failed} date=${dateStr} batch=${batchId}`
+    );
     return {
       status: "ok",
       highlight_date: dateStr,
+      batch_id: batchId,
       generated: ready,
       failed,
       total_calls: calls.length,
@@ -194,7 +205,7 @@ async function generateDailyHighlights(forDate) {
     };
   } catch (e) {
     console.error("[home-highlights] цикл упал:", e.message);
-    return { status: "error", highlight_date: dateStr, message: e.message };
+    return { status: "error", highlight_date: dateStr, batch_id: batchId, message: e.message };
   } finally {
     isGenerating = false;
   }

@@ -47,9 +47,19 @@ function startHomeHighlightsWorker() {
   cronJob = schedule.scheduleJob(CRON_PATTERN, () => {
     const yesterday = yesterdayMskDateString();
     console.log(`[home-highlights] cron сработал → ${yesterday}`);
-    generateDailyHighlights(yesterday).catch((e) =>
-      console.error("[home-highlights] cron ошибка:", e.message)
-    );
+    // Не плодим второй batch той же ночью, если ready уже есть
+    hasReadyHighlights(yesterday)
+      .then((exists) => {
+        if (exists) {
+          console.log(`[home-highlights] cron: за ${yesterday} уже есть ready — пропуск`);
+          return null;
+        }
+        return generateDailyHighlights(yesterday);
+      })
+      .then((result) => {
+        if (result) console.log(`[home-highlights] cron → ${result.status}`);
+      })
+      .catch((e) => console.error("[home-highlights] cron ошибка:", e.message));
   });
 
   console.log(

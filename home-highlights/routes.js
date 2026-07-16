@@ -43,18 +43,29 @@ function registerHomeHighlightsRoutes(fastify) {
     const yesterday = yesterdayMskDateString();
     const { data, error } = await supabase
       .from("home_daily_highlights")
-      .select("highlight_date, slot, status, text, bot_comment, source_entry_id, created_at")
+      .select("batch_id, highlight_date, slot, status, text, bot_comment, source_entry_id, created_at")
       .eq("highlight_date", yesterday)
+      .order("created_at", { ascending: false })
       .order("slot", { ascending: true });
 
     if (error) {
       return reply.code(500).send({ status: "error", message: error.message });
     }
+
+    const rows = data || [];
+    const latestBatchId = rows[0]?.batch_id || null;
+    const latestBatchRows = latestBatchId
+      ? rows.filter((r) => r.batch_id === latestBatchId).sort((a, b) => a.slot - b.slot)
+      : [];
+
     return reply.send({
       status: "ok",
       highlight_date: yesterday,
       today_msk: mskDateString(),
-      rows: data || [],
+      latest_batch_id: latestBatchId,
+      batches: [...new Set(rows.map((r) => r.batch_id).filter(Boolean))].length,
+      rows: latestBatchRows,
+      all_rows: rows,
     });
   });
 }
