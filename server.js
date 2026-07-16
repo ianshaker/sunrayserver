@@ -79,10 +79,14 @@ const {
   triggerTranscription,
   setTelegramBot,
   registerAskRoute,
-  registerDailyHighlightsRoute,
 } = require("./call-ai");
+const {
+  startHomeHighlightsWorker,
+  registerHomeHighlightsRoutes,
+} = require("./home-highlights");
 setTelegramBot(telegramBot);
 startCallAiWorkers();
+startHomeHighlightsWorker();
 
 // --- CORS, чтобы фронт мог делать запросы! --- //
 fastify.register(require('@fastify/cors'), {
@@ -157,8 +161,8 @@ registerPushRoutes(fastify);
 // --- AI: вопрос по истории звонков клиента (CRM) --- //
 registerAskRoute(fastify);
 
-// --- AI: ручная генерация «фактов дня» для главной плитки --- //
-registerDailyHighlightsRoute(fastify);
+// --- Главная CRM: факты дня (отдельный отдел home-highlights, не call-ai) --- //
+registerHomeHighlightsRoutes(fastify);
 
 // --- Gmail OAuth (страница активации, без Telegram polling) --- //
 registerGmailAuthRoutes(fastify);

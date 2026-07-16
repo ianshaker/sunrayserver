@@ -9,24 +9,18 @@
 //   fallback: оба воркера раз в минуту добирают очередь из БД.
 //
 // Отдельный стек: call-ai/ask/ — CRM Q&A по AI-сводкам (POST /api/calls/ask).
-// Отдельный стек: call-ai/dailyHighlights.js — факты дня для главной CRM
-//   (cron 04:00 МСК + POST /api/daily-highlights/generate).
+//
+// Факты дня для главной CRM — НЕ здесь: см. ../home-highlights/
 // ============================================================================
 
 const { startTranscriptionWorker, triggerTranscription } = require("./transcription");
 const { startSummarizationWorker, triggerSummary } = require("./summarization");
 const { setTelegramBot } = require("./telegramSummary");
 const { askAboutCalls, registerAskRoute } = require("./ask");
-const {
-  startDailyHighlightsWorker,
-  registerDailyHighlightsRoute,
-  generateDailyHighlights,
-} = require("./dailyHighlights");
 
 function startCallAiWorkers() {
   startTranscriptionWorker();
   startSummarizationWorker();
-  startDailyHighlightsWorker();
 }
 
 module.exports = {
@@ -38,7 +32,4 @@ module.exports = {
   setTelegramBot,
   askAboutCalls,
   registerAskRoute,
-  startDailyHighlightsWorker,
-  registerDailyHighlightsRoute,
-  generateDailyHighlights,
 };
