@@ -437,7 +437,14 @@ async function confirmPreview(previewId) {
   console.log(
     `[home-highlights] confirm preview id=${previewId} slot=${data.slot} → ready`
   );
-  return { status: "ok", ...data, slots: 1, replaced: [data.slot] };
+  // status: "ok" ПОСЛЕ ...data — иначе data.status ("ready") затирает ok → HTTP 400 на фронте
+  return {
+    ...data,
+    status: "ok",
+    highlight_status: data.status,
+    slots: 1,
+    replaced: [data.slot],
+  };
 }
 
 /**
