@@ -413,37 +413,114 @@ async function previewHighlightSlots(dateStr, slotNumbers) {
 }
 
 /**
- * Закрепить preview → ready (на главной станет актуальной).
- * Старая ready-строка остаётся в архиве.
+ * Закрепить preview: перезаписать опубликованный слот (тот же id),
+ * черновик удалить. Ответы менеджеров остаются на старом id.
+ * Лишние ready/failed того же date+slot — удалить (CASCADE replies).
  */
 async function confirmPreview(previewId) {
   if (!previewId) {
     return { status: "error", message: "нужен id preview" };
   }
 
-  const { data, error } = await supabase
+  const { data: preview, error: previewErr } = await supabase
     .from("home_daily_highlights")
-    .update({ status: "ready" })
+    .select(
+      "id, batch_id, highlight_date, slot, status, text, bot_comment, source_entry_id, model"
+    )
     .eq("id", previewId)
     .eq("status", "preview")
-    .select("id, batch_id, highlight_date, slot, status, text, bot_comment")
     .maybeSingle();
 
-  if (error) throw new Error(error.message);
-  if (!data) {
+  if (previewErr) throw new Error(previewErr.message);
+  if (!preview) {
     return { status: "error", message: "preview не найден или уже не черновик" };
   }
 
-  console.log(
-    `[home-highlights] confirm preview id=${previewId} slot=${data.slot} → ready`
-  );
-  // status: "ok" ПОСЛЕ ...data — иначе data.status ("ready") затирает ok → HTTP 400 на фронте
+  const { data: publishedRows, error: pubErr } = await supabase
+    .from("home_daily_highlights")
+    .select("id, created_at")
+    .eq("highlight_date", preview.highlight_date)
+    .eq("slot", preview.slot)
+    .in("status", ["ready", "failed"])
+    .order("created_at", { ascending: false });
+
+  if (pubErr) throw new Error(pubErr.message);
+
+  const published = publishedRows || [];
+  const keep = published[0] || null;
+  const duplicateIds = published.slice(1).map((r) => r.id);
+
+  let saved;
+
+  if (keep) {
+    const { data: updated, error: updErr } = await supabase
+      .from("home_daily_highlights")
+      .update({
+        text: preview.text,
+        bot_comment: preview.bot_comment,
+        source_entry_id: preview.source_entry_id,
+        model: preview.model,
+        status: "ready",
+      })
+      .eq("id", keep.id)
+      .select("id, batch_id, highlight_date, slot, status, text, bot_comment")
+      .single();
+
+    if (updErr) throw new Error(updErr.message);
+    saved = updated;
+
+    const { error: delPreviewErr } = await supabase
+      .from("home_daily_highlights")
+      .delete()
+      .eq("id", previewId)
+      .eq("status", "preview");
+    if (delPreviewErr) throw new Error(delPreviewErr.message);
+
+    if (duplicateIds.length > 0) {
+      const { error: dedupeErr } = await supabase
+        .from("home_daily_highlights")
+        .delete()
+        .in("id", duplicateIds);
+      if (dedupeErr) {
+        console.warn(
+          `[home-highlights] dedupe slot ${preview.slot}:`,
+          dedupeErr.message
+        );
+      } else {
+        console.log(
+          `[home-highlights] dedupe date=${preview.highlight_date} slot=${preview.slot} removed=${duplicateIds.length}`
+        );
+      }
+    }
+
+    console.log(
+      `[home-highlights] confirm overwrite id=${keep.id} from preview=${previewId} slot=${preview.slot}`
+    );
+  } else {
+    const { data: promoted, error: promoErr } = await supabase
+      .from("home_daily_highlights")
+      .update({ status: "ready" })
+      .eq("id", previewId)
+      .eq("status", "preview")
+      .select("id, batch_id, highlight_date, slot, status, text, bot_comment")
+      .maybeSingle();
+
+    if (promoErr) throw new Error(promoErr.message);
+    if (!promoted) {
+      return { status: "error", message: "preview не найден или уже не черновик" };
+    }
+    saved = promoted;
+    console.log(
+      `[home-highlights] confirm promote preview id=${previewId} slot=${preview.slot} → ready`
+    );
+  }
+
   return {
-    ...data,
+    ...saved,
     status: "ok",
-    highlight_status: data.status,
+    highlight_status: "ready",
     slots: 1,
-    replaced: [data.slot],
+    replaced: [preview.slot],
   };
 }
 
