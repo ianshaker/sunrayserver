@@ -84,6 +84,10 @@ const {
   startHomeHighlightsWorker,
   registerHomeHighlightsRoutes,
 } = require("./home-highlights");
+
+// --- Админ-чистка mango_calls (CRM Settings, без файла записи) --- //
+const { registerMangoCallsRoutes } = require("./mango-calls");
+
 setTelegramBot(telegramBot);
 startCallAiWorkers();
 startHomeHighlightsWorker();
@@ -163,6 +167,9 @@ registerAskRoute(fastify);
 
 // --- Главная CRM: факты дня (отдельный отдел home-highlights, не call-ai) --- //
 registerHomeHighlightsRoutes(fastify);
+
+// --- CRM Settings: удаление строк mango_calls без файла записи --- //
+registerMangoCallsRoutes(fastify);
 
 // --- Gmail OAuth (страница активации, без Telegram polling) --- //
 registerGmailAuthRoutes(fastify);

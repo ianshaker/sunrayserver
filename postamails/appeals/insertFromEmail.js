@@ -13,6 +13,7 @@ const {
   extractProduct,
 } = require("../parsing/emailFields");
 const { formatRawEmailBlockForTelegram } = require("../parsing/emailBodyForTelegram");
+const { getMskTodayDate } = require("../../appeals-deadlines/queries");
 
 async function insertAppealFromEmail(emailText) {
   const phone = extractPhone(emailText);
@@ -76,7 +77,7 @@ async function insertAppealFromEmail(emailText) {
     status: "Активно",
     address: "",
     detailed_address: "",
-    reminder_date: null,
+    reminder_date: getMskTodayDate(),
     reminder_time: null,
     task_description: "",
     created_at: now,

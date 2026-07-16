@@ -5,6 +5,7 @@ const https = require("https");
 const crypto = require("crypto");
 const { URL } = require("url");
 const { supabase } = require("./lib/supabaseClient");
+const { getMskTodayDate } = require("./appeals-deadlines/queries");
 
 const MANGO_DEBUG_LOG = process.env.MANGO_DEBUG_LOG !== "false";
 const MANGO_LOG_FILE = path.join(__dirname, "mango_webhook_debug.jsonl");
@@ -926,7 +927,7 @@ async function handleMangoWebhook(request, reply, telegramBot) {
                 source: "Звонок",
                 manager: managerName,
                 dialog: "",
-                reminder_date: null,
+                reminder_date: getMskTodayDate(),
                 reminder_time: null,
                 task_description: "",
                 created_at: new Date().toISOString(),
