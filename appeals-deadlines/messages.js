@@ -16,14 +16,6 @@ function formatIsoDateHuman(isoDate) {
   return `${parseInt(d, 10)} ${MONTHS_RU[parseInt(m, 10) - 1]}`;
 }
 
-const MEMO = `\
----
-Чтобы закрыть этот дедлайн, отметьте @SUNRAYY_bot с номером заявки и укажите:
-• перенести дедлайн
-• добавить доп. инфо и перенести дедлайн
-• кинуть в погрузку
-• отказ`;
-
 /**
  * Форматирует карточку дедлайна для отправки в Telegram (HTML).
  *
@@ -32,12 +24,15 @@ const MEMO = `\
  */
 function formatDeadlineCard(appeal) {
   const lines = [];
+  const dateHuman = appeal.reminder_date
+    ? formatIsoDateHuman(appeal.reminder_date)
+    : null;
 
-  lines.push(`⏰ <b>ДЕДЛАЙН ${escHtml(appeal.appeal_number)}</b>`);
-  if (appeal.reminder_date) {
-    lines.push(`📅 ${escHtml(formatIsoDateHuman(appeal.reminder_date))}`);
-  }
-  lines.push("");
+  lines.push(
+    dateHuman
+      ? `⏰ <b>ДЕДЛАЙН ${escHtml(appeal.appeal_number)} - ${escHtml(dateHuman)}</b>`
+      : `⏰ <b>ДЕДЛАЙН ${escHtml(appeal.appeal_number)}</b>`,
+  );
 
   const name = (appeal.client_name || "").trim();
   const phone = (appeal.phone || "").trim();
@@ -47,27 +42,24 @@ function formatDeadlineCard(appeal) {
 
   const city = (appeal.city || "").trim();
   if (city) {
-    lines.push(`🏙 ${escHtml(city)}`);
+    lines.push(escHtml(city));
   }
 
   const addr = (appeal.detailed_address || appeal.address || "").trim();
   if (addr) {
-    lines.push(`📍 ${escHtml(addr)}`);
+    lines.push(escHtml(addr));
   }
 
   const dialog = (appeal.dialog || "").trim();
   if (dialog) {
-    lines.push("");
-    lines.push("💬 <b>Диалог:</b>");
+    lines.push("--");
+    lines.push("Диалог:");
     const truncated =
       dialog.length > DIALOG_MAX_CHARS
         ? dialog.slice(0, DIALOG_MAX_CHARS) + "…"
         : dialog;
     lines.push(escHtml(truncated));
   }
-
-  lines.push("");
-  lines.push(MEMO);
 
   return {
     text: lines.join("\n"),

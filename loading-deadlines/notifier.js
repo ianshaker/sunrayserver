@@ -3,7 +3,7 @@
 // ============================================================================
 
 const { LOADING_DEADLINE_CHAT_ID } = require("./config");
-const { formatDeadlineCard } = require("./messages");
+const { formatDeadlineCard, normalizeAppealNumber } = require("./messages");
 const { markDeadlineNotifSent, updateDeadlineReminderMsgId } = require("./queries");
 
 /**
@@ -67,10 +67,7 @@ async function sendDeadlineNotification(event, bot) {
  * @param {object} bot
  */
 async function sendDeadlineReminder(event, bot) {
-  const replyText =
-    `⏰ Напоминаю: дедлайн погрузки по заявке <b>${event.appeal_number}</b> ещё не закрыт.\n` +
-    `Ответьте @SUNRAYY_bot на карточку: перенести дедлайн, добавить инфо, отказ или назначить замер. ` +
-    `Либо смените дедлайн в CRM.`;
+  const replyText = `⏰ Дедлайн погрузки ${normalizeAppealNumber(event.appeal_number)} - не закрыт`;
 
   await deleteDeadlineReminderMessage(bot, event.deadline_reminder_tg_msg_id);
 

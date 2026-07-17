@@ -42,12 +42,15 @@ function formatIsoDateHuman(isoDate) {
  */
 function formatQueryCard(appeal) {
   const lines = [];
+  const dateHuman = appeal.reminder_date
+    ? formatIsoDateHuman(appeal.reminder_date)
+    : null;
 
-  lines.push(`⏰ <b>ДЕДЛАЙН ${escHtml(appeal.appeal_number)}</b>`);
-  if (appeal.reminder_date) {
-    lines.push(`📅 ${escHtml(formatIsoDateHuman(appeal.reminder_date))}`);
-  }
-  lines.push("");
+  lines.push(
+    dateHuman
+      ? `⏰ <b>ДЕДЛАЙН ${escHtml(appeal.appeal_number)} - ${escHtml(dateHuman)}</b>`
+      : `⏰ <b>ДЕДЛАЙН ${escHtml(appeal.appeal_number)}</b>`,
+  );
 
   const name = (appeal.client_name || "").trim();
   const phone = (appeal.phone || "").trim();
@@ -57,18 +60,18 @@ function formatQueryCard(appeal) {
 
   const city = (appeal.city || "").trim();
   if (city) {
-    lines.push(`🏙 ${escHtml(city)}`);
+    lines.push(escHtml(city));
   }
 
   const addr = (appeal.detailed_address || appeal.address || "").trim();
   if (addr) {
-    lines.push(`📍 ${escHtml(addr)}`);
+    lines.push(escHtml(addr));
   }
 
   const dialog = (appeal.dialog || "").trim();
   if (dialog) {
-    lines.push("");
-    lines.push("💬 <b>Диалог:</b>");
+    lines.push("--");
+    lines.push("Диалог:");
     const truncated =
       dialog.length > DIALOG_MAX_CHARS
         ? dialog.slice(0, DIALOG_MAX_CHARS) + "…"

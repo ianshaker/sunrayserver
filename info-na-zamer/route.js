@@ -1,6 +1,7 @@
 // ============================================================================
 // POST /events/zamer — уведомления мастерам / в погрузку из CRM.
-// Эндпоинт исторически называется zamer; тип берём из body.eventType.
+// Эндпоинт исторически называется zamer; тип берём из body.eventType
+// (Замер | Монтаж | Рекламация | Погрузка) — шапки в labels.js.
 //
 // Контракт ответа (CRM ждёт sent === true перед закрытием заявки):
 //   200 { status: "ok", sent: true, messageId?, ... }
@@ -46,6 +47,11 @@ function registerZamerRoute(fastify, telegramBot) {
       const formattedDate = formatDate(date);
       const formattedTime = formatTimeRange(startTime, endTime);
       const labels = resolveEventLabels(eventType);
+      if (labels.kind === "reclamation" && !updateType) {
+        console.log(
+          `[info-na-zamer] новая рекламация ${appealNumber || "—"} → ${normalizedName || "?"}`,
+        );
+      }
 
       const cardFields = {
         appealNumber,

@@ -68,9 +68,9 @@ async function sendDeadlineNotification(appeal, bot) {
  * @param {object} bot
  */
 async function sendDeadlineReminder(appeal, bot) {
-  const replyText =
-    `⏰ Напоминаю: дедлайн по заявке <b>${appeal.appeal_number}</b> ещё не закрыт.\n` +
-    `Отметьте @SUNRAYY_bot с номером заявки и укажите действие.`;
+  const num = String(appeal.appeal_number || "").trim();
+  const appealNum = num.startsWith("#") ? num : num ? `#${num}` : "";
+  const replyText = `⏰ Дедлайн входящего ${appealNum} - не закрыт`;
 
   await deleteDeadlineReminderMessage(bot, appeal.deadline_reminder_tg_msg_id);
 

@@ -23,8 +23,8 @@ const WORK_HOUR_START = 9;
 /** Рабочий час конца (не включительно), MSK. */
 const WORK_HOUR_END = 20;
 
-/** true — круглосуточно (режим теста). false — рабочее окно 9–20 MSK. */
-const DEADLINE_24_7 = true;
+/** true — круглосуточно (режим теста). false — рабочее окно 9–20 MSK (как входящие). */
+const DEADLINE_24_7 = false;
 
 /** Cron-паттерн: каждые 30 минут (на 0-й секунде). */
 const DEADLINE_CRON_PATTERN = "0 */30 * * * *";

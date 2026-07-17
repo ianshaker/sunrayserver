@@ -14,14 +14,15 @@ const { formatDeadlineDateTimeHuman, escHtml, normalizeAppealNumber } = require(
 function formatQueryCard(event) {
   const lines = [];
   const num = normalizeAppealNumber(event.appeal_number);
+  const when = event.deadline
+    ? formatDeadlineDateTimeHuman(event.deadline, event.deadline_time)
+    : null;
 
-  lines.push(`⏰ <b>ДЕДЛАЙН ПОГРУЗКИ ${escHtml(num)}</b>`);
-  if (event.deadline) {
-    lines.push(
-      `📅 ${escHtml(formatDeadlineDateTimeHuman(event.deadline, event.deadline_time))} <i>(МСК)</i>`,
-    );
-  }
-  lines.push("");
+  lines.push(
+    when
+      ? `⏰ <b>ДЕДЛАЙН ПОГРУЗКИ ${escHtml(num)} - ${escHtml(when)}</b>`
+      : `⏰ <b>ДЕДЛАЙН ПОГРУЗКИ ${escHtml(num)}</b>`,
+  );
 
   const name = (event.client_name || "").trim();
   const phone = (event.phone || "").trim();
@@ -31,18 +32,18 @@ function formatQueryCard(event) {
 
   const city = (event.city || "").trim();
   if (city) {
-    lines.push(`🏙 ${escHtml(city)}`);
+    lines.push(escHtml(city));
   }
 
   const addr = (event.detailed_address || event.address || "").trim();
   if (addr) {
-    lines.push(`📍 ${escHtml(addr)}`);
+    lines.push(escHtml(addr));
   }
 
   const note = (event.note || "").trim();
   if (note) {
-    lines.push("");
-    lines.push("📝 <b>Заметка:</b>");
+    lines.push("--");
+    lines.push("Заметка:");
     const truncated =
       note.length > DIALOG_MAX_CHARS
         ? note.slice(0, DIALOG_MAX_CHARS) + "…"
@@ -52,8 +53,8 @@ function formatQueryCard(event) {
 
   const dialog = (event.dialog || "").trim();
   if (dialog) {
-    lines.push("");
-    lines.push("💬 <b>Диалог:</b>");
+    lines.push("--");
+    lines.push("Диалог:");
     const truncated =
       dialog.length > DIALOG_MAX_CHARS
         ? dialog.slice(0, DIALOG_MAX_CHARS) + "…"

@@ -45,15 +45,6 @@ function normalizeAppealNumber(appealNumber) {
   return raw.startsWith("#") ? raw : `#${raw}`;
 }
 
-const MEMO = `\
----
-Чтобы закрыть этот дедлайн, отметьте @SUNRAYY_bot с номером заявки и укажите:
-• перенести дедлайн на новую дату и время (МСК)
-• добавить инфо (телефон / адрес / диалог) и перенести дедлайн
-• отказ
-• назначить замер (мастер + дата + время)
-• вернуть во входящие`;
-
 /**
  * @param {object} event — строка eventsnew
  * @returns {{ text: string, parseMode: 'HTML' }}
@@ -61,14 +52,15 @@ const MEMO = `\
 function formatDeadlineCard(event) {
   const lines = [];
   const num = normalizeAppealNumber(event.appeal_number);
+  const when = event.deadline
+    ? formatDeadlineDateTimeHuman(event.deadline, event.deadline_time)
+    : null;
 
-  lines.push(`⏰ <b>ДЕДЛАЙН ПОГРУЗКИ ${escHtml(num)}</b>`);
-  if (event.deadline) {
-    lines.push(
-      `📅 ${escHtml(formatDeadlineDateTimeHuman(event.deadline, event.deadline_time))} <i>(МСК)</i>`,
-    );
-  }
-  lines.push("");
+  lines.push(
+    when
+      ? `⏰ <b>ДЕДЛАЙН ПОГРУЗКИ ${escHtml(num)} - ${escHtml(when)}</b>`
+      : `⏰ <b>ДЕДЛАЙН ПОГРУЗКИ ${escHtml(num)}</b>`,
+  );
 
   const name = (event.client_name || "").trim();
   const phone = (event.phone || "").trim();
@@ -78,18 +70,18 @@ function formatDeadlineCard(event) {
 
   const city = (event.city || "").trim();
   if (city) {
-    lines.push(`🏙 ${escHtml(city)}`);
+    lines.push(escHtml(city));
   }
 
   const addr = (event.detailed_address || event.address || "").trim();
   if (addr) {
-    lines.push(`📍 ${escHtml(addr)}`);
+    lines.push(escHtml(addr));
   }
 
   const note = (event.note || "").trim();
   if (note) {
-    lines.push("");
-    lines.push("📝 <b>Заметка:</b>");
+    lines.push("--");
+    lines.push("Заметка:");
     const truncated =
       note.length > DIALOG_MAX_CHARS
         ? note.slice(0, DIALOG_MAX_CHARS) + "…"
@@ -99,17 +91,14 @@ function formatDeadlineCard(event) {
 
   const dialog = (event.dialog || "").trim();
   if (dialog) {
-    lines.push("");
-    lines.push("💬 <b>Диалог:</b>");
+    lines.push("--");
+    lines.push("Диалог:");
     const truncated =
       dialog.length > DIALOG_MAX_CHARS
         ? dialog.slice(0, DIALOG_MAX_CHARS) + "…"
         : dialog;
     lines.push(escHtml(truncated));
   }
-
-  lines.push("");
-  lines.push(MEMO);
 
   return {
     text: lines.join("\n"),
