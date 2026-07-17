@@ -1,5 +1,17 @@
 const { sendInstallationQueueDocument } = require("./send");
 
+function normalizePages(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((p) => p && typeof p.path === "string" && p.path.trim())
+    .map((p, i) => ({
+      role: typeof p.role === "string" ? p.role : "main",
+      path: p.path.trim(),
+      order: typeof p.order === "number" ? p.order : i,
+    }))
+    .sort((a, b) => a.order - b.order);
+}
+
 function registerInstallationQueueRoute(fastify, telegramBot) {
   fastify.post("/events/installation-queue", async (request, reply) => {
     try {
@@ -14,11 +26,10 @@ function registerInstallationQueueRoute(fastify, telegramBot) {
         queueStatus,
         documents,
         comments,
-        contractScanPath,
+        contractScanPages,
       } = body;
 
-      const scanPath =
-        typeof contractScanPath === "string" ? contractScanPath.trim() : "";
+      const pages = normalizePages(contractScanPages);
 
       if (!dogovorNumber) {
         return reply.status(400).send({
@@ -26,10 +37,11 @@ function registerInstallationQueueRoute(fastify, telegramBot) {
           error: "Отсутствует dogovorNumber",
         });
       }
-      if (!scanPath) {
+      if (pages.length === 0) {
         return reply.status(400).send({
           success: false,
-          error: "Отсутствует contractScanPath — автоотправка без PDF недоступна",
+          error:
+            "Отсутствует contractScanPages — автоотправка без фото недоступна",
         });
       }
 
@@ -43,7 +55,7 @@ function registerInstallationQueueRoute(fastify, telegramBot) {
         queueStatus,
         documents,
         comments,
-        contractScanPath: scanPath,
+        contractScanPages: pages,
       });
 
       return reply.send({
