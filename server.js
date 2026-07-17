@@ -72,6 +72,9 @@ const { registerReadinessRoute } = require("./readiness");
 // --- Скан договора → монтажный чат (PDF + caption) --- //
 const { registerInstallationQueueRoute } = require("./installation-queue");
 
+// --- JPEG графика мастера → личный TG-чат --- //
+const { registerMasterScheduleRoute } = require("./master-schedule");
+
 // --- Импорт функции для удаления дубликатов (только импорт, не запуск) --- //
 const removeDuplicates = require("./remove_duplicates"); // пусть будет, даже если сейчас не вызывается
 
@@ -167,6 +170,9 @@ registerReadinessRoute(fastify, telegramBot);
 
 // --- Скан договора в монтажный чат: POST /events/installation-queue --- //
 registerInstallationQueueRoute(fastify, telegramBot);
+
+// --- График мастера (JPEG) в личный чат: POST /events/master-schedule --- //
+registerMasterScheduleRoute(fastify);
 
 // --- Подключаем push-маршруты (ВАЖНО: после объявления fastify, до listen!) --- //
 registerPushRoutes(fastify);
