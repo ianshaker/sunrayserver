@@ -5,11 +5,13 @@
 
 const { supabase } = require("../lib/supabaseClient");
 const { triggerTranscription } = require("../call-ai");
-const { MIN_TALK_SECONDS_FOR_AI } = require("./config");
 
 /**
+ * Ручной STT (force) по id. Длительность разговора не гейтим — достаточно файла.
+ * Саммари дальше по правилам call-ai (короткий текст → raw-short без Gemini).
+ *
  * @param {string} id — uuid mango_calls.id
- * @returns {Promise<{ status: string, id?: string, entry_id?: string, talk_seconds?: number, message?: string }>}
+ * @returns {Promise<{ status: string, id?: string, entry_id?: string, message?: string }>}
  */
 async function requestAiForCall(id) {
   if (typeof id !== "string" || !id.trim()) {
@@ -21,7 +23,7 @@ async function requestAiForCall(id) {
   const { data, error } = await supabase
     .from("mango_calls")
     .select(
-      "id, entry_id, talk_seconds, recording_status, storage_path, transcript_status, summary_status, summary",
+      "id, entry_id, recording_status, storage_path, transcript_status, summary_status, summary",
     )
     .eq("id", id.trim())
     .maybeSingle();
@@ -35,18 +37,9 @@ async function requestAiForCall(id) {
     return { status: "not_found" };
   }
 
+  // Единственный гейт «можно ли гонять» — файл в БД (storage_path + ready)
   if (data.recording_status !== "ready" || !data.storage_path) {
     return { status: "recording_not_ready", id: data.id, entry_id: data.entry_id };
-  }
-
-  const talkSeconds = Number(data.talk_seconds) || 0;
-  if (talkSeconds < MIN_TALK_SECONDS_FOR_AI) {
-    return {
-      status: "too_short",
-      id: data.id,
-      entry_id: data.entry_id,
-      talk_seconds: talkSeconds,
-    };
   }
 
   if (

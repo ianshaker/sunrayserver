@@ -71,14 +71,6 @@ function registerMangoCallsRoutes(fastify) {
           ...result,
         });
       }
-      if (result.status === "too_short") {
-        return reply.code(400).send({
-          status: "error",
-          error: "too_short",
-          message: "Нужен разговор от 30 секунд",
-          ...result,
-        });
-      }
 
       console.log(
         `[mango-calls] request-ai by ${user.email || user.id}: ${result.status} id=${result.id} entry=${result.entry_id}`,
