@@ -2,11 +2,12 @@
 // Расписание AI — настройки.
 // ============================================================================
 
-const { SUMMARY } = require("../call-ai/config");
-
+// Только schedule-ai. НЕ трогаем CALL_AI_* / DAILY_HIGHLIGHTS_* / другие отделы.
+// Было через call-ai SUMMARY (= gemini-2.5-flash @ us-central1).
+//   SCHEDULE_AI_GEMINI_MODEL / SCHEDULE_AI_VERTEX_LOCATION
 module.exports = {
-  GEMINI_MODEL: SUMMARY.MODEL,
-  VERTEX_LOCATION: SUMMARY.VERTEX_LOCATION,
+  GEMINI_MODEL: process.env.SCHEDULE_AI_GEMINI_MODEL || "gemini-2.5-flash",
+  VERTEX_LOCATION: process.env.SCHEDULE_AI_VERTEX_LOCATION || "us-central1",
 
   // Сколько дней от «сегодня» считаем разумным диапазоном для даты расписания
   // (защита от кривого разбора относительных дат моделью — не ограничение бизнес-логики).

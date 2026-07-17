@@ -39,6 +39,11 @@ function buildSummaryTelegramMessage(row) {
   const phone = row.client_phone || "—";
   const manager = row.manager_name || "—";
   const summary = (row.summary || "").trim();
+  // raw-short: summary уже содержит «В расшифровке — отказано. Диалог: …»
+  const body =
+    row.summary_model === "raw-short"
+      ? `✨ ${escapeHtml(summary)}`
+      : `✨ <b>Расшифровка AI-ассистентом:</b>\n${escapeHtml(summary)}`;
 
   return (
     `<b>ЗВОНОК</b>\n` +
@@ -46,8 +51,7 @@ function buildSummaryTelegramMessage(row) {
     `Входящий: <b>${escapeHtml(phone)}</b>\n` +
     `Принял: <b>${escapeHtml(manager)}</b>\n` +
     `---\n` +
-    `✨ <b>Расшифровка AI-ассистентом:</b>\n` +
-    `${escapeHtml(summary)}`
+    body
   );
 }
 
@@ -90,7 +94,7 @@ async function sendSummaryToTelegram(row) {
 }
 
 const TELEGRAM_SELECT_FIELDS =
-  "id, entry_id, direction, client_phone, manager_name, call_started_at, call_answered_at, summary, summary_status, summary_telegram_sent_at";
+  "id, entry_id, direction, client_phone, manager_name, call_started_at, call_answered_at, summary, summary_status, summary_model, summary_telegram_sent_at";
 
 // Догоняем сводки, которые готовы, но Telegram не ушёл (сбой сети и т.п.).
 async function pollTelegramBacklog() {

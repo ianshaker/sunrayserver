@@ -6,16 +6,13 @@
 
 const { hasCredentials } = require("../call-ai/googleAuth");
 const { generateContent } = require("../call-ai/geminiClient");
-const { SUMMARY } = require("../call-ai/config");
+const { GEMINI_MODEL, VERTEX_LOCATION } = require("./config");
 const { getMskTodayDate } = require("./queries");
 const {
   normalizeInfoUpdates,
   hasAnyInfoUpdate,
 } = require("../appeals-deadlines/infoUpdates");
 const { normalizeStartTime, addOneHour } = require("./masters");
-
-const GEMINI_MODEL = SUMMARY.MODEL;
-const VERTEX_LOCATION = SUMMARY.VERTEX_LOCATION;
 
 const ACTIONS = ["reschedule", "info_added", "reject", "assign_zamer", "return_appeals"];
 const IMPLEMENTED = new Set([

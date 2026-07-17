@@ -12,13 +12,33 @@ const { SUMMARY } = require("./config");
 const { CALL_SUMMARY_SYSTEM_PROMPT } = require("./prompts");
 const { sendSummaryToTelegram, pollTelegramBacklog } = require("./telegramSummary");
 
-const { POLL_MS, BATCH_LIMIT, STALE_MIN, VERTEX_LOCATION, MODEL: GEMINI_MODEL } = SUMMARY;
+const {
+  POLL_MS,
+  BATCH_LIMIT,
+  STALE_MIN,
+  VERTEX_LOCATION,
+  MODEL: GEMINI_MODEL,
+  SHORT_TRANSCRIPT_MAX_CHARS,
+} = SUMMARY;
 
 let isCycleRunning = false;
 
 // Поля, нужные для саммари
 const SELECT_FIELDS =
-  "id, entry_id, direction, manager_name, client_phone, call_started_at, call_answered_at, transcript, transcript_status, summary, summary_status, summary_telegram_sent_at";
+  "id, entry_id, direction, manager_name, client_phone, call_started_at, call_answered_at, transcript, transcript_status, summary, summary_status, summary_model, summary_telegram_sent_at";
+
+const RAW_SHORT_MODEL = "raw-short";
+
+/** Короткая расшифровка → без Gemini: стандартная пометка + дословный диалог. */
+function buildRawShortSummary(transcript) {
+  const dialog = (transcript || "").trim();
+  return `В расшифровке — отказано. Диалог:\n«${dialog}»`;
+}
+
+function isShortTranscript(transcript) {
+  const len = (transcript || "").trim().length;
+  return len > 0 && len <= SHORT_TRANSCRIPT_MAX_CHARS;
+}
 
 // Контекст конкретного звонка + расшифровка → user prompt.
 function buildUserPrompt(row) {
@@ -47,21 +67,6 @@ function buildGeminiUrl(projectId, location, model) {
   return `https://${location}-aiplatform.googleapis.com${path}`;
 }
 
-// Gemini 2.5 Flash: thinking-токены считаются в maxOutputTokens → обрезанный текст.
-// Для простого саммари thinking не нужен.
-function looksIncompleteSummary(text, transcript) {
-  const t = (text || "").trim();
-  if (t.length < 80) return true;
-  if (!/[.!?]$/.test(t)) return true;
-  const src = transcript || "";
-  const hasSizes = /\d{2,4}\s*[x×х]\s*\d{2,4}|\d{2,4}\s+\d{2,4}/i.test(src);
-  const hasProduct = /штор|жалюз|рулон|римск|карниз/i.test(src);
-  if (hasSizes && !/размер|\d{2,4}/i.test(t)) return true;
-  if (hasProduct && !/штор|жалюз|рулон|карниз/i.test(t)) return true;
-  if (src.length > 120 && !t.includes("Детали:")) return true;
-  return false;
-}
-
 function extractSummaryText(resp) {
   const cand = resp.data?.candidates?.[0];
   const text = cand?.content?.parts?.map((p) => p.text || "").join("").trim();
@@ -70,7 +75,7 @@ function extractSummaryText(resp) {
   return { text: text || "", finishReason, usage };
 }
 
-// Запрос к Gemini, возвращает текст саммари.
+// Запрос к Gemini, возвращает текст саммари как есть (без пост-валидаторов).
 async function generateSummary(row) {
   const client = await getAuthClient();
   const projectId = getCredentials().project_id;
@@ -91,75 +96,112 @@ async function generateSummary(row) {
   const resp = await client.request({ url, method: "POST", data: body, timeout: 60000 });
   const { text, finishReason, usage } = extractSummaryText(resp);
 
-  if (finishReason === "MAX_TOKENS" || looksIncompleteSummary(text, row.transcript)) {
+  if (finishReason === "MAX_TOKENS") {
     console.warn(
-      `⚠️ Саммари ${row.entry_id}: неполный ответ (finish=${finishReason}, ${text.length} симв., thoughts=${usage.thoughtsTokenCount || 0})`
+      `⚠️ Саммари ${row.entry_id}: finish=MAX_TOKENS (${text.length} симв., thoughts=${usage.thoughtsTokenCount || 0}) — сохраняем что есть`,
     );
-    return { text: "", finishReason, usage };
   }
 
   return { text, finishReason, usage };
 }
 
-// Саммари одной строки.
-//
-// Как и в transcription.js: все записи гейтятся direction=1, чтобы позднее
-// пришедший summary (определивший звонок как исходящий) не мог быть перезаписан
-// результатом, который был запущен, когда направление ещё не было известно.
-async function summarizeRow(row) {
+/**
+ * @param {object} row
+ * @param {string} text
+ * @param {string} model
+ * @param {{ force?: boolean }} [opts]
+ */
+async function saveSummaryDone(row, text, model, opts = {}) {
+  const force = Boolean(opts.force);
+  const { id, entry_id } = row;
+  let q = supabase
+    .from("mango_calls")
+    .update({
+      summary: text,
+      summary_status: "done",
+      summary_model: model,
+      summary_error: null,
+    })
+    .eq("id", id);
+  if (!force) q = q.eq("direction", 1);
+  const { data: updated } = await q.select("id");
+
+  if (!updated || updated.length === 0) {
+    console.log(`⏭️ Саммари ${entry_id}: звонок оказался исходящим, результат отброшен (Telegram не шлём)`);
+    return false;
+  }
+
+  // Telegram только для входящих (sendSummaryToTelegram сам режет direction≠1)
+  sendSummaryToTelegram({
+    ...row,
+    summary: text,
+    summary_status: "done",
+    summary_model: model,
+  }).catch((e) => console.error(`⚠️ Telegram после саммари ${entry_id}:`, e.message));
+
+  return true;
+}
+
+/**
+ * @param {object} row
+ * @param {{ force?: boolean }} [opts]
+ */
+async function summarizeRow(row, opts = {}) {
+  const force = Boolean(opts.force);
   const { id, entry_id } = row;
 
-  await supabase
+  let processingQ = supabase
     .from("mango_calls")
     .update({ summary_status: "processing", summary_error: null })
-    .eq("id", id)
-    .eq("direction", 1);
+    .eq("id", id);
+  if (!force) processingQ = processingQ.eq("direction", 1);
+  await processingQ;
 
   try {
-    const { text, finishReason } = await generateSummary(row);
-
-    if (!text) {
-      await supabase
-        .from("mango_calls")
-        .update({
-          summary_status: "failed",
-          summary_error: finishReason === "MAX_TOKENS" ? "обрезано лимитом токенов" : "неполный или пустой ответ",
-        })
-        .eq("id", id)
-        .eq("direction", 1);
+    // Короткие звонки: нейросеть не трогаем, в CRM/TG — сырой диалог.
+    if (isShortTranscript(row.transcript)) {
+      const text = buildRawShortSummary(row.transcript);
+      const ok = await saveSummaryDone(row, text, RAW_SHORT_MODEL, { force });
+      if (ok) {
+        console.log(
+          `📝 Саммари raw-short (без Gemini): ${entry_id} (${(row.transcript || "").trim().length} симв. расшифровки)${force ? " [force]" : ""}`,
+        );
+      }
       return;
     }
 
-    const { data: updated } = await supabase
-      .from("mango_calls")
-      .update({
-        summary: text || "",
-        summary_status: text ? "done" : "skipped",
-        summary_model: GEMINI_MODEL,
-        summary_error: text ? null : "пустой ответ модели",
-      })
-      .eq("id", id)
-      .eq("direction", 1)
-      .select("id");
+    const { text } = await generateSummary(row);
 
-    if (!updated || updated.length === 0) {
-      console.log(`⏭️ Саммари ${entry_id}: звонок оказался исходящим, результат отброшен (Telegram не шлём)`);
+    // Пустой ответ Gemini — один шанс: в summary кладём расшифровку, не failed.
+    if (!text || !text.trim()) {
+      const fallback = buildRawShortSummary(row.transcript);
+      const ok = await saveSummaryDone(row, fallback, RAW_SHORT_MODEL, { force });
+      if (ok) {
+        console.log(
+          `📝 Саммари raw-short (пустой ответ Gemini): ${entry_id}${force ? " [force]" : ""}`,
+        );
+      }
       return;
     }
 
-    console.log(`📝 Саммари готово: ${entry_id} (${text.length} симв.)`);
-
-    sendSummaryToTelegram({ ...row, summary: text, summary_status: "done" }).catch((e) =>
-      console.error(`⚠️ Telegram после саммари ${entry_id}:`, e.message)
-    );
+    const ok = await saveSummaryDone(row, text, GEMINI_MODEL, { force });
+    if (ok) console.log(`📝 Саммари готово: ${entry_id} (${text.length} симв.)${force ? " [force]" : ""}`);
   } catch (e) {
+    // Сеть/API упали — всё равно один шанс: расшифровка в summary, не вечный failed.
     const msg = e.response?.data ? JSON.stringify(e.response.data).slice(0, 500) : String(e.message);
     console.error(`❌ Саммари ${entry_id}:`, msg);
-    await supabase
-      .from("mango_calls")
-      .update({ summary_status: "failed", summary_error: msg.slice(0, 500) })
-      .eq("id", id)
-      .eq("direction", 1);
+    const fallback = buildRawShortSummary(row.transcript);
+    const ok = await saveSummaryDone(row, fallback, RAW_SHORT_MODEL, { force });
+    if (!ok) {
+      let failQ = supabase
+        .from("mango_calls")
+        .update({ summary_status: "failed", summary_error: msg.slice(0, 500) })
+        .eq("id", id);
+      if (!force) failQ = failQ.eq("direction", 1);
+      await failQ;
+    } else {
+      console.log(`📝 Саммари raw-short (fallback после ошибки): ${entry_id}${force ? " [force]" : ""}`);
+    }
   }
 }
 
@@ -211,8 +253,12 @@ async function pollOnce() {
   }
 }
 
-// Мгновенный запуск саммари по entry_id (цепочка сразу после расшифровки).
-async function triggerSummary(entryId) {
+/**
+ * @param {string} entryId
+ * @param {{ force?: boolean }} [opts]
+ */
+async function triggerSummary(entryId, opts = {}) {
+  const force = Boolean(opts.force);
   if (!entryId) return { status: "no_entry_id" };
   if (!hasCredentials()) return { status: "disabled" };
 
@@ -227,15 +273,16 @@ async function triggerSummary(entryId) {
     return { status: "error", message: error.message };
   }
   if (!data) return { status: "not_found" };
-  // Исходящие звонки не саммаризируем — только храним аудио для истории.
-  if (data.direction === 2) return { status: "skipped_outgoing" };
+  if (!force && data.direction === 2) return { status: "skipped_outgoing" };
   if (data.transcript_status !== "done") return { status: "transcript_not_ready" };
-  if (data.summary_status === "done") {
-    sendSummaryToTelegram({ ...data, summary: data.summary }).catch(() => {});
+  if (data.summary_status === "done" && (data.summary || "").trim()) {
+    if (!force) {
+      sendSummaryToTelegram({ ...data, summary: data.summary }).catch(() => {});
+    }
     return { status: "already_done" };
   }
   if (data.summary_status === "processing") return { status: "already_processing" };
-  if (data.summary_status === "skipped") return { status: "already_skipped" };
+  if (!force && data.summary_status === "skipped") return { status: "already_skipped" };
 
   if (!data.transcript || !data.transcript.trim()) {
     await supabase
@@ -245,7 +292,7 @@ async function triggerSummary(entryId) {
     return { status: "skipped_empty" };
   }
 
-  await summarizeRow(data);
+  await summarizeRow(data, { force });
   return { status: "started", entry_id: entryId };
 }
 

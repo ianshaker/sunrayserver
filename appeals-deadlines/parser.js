@@ -8,13 +8,10 @@
 
 const { hasCredentials } = require("../call-ai/googleAuth");
 const { generateContent } = require("../call-ai/geminiClient");
-const { SUMMARY } = require("../call-ai/config");
+const { GEMINI_MODEL, VERTEX_LOCATION } = require("./config");
 const { getMskTodayDate } = require("./queries");
 const { normalizeInfoUpdates, hasAnyInfoUpdate } = require("./infoUpdates");
 const { getNeedsDeadlineResolutionReason } = require("./messages");
-
-const GEMINI_MODEL = SUMMARY.MODEL;
-const VERTEX_LOCATION = SUMMARY.VERTEX_LOCATION;
 
 const ACTIONS = ["reschedule", "reject", "loading", "info_added"];
 const GEMINI_TIMEOUT_MS = parseInt(process.env.DEADLINE_PARSER_GEMINI_TIMEOUT_MS || "45000", 10);

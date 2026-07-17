@@ -21,14 +21,25 @@ module.exports = {
       : null,
   },
 
-  // --- Саммари (Gemini / Vertex AI) ---
+  // --- Саммари нейро-сводок звонков (Gemini / Vertex AI) ---
+  // Только call-ai (summary + ask по звонкам). НЕ трогаем чужие env:
+  //   DAILY_HIGHLIGHTS_* | ASSISTANT_* | SCHEDULE_AI_* | TASKS_* |
+  //   APPEALS_DEADLINES_* | LOADING_DEADLINES_* | GOOGLE_STT_MODEL
+  //
+  // Выбор модели (как у home-highlights):
+  //   CALL_AI_GEMINI_MODEL      — id модели (дефолт: gemini-3-flash-preview, не Pro)
+  //   CALL_AI_VERTEX_LOCATION   — endpoint (для Gemini 3 Flash — global)
   SUMMARY: {
     POLL_MS: 60000, // fallback poll (основной путь — цепочка после STT)
     BATCH_LIMIT: 3,
     STALE_MIN: 15,
-    // Agent Platform (июнь 2026): gemini-2.0-flash снят с regional endpoints.
-    // Для us-central1: gemini-2.5-flash. Переопределение: GEMINI_MODEL, VERTEX_LOCATION.
-    VERTEX_LOCATION: process.env.VERTEX_LOCATION || "us-central1",
-    MODEL: process.env.GEMINI_MODEL || "gemini-2.5-flash",
+    VERTEX_LOCATION: process.env.CALL_AI_VERTEX_LOCATION || "global",
+    MODEL: process.env.CALL_AI_GEMINI_MODEL || "gemini-3-flash-preview",
+    // Короче этого — Gemini не зовём: в summary/TG кладём сырой диалог.
+    // Переопределение: SUMMARY_SHORT_TRANSCRIPT_MAX_CHARS.
+    SHORT_TRANSCRIPT_MAX_CHARS: parseInt(
+      process.env.SUMMARY_SHORT_TRANSCRIPT_MAX_CHARS || "200",
+      10,
+    ),
   },
 };

@@ -108,28 +108,30 @@ async function recognize(audioBuffer, objectName) {
   }
 }
 
-// Расшифровываем одну строку звонка.
-//
-// Все записи в БД гейтятся условием direction=1: если между select и записью
-// результата придёт summary, определивший звонок как исходящий (direction=2,
-// transcript_status='skipped' — см. saveCallSummary), эти UPDATE просто не
-// найдут строку по direction=1 и ничего не перезапишут — 'skipped' останется.
-// Актуально, т.к. Google STT может идти до OP_TIMEOUT_MS (по умолчанию 20 мин).
-async function transcribeRow(row) {
+/**
+ * Расшифровываем одну строку.
+ * @param {object} row
+ * @param {{ force?: boolean }} [opts]
+ *   force=true — ручной запрос из CRM (в т.ч. исходящие): UPDATE только по id,
+ *   без гейта direction=1; дальше triggerSummary(..., { force: true }).
+ */
+async function transcribeRow(row, opts = {}) {
+  const force = Boolean(opts.force);
   const { id, entry_id, storage_bucket, storage_path } = row;
 
-  await supabase
+  let processingQ = supabase
     .from("mango_calls")
     .update({ transcript_status: "processing", transcript_error: null })
-    .eq("id", id)
-    .eq("direction", 1);
+    .eq("id", id);
+  if (!force) processingQ = processingQ.eq("direction", 1);
+  await processingQ;
 
   try {
     const buffer = await downloadAudio(storage_bucket, storage_path);
     const objectName = `stt/${String(entry_id).replace(/[^A-Za-z0-9._-]/g, "_")}-${Date.now()}.mp3`;
     const text = await recognize(buffer, objectName);
 
-    const { data: updated } = await supabase
+    let doneQ = supabase
       .from("mango_calls")
       .update({
         transcript: text || "",
@@ -137,40 +139,42 @@ async function transcribeRow(row) {
         transcript_model: MODEL_LABEL,
         transcript_error: text ? null : "пустой результат распознавания",
       })
-      .eq("id", id)
-      .eq("direction", 1)
-      .select("id");
+      .eq("id", id);
+    if (!force) doneQ = doneQ.eq("direction", 1);
+    const { data: updated } = await doneQ.select("id");
 
     if (!updated || updated.length === 0) {
       console.log(`⏭️ Расшифровка ${entry_id}: звонок оказался исходящим, результат отброшен`);
       return;
     }
 
-    console.log(`✅ Расшифровка готова: ${entry_id} (${text.length} симв.)`);
+    console.log(`✅ Расшифровка готова: ${entry_id} (${text.length} симв.)${force ? " [force]" : ""}`);
 
-    // Вторая ступень: сразу причёсываем в саммари (ленивый require — без циклической зависимости).
     if (text) {
       try {
         const { triggerSummary } = require("./summarization");
-        triggerSummary(entry_id).catch((e) => console.error("⚠️ triggerSummary:", e.message));
+        triggerSummary(entry_id, { force }).catch((e) =>
+          console.error("⚠️ triggerSummary:", e.message),
+        );
       } catch (e) {
         console.error("⚠️ summary chain:", e.message);
       }
     }
   } catch (e) {
     console.error(`❌ Расшифровка ${entry_id}:`, e.message);
-    await supabase
+    let failQ = supabase
       .from("mango_calls")
       .update({
         transcript_status: "failed",
         transcript_error: String(e.message).slice(0, 500),
       })
-      .eq("id", id)
-      .eq("direction", 1);
+      .eq("id", id);
+    if (!force) failQ = failQ.eq("direction", 1);
+    await failQ;
   }
 }
 
-// Fallback-поллинг очереди.
+// Fallback-поллинг очереди (только входящие).
 async function pollOnce() {
   if (isCycleRunning) return;
   isCycleRunning = true;
@@ -209,8 +213,12 @@ async function pollOnce() {
   }
 }
 
-// Мгновенный запуск расшифровки по entry_id (push с Selectel после сохранения mp3).
-async function triggerTranscription(entryId) {
+/**
+ * @param {string} entryId
+ * @param {{ force?: boolean }} [opts]
+ */
+async function triggerTranscription(entryId, opts = {}) {
+  const force = Boolean(opts.force);
   if (!entryId) return { status: "no_entry_id" };
   if (!hasCredentials()) return { status: "disabled" };
 
@@ -225,16 +233,19 @@ async function triggerTranscription(entryId) {
     return { status: "error", message: error.message };
   }
   if (!data) return { status: "not_found" };
-  // Исходящие звонки не расшифровываем — только храним аудио для истории.
-  if (data.direction === 2) return { status: "skipped_outgoing" };
+  if (!force && data.direction === 2) return { status: "skipped_outgoing" };
   if (data.recording_status !== "ready" || !data.storage_path) {
     return { status: "recording_not_ready" };
   }
-  if (data.transcript_status === "done") return { status: "already_done" };
-  if (data.transcript_status === "processing") return { status: "already_processing" };
-  if (data.transcript_status === "skipped") return { status: "already_skipped" };
+  if (!force) {
+    if (data.transcript_status === "done") return { status: "already_done" };
+    if (data.transcript_status === "processing") return { status: "already_processing" };
+    if (data.transcript_status === "skipped") return { status: "already_skipped" };
+  } else {
+    if (data.transcript_status === "processing") return { status: "already_processing" };
+  }
 
-  await transcribeRow(data);
+  await transcribeRow(data, { force });
   return { status: "started", entry_id: entryId };
 }
 

@@ -2,11 +2,12 @@
 // assistant — конфигурация AI-роутера входящих сообщений Telegram.
 // ============================================================================
 
-const { SUMMARY } = require("../call-ai/config");
-
+// Только assistant. НЕ трогаем CALL_AI_* / DAILY_HIGHLIGHTS_* / другие отделы.
+// Было через call-ai SUMMARY (= gemini-2.5-flash @ us-central1).
+//   ASSISTANT_GEMINI_MODEL / ASSISTANT_VERTEX_LOCATION
 module.exports = {
-  GEMINI_MODEL: SUMMARY.MODEL,
-  VERTEX_LOCATION: SUMMARY.VERTEX_LOCATION,
+  GEMINI_MODEL: process.env.ASSISTANT_GEMINI_MODEL || "gemini-2.5-flash",
+  VERTEX_LOCATION: process.env.ASSISTANT_VERTEX_LOCATION || "us-central1",
   CONFIDENCE_THRESHOLD: parseFloat(process.env.ASSISTANT_CONFIDENCE_THRESHOLD || "0.5"),
   MAX_INPUT_CHARS: parseInt(process.env.ASSISTANT_MAX_INPUT_CHARS || "2000", 10),
   /** К кому обращаться за подключением чата / прав бота. */

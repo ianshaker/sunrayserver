@@ -5,13 +5,9 @@
 
 const { hasCredentials } = require("../call-ai/googleAuth");
 const { generateContent } = require("../call-ai/geminiClient");
-const { SUMMARY } = require("../call-ai/config");
 const { getMskTodayDate } = require("./queries");
-const { QUERY_LIST_CAP } = require("./config");
+const { QUERY_LIST_CAP, GEMINI_MODEL, VERTEX_LOCATION } = require("./config");
 const { buildExtractPrompt, buildExtractUserPrompt } = require("./queryPrompts");
-
-const GEMINI_MODEL = SUMMARY.MODEL;
-const VERTEX_LOCATION = SUMMARY.VERTEX_LOCATION;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 function parseModelJson(raw) {

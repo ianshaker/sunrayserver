@@ -2,6 +2,12 @@
 // Конфиг модуля «Дедлайны входящих».
 // ============================================================================
 
+// Только appeals-deadlines. НЕ трогаем CALL_AI_* / DAILY_HIGHLIGHTS_* / другие отделы.
+// Было через call-ai SUMMARY (= gemini-2.5-flash @ us-central1).
+//   APPEALS_DEADLINES_GEMINI_MODEL / APPEALS_DEADLINES_VERTEX_LOCATION
+const GEMINI_MODEL = process.env.APPEALS_DEADLINES_GEMINI_MODEL || "gemini-2.5-flash";
+const VERTEX_LOCATION = process.env.APPEALS_DEADLINES_VERTEX_LOCATION || "us-central1";
+
 /** Telegram-чат для уведомлений о дедлайнах. */
 const DEADLINE_CHAT_ID = -1002585521272;
 
@@ -45,6 +51,8 @@ const QUERY_LIST_CAP = 10;
 const QUERY_SEND_GAP_MS = 450;
 
 module.exports = {
+  GEMINI_MODEL,
+  VERTEX_LOCATION,
   DEADLINE_CHAT_ID,
   DEADLINE_THREAD_ID,
   MSK_OFFSET_HOURS,
