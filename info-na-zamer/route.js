@@ -6,12 +6,16 @@
 // Контракт ответа (CRM ждёт sent === true перед закрытием заявки):
 //   200 { status: "ok", sent: true, messageId?, ... }
 //   4xx/5xx { status: "error", sent: false, error }
+//
+// Если в body передан eventId — после sendMessage пишем tg_message_link
+// в eventsnew (кроме updateType=cancelled). Ошибка БД не ломает sent:true.
 // ============================================================================
 
 const { LOADING_CHAT_ID, MASTER_CHAT_IDS } = require("./config");
 const { formatDate, formatTimeRange } = require("./format");
 const { resolveEventLabels } = require("./labels");
 const { buildClientCard, buildCancelMessage } = require("./messages");
+const { persistEventTgMessageLink } = require("./persistTgLink");
 
 function fail(reply, code, error) {
   return reply.code(code).send({ status: "error", sent: false, error });
@@ -40,6 +44,7 @@ function registerZamerRoute(fastify, telegramBot) {
         updateType,
         oldMaster,
         reason,
+        eventId,
       } = request.body || {};
 
       const normalizedName = masterName ? String(masterName).trim().toUpperCase() : null;
@@ -80,9 +85,11 @@ function registerZamerRoute(fastify, telegramBot) {
           header: `ОБНОВЛЕНИЕ ПО ${labels.update} ${appealNumber || ""}`.trim(),
         });
         const sentMsg = await telegramBot.sendMessage(chatId, msg);
+        const messageId = sentMsg?.message_id ?? null;
+        await persistEventTgMessageLink(eventId, chatId, messageId);
         return ok(reply, {
           chatId,
-          messageId: sentMsg?.message_id ?? null,
+          messageId,
           type: "update",
           eventType: labels.kind,
         });
@@ -119,10 +126,12 @@ function registerZamerRoute(fastify, telegramBot) {
           header: `ЗАЯВКА НА ${labels.request} ${appealNumber || ""}`.trim(),
         });
         const sentMsg = await telegramBot.sendMessage(newChatId, msg);
+        const messageId = sentMsg?.message_id ?? null;
+        await persistEventTgMessageLink(eventId, newChatId, messageId);
 
         return ok(reply, {
           chatId: newChatId,
-          messageId: sentMsg?.message_id ?? null,
+          messageId,
           cancelMessageId,
           type: "reassigned",
           eventType: labels.kind,
@@ -186,10 +195,12 @@ function registerZamerRoute(fastify, telegramBot) {
       }
 
       const sentMsg = await telegramBot.sendMessage(chatId, msg);
+      const messageId = sentMsg?.message_id ?? null;
+      await persistEventTgMessageLink(eventId, chatId, messageId);
 
       return ok(reply, {
         chatId,
-        messageId: sentMsg?.message_id ?? null,
+        messageId,
         type: isLoading ? "loading" : labels.kind,
         master: masterName || null,
         eventType: labels.kind,

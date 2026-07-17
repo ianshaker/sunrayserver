@@ -1,5 +1,7 @@
 /**
- * sendPhoto: JPEG графика мастера в личный чат.
+ * Telegram API helpers для графика мастера:
+ * - sendPhoto (JPEG)
+ * - sendMessage (отсчеки 1, 2, 3… reply на карточки)
  * multipart без пакета form-data (как installation-queue).
  */
 
@@ -116,6 +118,39 @@ async function sendMasterSchedulePhoto({ chatId, caption, jpegBuffer }) {
   return { messageId: result?.message_id ?? null };
 }
 
+/**
+ * @param {{
+ *   chatId: number,
+ *   text: string,
+ *   replyToMessageId?: number|null,
+ * }}
+ * @returns {Promise<{ messageId: number|null }>}
+ */
+async function sendTextMessage({ chatId, text, replyToMessageId }) {
+  if (!chatId) throw new Error("chat_id не задан");
+  if (text == null || String(text).trim() === "") {
+    throw new Error("text обязателен");
+  }
+
+  const parts = [
+    { kind: "field", name: "chat_id", value: String(chatId) },
+    { kind: "field", name: "text", value: String(text) },
+    { kind: "field", name: "allow_sending_without_reply", value: "true" },
+  ];
+  if (replyToMessageId != null && Number.isFinite(Number(replyToMessageId))) {
+    parts.push({
+      kind: "field",
+      name: "reply_to_message_id",
+      value: String(replyToMessageId),
+    });
+  }
+
+  const { boundary, body } = buildMultipart(parts);
+  const result = await postTelegram("sendMessage", body, boundary);
+  return { messageId: result?.message_id ?? null };
+}
+
 module.exports = {
   sendMasterSchedulePhoto,
+  sendTextMessage,
 };

@@ -1,12 +1,14 @@
 // ============================================================================
-// POST /events/master-schedule — JPEG графика мастера в его TG-чат.
+// POST /events/master-schedule — JPEG графика мастера в его TG-чат,
+// затем отсчеки 1, 2, 3… reply на карточки (body.checkmarks).
 //
-// Body: { masterName, dateLabel, imageBase64 }
-// Ответ: { status: "ok", sent: true, messageId } | { status: "error", sent: false, error }
+// Body: { masterName, dateLabel, imageBase64, checkmarks?: [{ tg_message_link }] }
+// Ответ: { status: "ok", sent: true, messageId, checkmarks } | { status: "error", ... }
 // ============================================================================
 
 const { MASTER_CHAT_IDS } = require("./config");
 const { sendMasterSchedulePhoto } = require("./send");
+const { sendScheduleCheckmarks } = require("./checkmarks");
 
 function fail(reply, code, error) {
   return reply.code(code).send({ status: "error", sent: false, error });
@@ -33,7 +35,8 @@ function decodeJpegBase64(imageBase64) {
 function registerMasterScheduleRoute(fastify) {
   fastify.post("/events/master-schedule", async (request, reply) => {
     try {
-      const { masterName, dateLabel, imageBase64 } = request.body || {};
+      const { masterName, dateLabel, imageBase64, checkmarks } =
+        request.body || {};
 
       const normalizedName = masterName
         ? String(masterName).trim().toUpperCase()
@@ -66,7 +69,7 @@ function registerMasterScheduleRoute(fastify) {
         : `График · ${displayName}`;
 
       console.log(
-        `[master-schedule] → ${normalizedName} chat=${chatId} jpeg=${jpegBuffer.length}b`,
+        `[master-schedule] → ${normalizedName} chat=${chatId} jpeg=${jpegBuffer.length}b checkmarks=${Array.isArray(checkmarks) ? checkmarks.length : 0}`,
       );
 
       const { messageId } = await sendMasterSchedulePhoto({
@@ -79,7 +82,21 @@ function registerMasterScheduleRoute(fastify) {
         `[master-schedule] ✅ ${normalizedName} message_id=${messageId ?? "—"}`,
       );
 
-      return ok(reply, { chatId, messageId, type: "master_schedule" });
+      const checkmarkStats = await sendScheduleCheckmarks({
+        chatId,
+        checkmarks: Array.isArray(checkmarks) ? checkmarks : [],
+      });
+
+      console.log(
+        `[master-schedule] checkmarks sent=${checkmarkStats.sent} skipped=${checkmarkStats.skipped} failed=${checkmarkStats.failed}`,
+      );
+
+      return ok(reply, {
+        chatId,
+        messageId,
+        type: "master_schedule",
+        checkmarks: checkmarkStats,
+      });
     } catch (err) {
       console.error("[master-schedule] error:", err);
       return fail(

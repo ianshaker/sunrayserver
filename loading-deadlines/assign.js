@@ -8,6 +8,7 @@ const { getTelegramBot } = require("../tgwebhook/bot");
 const { MASTER_CHAT_IDS } = require("../info-na-zamer/config");
 const { buildClientCard } = require("../info-na-zamer/messages");
 const { formatDate, formatTimeRange } = require("../info-na-zamer/format");
+const { persistEventTgMessageLink } = require("../info-na-zamer/persistTgLink");
 const { checkMasterAvailability } = require("./availability");
 const { validateEventAddressForAssign } = require("./address");
 const { insertFuelRecord, deleteFuelRecordByAppeal } = require("./fuel");
@@ -91,6 +92,7 @@ async function sendZamerTelegram(event, { master, date, startTime, endTime, clea
   console.log(
     `[loading-deadlines/assign] TG → ${tgKey} chat=${chatId} msg_id=${sent?.message_id}`,
   );
+  await persistEventTgMessageLink(event.id, chatId, sent?.message_id);
   return sent;
 }
 
