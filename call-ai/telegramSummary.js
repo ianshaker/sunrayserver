@@ -1,10 +1,10 @@
 // ============================================================================
-// Telegram: AI-сводка звонка в чат входящих (тот же бот/чат, что mango.calls.new.js).
+// Telegram: AI-сводка звонка в чат входящих (тот же бот/чат, что mango.calls.new/).
 // ============================================================================
 
 const { supabase } = require("./supabaseClient");
 
-// mango.calls.new.js → TELEGRAM_CHAT_ID (чат «ВХОДЯЩИЕ»)
+// mango.calls.new/constants.js → TELEGRAM_CHAT_ID (чат «ВХОДЯЩИЕ»)
 const TELEGRAM_CHAT_ID = -1002582438853;
 const TELEGRAM_BATCH_LIMIT = 5;
 

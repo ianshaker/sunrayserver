@@ -3,7 +3,7 @@
 //   POST /api/mango-calls/delete     — Bearer superadmin, чистка строк без файла
 //   POST /api/mango-calls/request-ai — Bearer authenticated, ручной STT→саммари
 //
-// НЕ часть call-ai (воркеры) и не webhook mango.calls.new.js.
+// НЕ часть call-ai (воркеры) и не webhook mango.calls.new/.
 //
 // Подключение в server.js:
 //   const { registerMangoCallsRoutes } = require("./mango-calls");
