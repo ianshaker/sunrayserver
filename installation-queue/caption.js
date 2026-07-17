@@ -42,28 +42,25 @@ function formatFactoryLines(factorySummary) {
     const place = m[5] ? escapeHtml(m[5].trim()) : "";
     const ready = m[6] ? escapeHtml(m[6].trim()) : "";
 
-    const head = [`<b>${n}.</b> ${name}`, num ? `(${num})` : "", qty]
+    const head = [`${n}. ${name}`, num ? `(${num})` : "", qty]
       .filter(Boolean)
       .join(" ");
     const meta = [place, ready ? `до ${ready}` : ""].filter(Boolean).join(" · ");
-    return meta ? `${head}\n${meta}` : head;
+    return meta ? `${head} · ${meta}` : head;
   });
 }
 
 /**
- * HTML caption (≤1024). Classic Bot API — no tables in caption.
- * Uses bold / code / blockquote (supported today).
+ * HTML caption under first album photo (≤1024).
+ * Classic parse_mode=HTML only — no Rich Message tables here.
  */
 function formatInstallationCaption(data) {
   const {
     dogovorNumber,
     appealNumber,
-    city,
-    phone,
     installationSum,
     factorySummary,
     queueStatus,
-    documents,
     comments,
   } = data;
 
@@ -72,24 +69,18 @@ function formatInstallationCaption(data) {
   let appeal = "";
   if (appealNumber) {
     const normalized = String(appealNumber).replace(/^#+/, "#");
-    appeal = ` (${escapeHtml(normalized)})`;
+    appeal = ` ${escapeHtml(normalized)}`;
   }
 
-  const factoryBlock = formatFactoryLines(factorySummary).join("\n\n");
+  const factoryQuotes = formatFactoryLines(factorySummary)
+    .map((line) => `<blockquote>${line}</blockquote>`)
+    .join("\n");
 
   const parts = [
-    `<b>📦 Договор ${number}</b>${appeal}${emoji ? ` ${emoji}` : ""}`,
-    `${escapeHtml(city || "Не указан")} · <code>${escapeHtml(phone || "Не указан")}</code>`,
-    `<blockquote>Сумма установки: <b>${escapeHtml(installationSum || "Не указана")}</b></blockquote>`,
-    `<b>Фабрики</b>\n<blockquote>${factoryBlock}</blockquote>`,
+    `<b>МОНТАЖ ${number}${appeal}</b>${emoji ? ` ${emoji}` : ""}`,
+    escapeHtml(installationSum || "Не указана"),
+    factoryQuotes,
   ];
-
-  const docs = documents && String(documents).trim();
-  if (docs && docs.toLowerCase() !== "нет") {
-    parts.push(
-      `<b>Документы</b>\n<blockquote>${escapeHtml(docs)}</blockquote>`,
-    );
-  }
 
   const note = comments && String(comments).trim();
   if (note) {
