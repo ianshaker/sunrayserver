@@ -69,6 +69,9 @@ const { registerTaskRoute, startTaskReminderWorker, startDirectoryRefresh } = re
 // --- Импорт функции для готовности --- //
 const { registerReadinessRoute } = require("./readiness");
 
+// --- Скан договора → монтажный чат (PDF + caption) --- //
+const { registerInstallationQueueRoute } = require("./installation-queue");
+
 // --- Импорт функции для удаления дубликатов (только импорт, не запуск) --- //
 const removeDuplicates = require("./remove_duplicates"); // пусть будет, даже если сейчас не вызывается
 
@@ -161,6 +164,9 @@ registerTaskRoute(fastify, telegramBot);
 
 // --- Регистрация маршрута готовности (добавить после других register) --- //
 registerReadinessRoute(fastify, telegramBot);
+
+// --- Скан договора в монтажный чат: POST /events/installation-queue --- //
+registerInstallationQueueRoute(fastify, telegramBot);
 
 // --- Подключаем push-маршруты (ВАЖНО: после объявления fastify, до listen!) --- //
 registerPushRoutes(fastify);
