@@ -6,7 +6,8 @@
 const { parseTgMessageLink } = require("../info-na-zamer/tgMessageLink");
 const { sendTextMessage } = require("./send");
 
-const DELAY_MS = 100;
+/** Пауза между отсчеками в одном чате — ~1 с, чтобы не ловить flood/429 от Telegram. */
+const DELAY_MS = 1000;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
