@@ -2,9 +2,8 @@
 // Расшифровка записей разговоров через Google Speech-to-Text.
 //
 // Работает на Render (US): связь US → Google стабильна.
-// Берёт звонки, у которых запись готова (recording_status='ready'),
-// а расшифровки ещё нет (transcript_status='pending'), скачивает mp3 из
-// Supabase Storage, шлёт в Google STT и пишет текст обратно.
+// Основной путь: Selectel отдаёт mp3 на /internal/recording-upload → Buffer → STT.
+// CRM request-ai / safety-sweep: скачивание из Supabase Storage.
 // ============================================================================
 
 const { supabase } = require("./supabaseClient");
@@ -12,6 +11,14 @@ const { hasCredentials, getSpeechClient } = require("./googleAuth");
 const { CALL_RECORDINGS_BUCKET, STT } = require("./config");
 const { detectMp3SampleRate } = require("./mp3SampleRate");
 const { getBucketName, ensureBucket, uploadObject, deleteObject } = require("./gcsStorage");
+
+/** Summary уже дописал строку — иначе default direction=1 на заготовке = ложный STT исходящих. */
+function hasSummaryMeta(row) {
+  if (!row) return false;
+  if (row.call_started_at) return true;
+  if (row.client_phone_digits && String(row.client_phone_digits).trim()) return true;
+  return false;
+}
 
 const {
   POLL_MS,
@@ -21,13 +28,14 @@ const {
   LANGUAGE_CODE,
   MODEL: STT_MODEL,
   SAMPLE_RATE_HERTZ: STT_SAMPLE_RATE,
+  SYNC_MAX_SECONDS,
+  LONGRUNNING_POLL_MS,
 } = STT;
 const MODEL_LABEL = `google-stt-v1-${STT_MODEL}-${LANGUAGE_CODE}`;
 
 let isCycleRunning = false;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// Скачиваем mp3 из Supabase Storage.
 async function downloadAudio(bucket, path) {
   const { data, error } = await supabase.storage
     .from(bucket || CALL_RECORDINGS_BUCKET)
@@ -38,8 +46,7 @@ async function downloadAudio(bucket, path) {
   }
 
   const arrayBuf = await data.arrayBuffer();
-  const buffer = Buffer.from(arrayBuf);
-  return buffer;
+  return Buffer.from(arrayBuf);
 }
 
 function buildRecognitionConfig(sampleRateHertz) {
@@ -65,10 +72,28 @@ function collectTranscript(response) {
   return { text, segments: results.length, billed };
 }
 
+/**
+ * Sync Google: лимит 60 с / 10 MB.
+ * talk_seconds из БД предпочтителен; иначе грубая оценка по размеру (8 kHz mono mp3 ≈ 1 КБ/с).
+ */
+function shouldUseSyncRecognize(audioBuffer, talkSeconds) {
+  const maxSec = SYNC_MAX_SECONDS || 60;
+  const t = talkSeconds != null ? Number(talkSeconds) : NaN;
+  if (Number.isFinite(t) && t > 0) {
+    return t < maxSec;
+  }
+  const bytes = audioBuffer?.length || 0;
+  if (bytes <= 0) return true;
+  if (bytes > 9 * 1024 * 1024) return false;
+  // 8 kHz mono mp3 телефонии ≈ 1 КБ/с — грубая оценка без talk_seconds
+  return bytes / 1000 < maxSec;
+}
+
 async function pollOperation(speechApi, opName, detectedRate) {
+  const pollMs = LONGRUNNING_POLL_MS || 5000;
   const startedAt = Date.now();
   while (Date.now() - startedAt < OP_TIMEOUT_MS) {
-    await sleep(3000);
+    await sleep(pollMs);
     const op = await speechApi.operations.get({ name: opName });
     if (op.data.done) {
       if (op.data.error) {
@@ -76,7 +101,7 @@ async function pollOperation(speechApi, opName, detectedRate) {
       }
       const { text, segments, billed } = collectTranscript(op.data.response);
       console.log(
-        `🎙️ STT: ${segments} сегм., billed=${billed || "?"}, rate=${detectedRate}Hz, model=${STT_MODEL}`
+        `🎙️ STT longrunning: ${segments} сегм., billed=${billed || "?"}, rate=${detectedRate}Hz, model=${STT_MODEL}`,
       );
       return text;
     }
@@ -84,13 +109,23 @@ async function pollOperation(speechApi, opName, detectedRate) {
   throw new Error("Таймаут ожидания ответа Google STT");
 }
 
-// Распознавание через GCS URI: inline-аудио у Google ограничено 60 сек,
-// поэтому грузим mp3 во временный бакет и передаём gs:// (до 480 мин).
-async function recognize(audioBuffer, objectName) {
+async function recognizeSync(audioBuffer, detectedRate, config) {
   const speechApi = getSpeechClient();
-  const detectedRate = STT_SAMPLE_RATE || detectMp3SampleRate(audioBuffer) || 8000;
-  const config = buildRecognitionConfig(detectedRate);
+  const res = await speechApi.speech.recognize({
+    requestBody: {
+      config,
+      audio: { content: audioBuffer.toString("base64") },
+    },
+  });
+  const { text, segments, billed } = collectTranscript(res.data);
+  console.log(
+    `🎙️ STT sync: ${segments} сегм., billed=${billed || "?"}, rate=${detectedRate}Hz, model=${STT_MODEL}`,
+  );
+  return text;
+}
 
+async function recognizeLongrunning(audioBuffer, objectName, detectedRate, config) {
+  const speechApi = getSpeechClient();
   const bucket = getBucketName();
   await ensureBucket(bucket);
   const gcsUri = await uploadObject(bucket, objectName, audioBuffer, "audio/mpeg");
@@ -101,7 +136,6 @@ async function recognize(audioBuffer, objectName) {
     });
     const opName = start.data.name;
     if (!opName) throw new Error("Google не вернул имя операции");
-
     return await pollOperation(speechApi, opName, detectedRate);
   } finally {
     await deleteObject(bucket, objectName);
@@ -109,15 +143,35 @@ async function recognize(audioBuffer, objectName) {
 }
 
 /**
- * Расшифровываем одну строку.
+ * @param {Buffer} audioBuffer
+ * @param {string} objectName — имя объекта GCS (только для longrunning)
+ * @param {{ talkSeconds?: number|null }} [opts]
+ */
+async function recognize(audioBuffer, objectName, opts = {}) {
+  const detectedRate = STT_SAMPLE_RATE || detectMp3SampleRate(audioBuffer) || 8000;
+  const config = buildRecognitionConfig(detectedRate);
+  const useSync = shouldUseSyncRecognize(audioBuffer, opts.talkSeconds);
+
+  if (useSync) {
+    console.log(
+      `🎙️ STT путь=sync (talk_seconds=${opts.talkSeconds ?? "?"}, bytes=${audioBuffer.length})`,
+    );
+    return recognizeSync(audioBuffer, detectedRate, config);
+  }
+
+  console.log(
+    `🎙️ STT путь=gcs+longrunning (talk_seconds=${opts.talkSeconds ?? "?"}, bytes=${audioBuffer.length})`,
+  );
+  return recognizeLongrunning(audioBuffer, objectName, detectedRate, config);
+}
+
+/**
  * @param {object} row
- * @param {{ force?: boolean }} [opts]
- *   force=true — ручной запрос из CRM (в т.ч. исходящие): UPDATE только по id,
- *   без гейта direction=1; дальше triggerSummary(..., { force: true }).
+ * @param {{ force?: boolean, audioBuffer?: Buffer }} [opts]
  */
 async function transcribeRow(row, opts = {}) {
   const force = Boolean(opts.force);
-  const { id, entry_id, storage_bucket, storage_path } = row;
+  const { id, entry_id, storage_bucket, storage_path, talk_seconds } = row;
 
   let processingQ = supabase
     .from("mango_calls")
@@ -127,9 +181,12 @@ async function transcribeRow(row, opts = {}) {
   await processingQ;
 
   try {
-    const buffer = await downloadAudio(storage_bucket, storage_path);
+    const buffer =
+      opts.audioBuffer && Buffer.isBuffer(opts.audioBuffer)
+        ? opts.audioBuffer
+        : await downloadAudio(storage_bucket, storage_path);
     const objectName = `stt/${String(entry_id).replace(/[^A-Za-z0-9._-]/g, "_")}-${Date.now()}.mp3`;
-    const text = await recognize(buffer, objectName);
+    const text = await recognize(buffer, objectName, { talkSeconds: talk_seconds });
 
     let doneQ = supabase
       .from("mango_calls")
@@ -174,7 +231,7 @@ async function transcribeRow(row, opts = {}) {
   }
 }
 
-// Fallback-поллинг очереди (только входящие).
+/** Safety-sweep: редко. Основной старт — recording-upload / CRM request-ai. */
 async function pollOnce() {
   if (isCycleRunning) return;
   isCycleRunning = true;
@@ -189,7 +246,9 @@ async function pollOnce() {
 
     const { data, error } = await supabase
       .from("mango_calls")
-      .select("id, entry_id, storage_bucket, storage_path")
+      .select(
+        "id, entry_id, storage_bucket, storage_path, talk_seconds, call_started_at, client_phone_digits",
+      )
       .eq("transcript_status", "pending")
       .eq("recording_status", "ready")
       .eq("direction", 1)
@@ -203,7 +262,12 @@ async function pollOnce() {
     }
     if (!data || data.length === 0) return;
 
-    for (const row of data) {
+    // Файл раньше summary: заготовка с direction=1 — не трогаем до meta.
+    const ready = data.filter(hasSummaryMeta);
+    if (ready.length === 0) return;
+
+    console.log(`🛟 Safety-sweep STT: ${ready.length} шт.`);
+    for (const row of ready) {
       await transcribeRow(row);
     }
   } catch (e) {
@@ -215,7 +279,7 @@ async function pollOnce() {
 
 /**
  * @param {string} entryId
- * @param {{ force?: boolean }} [opts]
+ * @param {{ force?: boolean, audioBuffer?: Buffer }} [opts]
  */
 async function triggerTranscription(entryId, opts = {}) {
   const force = Boolean(opts.force);
@@ -224,7 +288,9 @@ async function triggerTranscription(entryId, opts = {}) {
 
   const { data, error } = await supabase
     .from("mango_calls")
-    .select("id, entry_id, storage_bucket, storage_path, transcript_status, recording_status, direction")
+    .select(
+      "id, entry_id, storage_bucket, storage_path, transcript_status, recording_status, direction, talk_seconds",
+    )
     .eq("entry_id", entryId)
     .maybeSingle();
 
@@ -245,7 +311,7 @@ async function triggerTranscription(entryId, opts = {}) {
     if (data.transcript_status === "processing") return { status: "already_processing" };
   }
 
-  await transcribeRow(data, { force });
+  await transcribeRow(data, { force, audioBuffer: opts.audioBuffer });
   return { status: "started", entry_id: entryId };
 }
 
@@ -255,12 +321,22 @@ function startTranscriptionWorker() {
     return;
   }
   console.log(
-    `🎙️ Воркер расшифровки: push от Selectel + fallback poll ${POLL_MS / 1000}с, модель=${STT_MODEL}`
+    `🎙️ Воркер расшифровки: push recording-upload + safety-sweep ${POLL_MS / 1000}с, sync<${SYNC_MAX_SECONDS || 60}с, модель=${STT_MODEL}`,
   );
-  pollOnce().catch((e) => console.error("⚠️ pollOnce:", e.message));
+  // Первый проход не сразу при старте — дать подняться сервису; далее редко.
+  setTimeout(() => {
+    pollOnce().catch((e) => console.error("⚠️ pollOnce:", e.message));
+  }, 30000);
   setInterval(() => {
     pollOnce().catch((e) => console.error("⚠️ pollOnce:", e.message));
   }, POLL_MS);
 }
 
-module.exports = { startTranscriptionWorker, pollOnce, triggerTranscription, transcribeRow };
+module.exports = {
+  startTranscriptionWorker,
+  pollOnce,
+  triggerTranscription,
+  transcribeRow,
+  recognize,
+  shouldUseSyncRecognize,
+};

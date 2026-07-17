@@ -29,10 +29,10 @@ const SELECT_FIELDS =
 
 const RAW_SHORT_MODEL = "raw-short";
 
-/** Короткая расшифровка → без Gemini: стандартная пометка + дословный диалог. */
+/** Короткая расшифровка → без Gemini: отказ анализа бота + дословный диалог. */
 function buildRawShortSummary(transcript) {
   const dialog = (transcript || "").trim();
-  return `В расшифровке — отказано. Диалог:\n«${dialog}»`;
+  return `В анализе бота — отказано. Только расшифровка ниже:\n«${dialog}»`;
 }
 
 function isShortTranscript(transcript) {

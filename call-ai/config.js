@@ -8,14 +8,16 @@ module.exports = {
 
   // --- Расшифровка (Google Speech-to-Text) ---
   STT: {
-    POLL_MS: 60000, // fallback poll (основной путь — push от Selectel)
-    BATCH_LIMIT: 3, // записей за цикл
-    STALE_MIN: 15, // через сколько минут "processing" вернуть в pending
-    OP_TIMEOUT_MS: parseInt(process.env.GOOGLE_STT_OP_TIMEOUT_MS || String(20 * 60 * 1000), 10), // 20 мин
+    // Safety-sweep (не основной путь). Основной старт — /internal/recording-upload.
+    POLL_MS: parseInt(process.env.GOOGLE_STT_SAFETY_POLL_MS || String(15 * 60 * 1000), 10),
+    BATCH_LIMIT: 3,
+    STALE_MIN: 15, // processing старше N мин → pending
+    OP_TIMEOUT_MS: parseInt(process.env.GOOGLE_STT_OP_TIMEOUT_MS || String(20 * 60 * 1000), 10),
+    LONGRUNNING_POLL_MS: parseInt(process.env.GOOGLE_STT_LONGRUNNING_POLL_MS || "5000", 10),
+    // Sync recognize (inline) — лимит Google ~60 с / 10 MB.
+    SYNC_MAX_SECONDS: parseInt(process.env.GOOGLE_STT_SYNC_MAX_SECONDS || "60", 10),
     LANGUAGE_CODE: "ru-RU",
-    // telephony — для записей с телефонии (Mango 8 kHz). Переопределение: GOOGLE_STT_MODEL.
     MODEL: process.env.GOOGLE_STT_MODEL || "telephony",
-    // Если задан — жёстко; иначе читаем из MP3-заголовка.
     SAMPLE_RATE_HERTZ: process.env.GOOGLE_STT_SAMPLE_RATE
       ? parseInt(process.env.GOOGLE_STT_SAMPLE_RATE, 10)
       : null,

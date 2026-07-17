@@ -2,6 +2,8 @@ const path = require("path");
 const fs = require("fs");
 const fastify = require("fastify")({
   logger: { level: process.env.FASTIFY_LOG_LEVEL || "warn" },
+  // mp3 от Selectel на /internal/recording-upload (до ~50 МБ в Storage policy)
+  bodyLimit: 55 * 1024 * 1024,
 });
 
 const { logSupabaseBoot } = require("./lib/supabaseClient");
@@ -79,6 +81,7 @@ const {
   triggerTranscription,
   setTelegramBot,
   registerAskRoute,
+  registerRecordingUploadRoute,
 } = require("./call-ai");
 const {
   startHomeHighlightsWorker,
@@ -139,13 +142,13 @@ async function checkSelectelIP(req, reply) {
 // --- Маршруты для вебхуков Mango Office (только с Selectel) --- //
 fastify.post("/events/call", { preHandler: checkSelectelIP }, (req, res) => handleMangoWebhook(req, res, telegramBot));
 fastify.post("/events/summary", { preHandler: checkSelectelIP }, (req, res) => handleMangoWebhook(req, res, telegramBot));
-// Записи разговоров (/events/recording, /events/record/added) обрабатываются
-// на mango-proxy (Selectel, RU): Render из US не может скачать файл у Mango.
+// Записи: Selectel качает у Mango (геоблок) и шлёт mp3 сюда → Storage + STT.
+registerRecordingUploadRoute(fastify, checkSelectelIP);
 
-// Selectel пингует сюда сразу после сохранения mp3 в Supabase → мгновенная расшифровка.
+// Deprecated: пинг без файла (старый proxy). Оставлен на переход; предпочтителен recording-upload.
 fastify.post("/internal/transcribe-ready", { preHandler: checkSelectelIP }, async (req, reply) => {
   const entryId = req.body?.entry_id;
-  console.log(`[call-ai] transcribe-ready от Selectel: entry=${entryId || "—"}`);
+  console.log(`[call-ai] transcribe-ready (legacy) entry=${entryId || "—"}`);
   const result = await triggerTranscription(entryId);
   console.log(`[call-ai] transcribe-ready → ${result.status}`);
   return reply.send(result);

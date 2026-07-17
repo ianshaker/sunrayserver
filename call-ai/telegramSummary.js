@@ -39,7 +39,7 @@ function buildSummaryTelegramMessage(row) {
   const phone = row.client_phone || "—";
   const manager = row.manager_name || "—";
   const summary = (row.summary || "").trim();
-  // raw-short: summary уже содержит «В расшифровке — отказано. Диалог: …»
+  // raw-short: в summary уже «В анализе бота — отказано. Только расшифровка ниже: …»
   const body =
     row.summary_model === "raw-short"
       ? `✨ ${escapeHtml(summary)}`
