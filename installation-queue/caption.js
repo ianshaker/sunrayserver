@@ -22,7 +22,10 @@ function safeFilename(dogovorNumber) {
   return `${base || "dogovor"}.pdf`;
 }
 
-/** Turn "1 фабрика: Cortin (1006) 4 шт. На заводе Готовность: 17.07.2026" into compact lines. */
+/**
+ * "1 фабрика: Cortin (1006) 4 шт. На заводе Готовность: 17.07.2026"
+ * Require "N шт" so the name cannot stop on the first letter.
+ */
 function formatFactoryLines(factorySummary) {
   const raw = String(factorySummary || "Нет информации о фабриках")
     .split("\n")
@@ -31,21 +34,30 @@ function formatFactoryLines(factorySummary) {
 
   return raw.map((line) => {
     const m = line.match(
-      /^(\d+)\s*фабрика:\s*(.+?)\s*(?:\((\s*[^)]+)\))?\s*(\d+\s*шт\.?)?\s*(.*?)(?:\s*Готовность:\s*(.+))?$/i,
+      /^(\d+)\s*фабрика:\s*(.+?)\s*(?:\(([^)]+)\))?\s+(\d+)\s*шт\.?\s*(.*)$/i,
     );
     if (!m) return escapeHtml(line);
 
     const n = m[1];
     const name = escapeHtml(m[2].trim());
     const num = m[3] ? escapeHtml(m[3].trim()) : "";
-    const qty = m[4] ? escapeHtml(m[4].trim()) : "";
-    const place = m[5] ? escapeHtml(m[5].trim()) : "";
-    const ready = m[6] ? escapeHtml(m[6].trim()) : "";
+    const qty = `${escapeHtml(m[4])} шт.`;
+    let rest = (m[5] || "").trim();
+    let ready = "";
+    const readyMatch = rest.match(/^(.*?)(?:\s*Готовность:\s*(.+))$/i);
+    if (readyMatch) {
+      rest = readyMatch[1].trim();
+      ready = readyMatch[2].trim();
+    }
+    const place = rest ? escapeHtml(rest) : "";
+    const readyEsc = ready ? escapeHtml(ready) : "";
 
     const head = [`${n}. ${name}`, num ? `(${num})` : "", qty]
       .filter(Boolean)
       .join(" ");
-    const meta = [place, ready ? `до ${ready}` : ""].filter(Boolean).join(" · ");
+    const meta = [place, readyEsc ? `до ${readyEsc}` : ""]
+      .filter(Boolean)
+      .join(" · ");
     return meta ? `${head} · ${meta}` : head;
   });
 }
@@ -72,9 +84,10 @@ function formatInstallationCaption(data) {
     appeal = ` ${escapeHtml(normalized)}`;
   }
 
+  // Separate blockquotes with a blank line so Telegram doesn't glue them.
   const factoryQuotes = formatFactoryLines(factorySummary)
     .map((line) => `<blockquote>${line}</blockquote>`)
-    .join("\n");
+    .join("\n\n");
 
   const parts = [
     `<b>МОНТАЖ ${number}${appeal}</b>${emoji ? ` ${emoji}` : ""}`,

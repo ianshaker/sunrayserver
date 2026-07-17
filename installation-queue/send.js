@@ -185,6 +185,10 @@ async function sendInstallationQueueDocument(_telegramBot, payload) {
     comments,
   });
 
+  console.log(
+    `[installation-queue] caption[0..120]=${JSON.stringify(caption.slice(0, 120))}`,
+  );
+
   const result = await sendAsPhotoAlbum({ caption, pages });
 
   console.log(
