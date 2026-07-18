@@ -211,9 +211,10 @@ fastify.listen(
     startDirectoryRefresh();
     startBotChatsRefresh();
     startAssistant();
-    startTaskReminderWorker(telegramBot);
-    startAppealDeadlineWorker(telegramBot);
-    startLoadingDeadlineWorker(telegramBot);
+    // --- ВЫКЛЮЧЕНО: напоминания / дедлайны (код воркеров не удаляем) ---
+    // startTaskReminderWorker(telegramBot);       // обычные напоминания людей
+    // startAppealDeadlineWorker(telegramBot);     // дедлайны входящих
+    // startLoadingDeadlineWorker(telegramBot);    // дедлайны погрузки
     startWebhookSelfHeal();
   }
 );

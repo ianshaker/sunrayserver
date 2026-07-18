@@ -15,7 +15,13 @@ const { getEnabledIntents, getIntent } = require("./registry");
 const { classifyIntent, isActionableClassification } = require("./router");
 const { sendUnknown, sendError, sendAiDisabled, sendPermissionDenied, sendText } = require("./reply");
 const { detectPermissionGap } = require("./permissionHints");
-const { MAX_INPUT_CHARS, REPLIES, buildPermissionReply, ADMIN_TELEGRAM_USERNAME } = require("./config");
+const {
+  MAX_INPUT_CHARS,
+  REPLIES,
+  ASSISTANT_DISABLED,
+  buildPermissionReply,
+  ADMIN_TELEGRAM_USERNAME,
+} = require("./config");
 const { extractReplyContext, labelUnsupportedKind } = require("./replyExtract");
 const { StatusMessage } = require("./statusMessage");
 
@@ -155,6 +161,19 @@ function registerAssistant() {
       return;
     }
 
+    // Kill-switch: оркестрация / intents выкл., стабильный ответ на @mention.
+    if (ASSISTANT_DISABLED) {
+      console.log(`[assistant] DISABLED — chat=${chatId}, text="${preview}"`);
+      try {
+        await sendText(chatId, REPLIES.DISABLED, {
+          reply_to_message_id: msg.message_id,
+        });
+      } catch (error) {
+        console.error("[assistant] DISABLED reply failed:", error.message);
+      }
+      return;
+    }
+
     let ctx = null;
     try {
       const { ctx: builtCtx, reason, chat: chatEntry } = await buildContext(msg, trigger.bot);
@@ -240,7 +259,11 @@ function registerAssistant() {
     }
   });
 
-  console.log("[assistant] AI-роутер зарегистрирован");
+  console.log(
+    ASSISTANT_DISABLED
+      ? "[assistant] AI-роутер зарегистрирован (DISABLED — только ответ «функционал отключён»)"
+      : "[assistant] AI-роутер зарегистрирован",
+  );
 }
 
 async function startAssistant() {

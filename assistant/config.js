@@ -12,11 +12,19 @@ module.exports = {
   MAX_INPUT_CHARS: parseInt(process.env.ASSISTANT_MAX_INPUT_CHARS || "2000", 10),
   /** К кому обращаться за подключением чата / прав бота. */
   ADMIN_TELEGRAM_USERNAME: (process.env.ASSISTANT_ADMIN_USERNAME || "sunsseo").replace(/^@/, ""),
+  /**
+   * Kill-switch оркестратора: true → бот на @mention отвечает REPLIES.DISABLED,
+   * без classify / intents / Gemini. Код роутера не удаляем — просто выкл.
+   * Чтобы вернуть: false.
+   */
+  ASSISTANT_DISABLED: true,
   REPLIES: {
     UNKNOWN:
       "Не понял запрос. Попробуйте переформулировать или уточнить, что нужно сделать.",
     ERROR: "Не удалось обработать сообщение. Попробуйте позже.",
     AI_DISABLED: "AI-ассистент временно недоступен.",
+    DISABLED:
+      "Привет!\n\nВ данный момент мой функционал отключён.\nПопробуйте позже.",
   },
 };
 
