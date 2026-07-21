@@ -17,7 +17,7 @@ module.exports = {
    * без classify / intents / Gemini. Код роутера не удаляем — просто выкл.
    * Чтобы вернуть: false.
    */
-  ASSISTANT_DISABLED: true,
+  ASSISTANT_DISABLED: false,
   REPLIES: {
     UNKNOWN:
       "Не понял запрос. Попробуйте переформулировать или уточнить, что нужно сделать.",
