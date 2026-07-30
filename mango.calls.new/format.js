@@ -14,6 +14,28 @@ function formatPhoneNumber(phone) {
     return phone;
 }
 
+/** HTML для Telegram: кликабельный tel:+7…, видимый текст — 8(XXX)XXX-XX-XX. БД не трогает. */
+function formatPhoneTelegramHtml(phone) {
+    const display = formatPhoneNumber(phone);
+    if (!phone || typeof phone !== 'string' || display === 'Неизвестный номер') {
+        return `<b>${display}</b>`;
+    }
+    if (phone.includes('@')) {
+        return `<b>${display}</b>`;
+    }
+    const digits = phone.replace(/\D/g, '');
+    let national = null;
+    if (digits.length === 11 && (digits[0] === '7' || digits[0] === '8')) {
+        national = digits.substring(1);
+    } else if (digits.length === 10) {
+        national = digits;
+    }
+    if (!national) {
+        return `<b>${display}</b>`;
+    }
+    return `<b><a href="tel:+7${national}">${display}</a></b>`;
+}
+
 function getCompanyLineName(phone) {
     if (!phone) return 'Неизвестная линия';
     const digits = String(phone).replace(/\D/g, '');
@@ -204,6 +226,7 @@ function isOutgoingCall(data) {
 
 module.exports = {
     formatPhoneNumber,
+    formatPhoneTelegramHtml,
     getCompanyLineName,
     resolveLineNumber,
     getDisconnectLabel,

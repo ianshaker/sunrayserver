@@ -1,4 +1,8 @@
-const { formatCallStatusBlock, formatManagerLegsBlock } = require("./format");
+const {
+  formatCallStatusBlock,
+  formatManagerLegsBlock,
+  formatPhoneTelegramHtml,
+} = require("./format");
 const { buildFoundInfoMessage } = require("./crmLookup");
 const { TELEGRAM_MAX } = require("./callCard");
 
@@ -7,13 +11,13 @@ function historyWord(n) {
 }
 
 function buildCrmSection(session, maxFound) {
-  const phone = session.callData?.formattedFromNumber;
+  const phoneHtml = formatPhoneTelegramHtml(session.callData?.formattedFromNumber);
   const found = session.foundInfoList || [];
   const show = found.slice(0, maxFound);
   const omitted = found.length - show.length;
 
   if (session.crmPhase === "searching") {
-    return `\n\n🔍 Ищу <b>${phone}</b> по базам данных...`;
+    return `\n\n🔍 Ищу ${phoneHtml} по базам данных...`;
   }
 
   if (show.length > 0) {
@@ -29,7 +33,7 @@ function buildCrmSection(session, maxFound) {
   }
 
   if (session.crmPhase === "creating_appeal") {
-    return `\n\n📝 По номеру <b>${phone}</b> ничего не нашёл. Создаю новую заявку...`;
+    return `\n\n📝 По номеру ${phoneHtml} ничего не нашёл. Создаю новую заявку...`;
   }
 
   if (session.createdAppealId) {
@@ -59,7 +63,7 @@ function buildCardHtml(session, maxFound) {
     ? `📞 <b>ЗАВЕРШЁННЫЙ ЗВОНОК</b>\n`
     : `📞 <b>ВХОДЯЩИЙ ЗВОНОК</b>\n`;
 
-  msg += `Абонент: <b>${formattedFromNumber}</b>\n`;
+  msg += `Абонент: ${formatPhoneTelegramHtml(formattedFromNumber)}\n`;
   msg += `${lineName || ""}\n`;
 
   if (managers?.length === 1) {
