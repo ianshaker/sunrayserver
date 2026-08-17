@@ -19,6 +19,7 @@ const {
     isManager,
     getManagerName,
     isOutgoingCall,
+    getAppealSourceByLine,
 } = require("./format");
 const { findAllClientInfoByPhone } = require("./crmLookup");
 const { saveCallSummary } = require("./db");
@@ -264,11 +265,16 @@ async function handleMangoWebhook(request, reply, telegramBot) {
                 return reply.code(500).send({ error: "id_error" });
             }
 
+            // Источник заявки по линии: дизайн-сановская линия — DESIGN-SUN,
+            // все остальные — обычный «Звонок». Пишем сразу и в ids: оттуда
+            // аналитика считает обращения по источникам.
+            const appealSource = getAppealSourceByLine(lineNumber);
+
             try {
                 const used_at = new Date().toISOString();
                 await supabase
                     .from("ids")
-                    .update({ is_used: true, used_at })
+                    .update({ is_used: true, used_at, source: appealSource })
                     .eq("appeal_id", appeal_id);
             } catch {}
 
@@ -279,7 +285,7 @@ async function handleMangoWebhook(request, reply, telegramBot) {
                 city: "",
                 address: "",
                 detailed_address: "",
-                source: "Звонок",
+                source: appealSource,
                 manager: managerName,
                 dialog: "",
                 reminder_date: getMskTodayDate(),

@@ -44,9 +44,18 @@ const MANAGERS = {
 
 const COMPANY_LINES = {
     '79585382001': '☀️ SUNRAY',
-    '79852194439': '🔶 DESIGN-SUN',
-    '79852196418': '🔵 СЕТКИ'
+    '79852194439': '🔵 Жалюзи-САН',
+    '79852196418': '🔶 DESIGN-SUN'
 };
+
+// Источник заявки по линии, на которую позвонил клиент.
+// Чего здесь нет — остаётся обычным «Звонком», как было всегда.
+// Значения должны совпадать со списком источников в CRM (карточка обращения).
+const LINE_APPEAL_SOURCE = {
+    '79852196418': 'DESIGN-SUN'
+};
+
+const DEFAULT_APPEAL_SOURCE = 'Звонок';
 
 // Полный справочник кодов Mango Office VPBX API (результаты вызовов и команд).
 // Источник: документация API Mango / коды завершения вызовов.
@@ -181,5 +190,7 @@ module.exports = {
     TABLE_NAMES,
     MANAGERS,
     COMPANY_LINES,
+    LINE_APPEAL_SOURCE,
+    DEFAULT_APPEAL_SOURCE,
     DISCONNECT_REASONS,
 };

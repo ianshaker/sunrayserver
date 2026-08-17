@@ -1,4 +1,10 @@
-const { MANAGERS, COMPANY_LINES, DISCONNECT_REASONS } = require("./constants");
+const {
+    MANAGERS,
+    COMPANY_LINES,
+    LINE_APPEAL_SOURCE,
+    DEFAULT_APPEAL_SOURCE,
+    DISCONNECT_REASONS,
+} = require("./constants");
 const { entryCallMeta } = require("./state");
 
 function formatPhoneNumber(phone) {
@@ -42,6 +48,15 @@ function getCompanyLineName(phone) {
     if (COMPANY_LINES[digits]) return `Линия сайта ${COMPANY_LINES[digits]}`;
     if (COMPANY_LINES[phone]) return `Линия сайта ${COMPANY_LINES[phone]}`;
     return `Линия ${formatPhoneNumber(phone)}`;
+}
+
+/**
+ * Источник заявки по номеру линии: у дизайн-сановской линии свой,
+ * у всех остальных — обычный «Звонок».
+ */
+function getAppealSourceByLine(phone) {
+    const digits = String(phone || '').replace(/\D/g, '');
+    return LINE_APPEAL_SOURCE[digits] || DEFAULT_APPEAL_SOURCE;
 }
 
 function resolveLineNumber(body, fallbackEntryId) {
@@ -228,6 +243,7 @@ module.exports = {
     formatPhoneNumber,
     formatPhoneTelegramHtml,
     getCompanyLineName,
+    getAppealSourceByLine,
     resolveLineNumber,
     getDisconnectLabel,
     buildCallTiming,
