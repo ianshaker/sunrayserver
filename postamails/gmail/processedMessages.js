@@ -30,27 +30,46 @@ async function filterUnprocessedMessageIds(messageIds) {
 /**
  * @param {string} messageId
  * @param {{
- *   outcome: 'created'|'duplicate'|'contract'|'error',
+ *   outcome: 'created'|'duplicate'|'contract'|'no_phone'|'error',
  *   phone?: string|null,
  *   appealNumber?: string|null,
+ *   spamReason?: string|null,
  * }} meta
  */
-async function markMessageProcessed(messageId, { outcome, phone = null, appealNumber = null }) {
-  const { error } = await supabase.from("gmail_processed_messages").upsert(
-    {
-      message_id: messageId,
-      processed_at: new Date().toISOString(),
-      outcome,
-      phone: phone || null,
-      appeal_number: appealNumber || null,
-    },
-    { onConflict: "message_id" },
-  );
+async function markMessageProcessed(
+  messageId,
+  { outcome, phone = null, appealNumber = null, spamReason = null },
+) {
+  const base = {
+    message_id: messageId,
+    processed_at: new Date().toISOString(),
+    phone: phone || null,
+    appeal_number: appealNumber || null,
+  };
 
-  if (error) {
-    console.error(`[postamails/processed] mark ${messageId}:`, error.message);
-    throw error;
+  const { error } = await supabase
+    .from("gmail_processed_messages")
+    .upsert({ ...base, outcome, spam_reason: spamReason || null }, { onConflict: "message_id" });
+
+  if (!error) return;
+
+  // База ещё без миграции: не знает исхода no_phone и колонки spam_reason.
+  // Пишем по-старому, чтобы письмо не осталось непомеченным и не пошло по кругу.
+  console.error(`[postamails/processed] mark ${messageId}:`, error.message);
+
+  const { error: fallbackError } = await supabase
+    .from("gmail_processed_messages")
+    .upsert(
+      { ...base, outcome: outcome === "no_phone" ? "error" : outcome },
+      { onConflict: "message_id" },
+    );
+
+  if (fallbackError) {
+    console.error(`[postamails/processed] mark ${messageId} (запасной путь):`, fallbackError.message);
+    throw fallbackError;
   }
+
+  console.log(`[postamails/processed] ${messageId}: записан по-старому, миграция не применена`);
 }
 
 /** Удаляет записи старше RETENTION_DAYS. Безопасно вызывать повторно. */

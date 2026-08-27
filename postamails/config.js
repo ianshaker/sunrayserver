@@ -6,6 +6,9 @@ const DATA_DIR = path.join(ROOT_DIR, "data");
 module.exports = {
   TELEGRAM_CHAT_ID: -1002582438853,
 
+  /** Источник заявки в CRM. Им же ищутся вчерашние заявки при разборе признаков рассылки. */
+  APPEAL_SOURCE: "Почта",
+
   SCOPES: ["https://www.googleapis.com/auth/gmail.readonly"],
   GMAIL_LABEL_QUERY: 'label:"Заявки Sunray"',
 
@@ -35,6 +38,9 @@ module.exports = {
 
   /** Лог «тишины» раз в N успешных проверок без новых писем. */
   EMAIL_QUIET_LOG_EVERY: 30,
+
+  /** Суточная сводка: 06:00 МСК (03:00 UTC) — до начала рабочего дня. */
+  DIGEST_CRON_PATTERN: "0 0 3 * * *",
 
   TOKEN_ERROR_INTERVAL_MS: 2 * 60 * 60 * 1000,
 

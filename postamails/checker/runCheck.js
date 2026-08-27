@@ -11,6 +11,12 @@ const { createQuietDigest } = require("../../lib/quietDigest");
 
 const quietDigest = createQuietDigest("[postamails]", EMAIL_QUIET_LOG_EVERY);
 
+/** Сбой сети или базы не должен закрывать письмо навсегда: даём ему ещё два прохода. */
+const MAX_ATTEMPTS = 3;
+
+/** message_id → сколько раз уже падало. Живёт в памяти: после рестарта счёт начинается заново. */
+const failedAttempts = new Map();
+
 function logTimePrefix(now = new Date()) {
   const utcHours = now.getUTCHours();
   const hourMsk = (utcHours + 3) % 24;
@@ -55,11 +61,23 @@ async function checkNewEmails() {
           outcome: result.outcome,
           phone: result.phone,
           appealNumber: result.appealNumber,
+          spamReason: result.spamReason,
         });
+        failedAttempts.delete(id);
       } catch (err) {
-        console.error(`${prefix} ошибка письма ${id}:`, err.message);
+        const attempt = (failedAttempts.get(id) || 0) + 1;
+        failedAttempts.set(id, attempt);
+        console.error(
+          `${prefix} ошибка письма ${id} (попытка ${attempt} из ${MAX_ATTEMPTS}):`,
+          err.message,
+        );
+
+        // Пока попытки не исчерпаны — письмо не помечаем, и следующая проверка возьмёт его снова.
+        if (attempt < MAX_ATTEMPTS) continue;
+
         try {
           await markMessageProcessed(id, { outcome: "error" });
+          failedAttempts.delete(id);
         } catch (markErr) {
           console.error(`${prefix} не удалось записать error для ${id}:`, markErr.message);
         }

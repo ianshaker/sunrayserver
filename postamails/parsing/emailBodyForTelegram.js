@@ -61,6 +61,7 @@ function formatRawEmailBlockForTelegram(emailText) {
 }
 
 module.exports = {
+  escapeHtml,
   sanitizeEmailBodyForTelegram,
   formatRawEmailBlockForTelegram,
 };

@@ -1,9 +1,10 @@
 const schedule = require("node-schedule");
-const { CRON_PATTERN, TOKEN_ALERT_DELAY_MS } = require("../config");
+const { CRON_PATTERN, DIGEST_CRON_PATTERN, TOKEN_ALERT_DELAY_MS } = require("../config");
 const { initGmailClient } = require("../gmail/client");
 const { purgeOldProcessedMessages } = require("../gmail/processedMessages");
 const { setTelegramBot } = require("../telegramNotify");
 const { checkNewEmails } = require("./runCheck");
+const { sendDailyDigest } = require("./dailyDigest");
 const { needsGmailAuthNotification, notifyTokenRefreshNeeded } = require("./tokenAlerts");
 
 /** Раз в сутки в 04:00 UTC (07:00 MSK) — чистка журнала старше 30 дней. */
@@ -38,10 +39,17 @@ async function startEmailChecker(telegramBot) {
     });
   });
 
+  schedule.scheduleJob(DIGEST_CRON_PATTERN, () => {
+    sendDailyDigest().catch((err) => {
+      console.error("[postamails] ошибка суточной сводки:", err.message);
+    });
+  });
+
   const now = new Date();
   const hourMsk = (now.getUTCHours() + 3) % 24;
   console.log("[postamails] Cron:", CRON_PATTERN);
   console.log(`[postamails] Purge processed messages: ${PURGE_CRON_PATTERN} (старше 30 дн.)`);
+  console.log(`[postamails] Суточная сводка: ${DIGEST_CRON_PATTERN} (06:00 МСК)`);
   console.log(
     `[postamails] Автопроверка запущена (круглосуточно). Сейчас МСК ${hourMsk}:${now.getMinutes()}`,
   );

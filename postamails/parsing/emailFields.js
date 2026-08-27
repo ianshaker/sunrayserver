@@ -1,19 +1,26 @@
 const { PRODUCT_KEYWORDS } = require("../config");
+const { parseEmailFields, pickField } = require("./fields");
+
+/** Ищет название из справочника внутри строки, не глядя на регистр. */
+function matchProductKeyword(value) {
+  const low = String(value || "").toLowerCase();
+  return PRODUCT_KEYWORDS.find((p) => low.includes(p.toLowerCase())) || null;
+}
 
 function extractName(text) {
-  const match =
-    text.match(/Имя:\s*(.+)/i) || text.match(/Ваше имя:\s*(.+)/i);
-  return match ? match[1].trim() : "";
+  return pickField(parseEmailFields(text), "имя", "ваше имя");
 }
 
 function extractCity(text) {
-  const match = text.match(/Город:\s*(.+)/i);
-  return match ? match[1].trim() : "Без города";
+  return pickField(parseEmailFields(text), "город") || "Без города";
 }
 
 function extractProduct(text) {
-  const found = PRODUCT_KEYWORDS.find((p) => text.includes(p));
-  return found || "Продукт не указан";
+  // Форма прислала продукт явно — он важнее любых слов в тексте письма.
+  const declared = pickField(parseEmailFields(text), "продукт", "товар");
+  if (declared) return matchProductKeyword(declared) || declared;
+
+  return matchProductKeyword(text) || "Продукт не указан";
 }
 
 function extractEmailBodyFromPayload(payload) {

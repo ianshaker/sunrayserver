@@ -3,3 +3,4 @@ node_modules/
 *.log
 data/gmail-token.json
 data/postamailsCache.json
+supabase/.temp/
