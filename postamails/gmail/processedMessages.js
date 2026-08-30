@@ -30,7 +30,7 @@ async function filterUnprocessedMessageIds(messageIds) {
 /**
  * @param {string} messageId
  * @param {{
- *   outcome: 'created'|'duplicate'|'contract'|'no_phone'|'error',
+ *   outcome: 'created'|'duplicate'|'contract'|'no_phone'|'blacklisted'|'error',
  *   phone?: string|null,
  *   appealNumber?: string|null,
  *   spamReason?: string|null,
@@ -53,14 +53,15 @@ async function markMessageProcessed(
 
   if (!error) return;
 
-  // База ещё без миграции: не знает исхода no_phone и колонки spam_reason.
+  // База ещё без свежей миграции: не знает новых исходов или колонки spam_reason.
   // Пишем по-старому, чтобы письмо не осталось непомеченным и не пошло по кругу.
   console.error(`[postamails/processed] mark ${messageId}:`, error.message);
 
+  const KNOWN_BEFORE = ["created", "duplicate", "contract", "error"];
   const { error: fallbackError } = await supabase
     .from("gmail_processed_messages")
     .upsert(
-      { ...base, outcome: outcome === "no_phone" ? "error" : outcome },
+      { ...base, outcome: KNOWN_BEFORE.includes(outcome) ? outcome : "error" },
       { onConflict: "message_id" },
     );
 

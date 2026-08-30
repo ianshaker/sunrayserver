@@ -19,6 +19,7 @@ const {
 const { getMskTodayDate } = require("../../appeals-deadlines/queries");
 const { APPEAL_SOURCE } = require("../config");
 const { collectSpamReasons, formatSpamNotice } = require("./spamSignals");
+const { findSpamPhone, registerHit } = require("./spamPhones");
 
 /** Всё, что попадает в HTML-сообщение Telegram: угловая скобка в имени иначе рвёт разметку. */
 const esc = (value) => escapeHtml(value || "");
@@ -41,6 +42,17 @@ async function insertAppealFromEmail(emailText) {
         formatRawEmailBlockForTelegram(emailText),
     );
     return { outcome: "no_phone", phone: null, appealNumber: null };
+  }
+
+  // Номер уже забракован человеком — исполняем это решение и дальше не идём.
+  // Заявку не заводим и в чат не шлём, но запись в журнале остаётся: след не теряется.
+  const blacklisted = await findSpamPhone(normalizedPhone);
+  if (blacklisted) {
+    await registerHit(blacklisted.phone_digits, blacklisted.hits);
+    console.log(
+      `[postamails] ${normalizedPhone} в чёрном списке — письмо отбито (попаданий: ${blacklisted.hits + 1})`,
+    );
+    return { outcome: "blacklisted", phone: normalizedPhone, appealNumber: null };
   }
 
   const name = extractName(emailText);
