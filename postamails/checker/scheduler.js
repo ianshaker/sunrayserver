@@ -10,8 +10,26 @@ const { needsGmailAuthNotification, notifyTokenRefreshNeeded } = require("./toke
 /** Раз в сутки в 04:00 UTC (07:00 MSK) — чистка журнала старше 30 дней. */
 const PURGE_CRON_PATTERN = "0 0 4 * * *";
 
+/**
+ * Ветку Gmail можно остановить, не трогая её код: GMAIL_ENABLED=false.
+ * Маршруты активации при этом остаются рабочими, чтобы вернуть источник
+ * можно было одной переменной, а не выкладкой.
+ */
+function isGmailCheckerEnabled() {
+  return String(process.env.GMAIL_ENABLED ?? "true").trim().toLowerCase() !== "false";
+}
+
 async function startEmailChecker(telegramBot) {
   setTelegramBot(telegramBot);
+
+  if (!isGmailCheckerEnabled()) {
+    console.log(
+      "[postamails] остановлен рубильником GMAIL_ENABLED=false: запросы к Gmail API не выполняются. " +
+        "Код и страница активации на месте, возврат — той же переменной.",
+    );
+    return;
+  }
+
   console.log("[postamails] Инициализация проверки почты...");
 
   try {
@@ -55,4 +73,4 @@ async function startEmailChecker(telegramBot) {
   );
 }
 
-module.exports = { startEmailChecker };
+module.exports = { startEmailChecker, isGmailCheckerEnabled };

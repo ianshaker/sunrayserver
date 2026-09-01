@@ -29,6 +29,20 @@ const { notifyIncomingChat } = require("../../postamails/telegramNotify");
 
 const esc = (value) => escapeHtml(value || "");
 
+/** Время письма по-московски и по-человечески: «01.09.2026, 12:11». */
+function formatMsk(value) {
+  const date = value ? new Date(value) : null;
+  if (!date || Number.isNaN(date.getTime())) return "время неизвестно";
+  return date.toLocaleString("ru-RU", {
+    timeZone: "Europe/Moscow",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 /** Пометка, по которой Ян отличает сообщения нового источника от обычных. */
 const TEST_MARK = "🧪 <b>ЯНДЕКС · ТЕСТ НОВОГО ИСТОЧНИКА</b>";
 
@@ -78,7 +92,7 @@ async function processAppealMail(rawSource, header) {
       `Телефон: <b>${esc(normalizedPhone)}</b>\n` +
       `Город: <b>${esc(city)}</b>\n` +
       `Продукт: <b>${esc(product)}</b>\n` +
-      `Письмо №${header.uid} от ${esc(String(header.date || ""))}` +
+      `Письмо от ${esc(formatMsk(header.date))}` +
       formatRawEmailBlockForTelegram(text),
   );
 

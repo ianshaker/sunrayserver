@@ -9,6 +9,7 @@
 const { isEnabled, isShadowMode, isReadOnly, describeSettings, listMissingSettings } = require("../config");
 const { assertReadOnlyModeEnabled } = require("../imap/guard");
 const { checkOnce, getCounters } = require("./runCheck");
+const { inspect } = require("./watchdog");
 
 /** Первый проход — не сразу после старта: даём серверу подняться. */
 const FIRST_RUN_DELAY_MS = 15000;
@@ -16,8 +17,12 @@ const FIRST_RUN_DELAY_MS = 15000;
 /** Как часто писать в лог сводку счётчиков. */
 const SUMMARY_EVERY_MS = 60 * 60 * 1000;
 
+/** Как часто сторож осматривает почту. */
+const WATCHDOG_EVERY_MS = 5 * 60 * 1000;
+
 let pollTimer = null;
 let summaryTimer = null;
+let watchdogTimer = null;
 
 function logSummary() {
   const c = getCounters();
@@ -77,14 +82,20 @@ function startYandexMailChecker() {
   }, settings.pollIntervalMs);
 
   summaryTimer = setInterval(logSummary, SUMMARY_EVERY_MS);
+
+  watchdogTimer = setInterval(() => {
+    inspect().catch((e) => console.error("[yandexmail/сторож]", e.message));
+  }, WATCHDOG_EVERY_MS);
 }
 
 /** Остановить проверку. Нужна для тестов и аккуратного завершения. */
 function stopYandexMailChecker() {
   if (pollTimer) clearInterval(pollTimer);
   if (summaryTimer) clearInterval(summaryTimer);
+  if (watchdogTimer) clearInterval(watchdogTimer);
   pollTimer = null;
   summaryTimer = null;
+  watchdogTimer = null;
 }
 
 module.exports = { startYandexMailChecker, stopYandexMailChecker, logSummary };

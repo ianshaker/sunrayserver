@@ -17,6 +17,7 @@ const { planNextRead, writeCursor } = require("../pipeline/cursor");
 const { isAppeal } = require("../pipeline/rules");
 const { processAppealMail } = require("../pipeline/processMail");
 const { isShadowMode } = require("../config");
+const { markMailSeen } = require("./watchdog");
 const { extractText } = require("../pipeline/processMail");
 const { insertAppealFromEmail } = require("../../postamails/appeals/insertFromEmail");
 
@@ -72,6 +73,7 @@ async function checkOnce() {
       }
 
       counters.seen += headers.length;
+      markMailSeen();
       const mine = headers.filter(isAppeal);
       let maxUid = plan.lastUid;
 
