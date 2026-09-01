@@ -11,6 +11,7 @@
 
 const { escapeHtml } = require("../parsing/emailBodyForTelegram");
 const { formatClientMessageBlock } = require("../parsing/clientMessage");
+const { TABLE_LABELS } = require("../config");
 
 const esc = (value) => escapeHtml(value || "");
 
@@ -60,6 +61,20 @@ function buildNewAppealMessage({ appealNumber, fields, phone, spamNotice = "" })
 }
 
 /**
+ * Где искать прежнюю карточку: раздел CRM словами, а не имя таблицы.
+ * У событий добавляется вид — «Замер» и «Монтаж» лежат в одной таблице,
+ * а идти менеджеру в разные места.
+ */
+function placeLabel(existing) {
+  const table = String(existing?.table || "").trim();
+  if (!table) return "";
+
+  const label = TABLE_LABELS[table] || table;
+  const kind = table === "eventsnew" ? String(existing?.info?.type || "").trim() : "";
+  return kind ? `${label}, ${kind.toLowerCase()}` : label;
+}
+
+/**
  * Сообщение о повторе: заявка с этим номером телефона уже заведена.
  * Показывает то же, что и новая, плюс где искать прежнюю карточку.
  */
@@ -70,7 +85,7 @@ function buildDuplicateMessage({ existing, fields, phone, spamNotice = "" }) {
   const info = existing?.info || {};
   const body =
     line("Прежний номер", info.appeal_id || info.appeal_number) +
-    line("Где лежит", existing?.table) +
+    line("Где лежит", placeLabel(existing)) +
     "\n" +
     line("Клиент", fields.name || info.client_name) +
     line("Телефон", phone || fields.phone) +
