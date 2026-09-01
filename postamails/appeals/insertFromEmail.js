@@ -7,11 +7,13 @@ const {
   insertAppealRecord,
 } = require("./supabaseAppeals");
 const { extractPhone, extractPhoneRaw } = require("../parsing/phone");
+const { extractCity, extractProduct } = require("../parsing/emailFields");
+const { parseAppealFields } = require("../parsing/appealFields");
 const {
-  extractName,
-  extractCity,
-  extractProduct,
-} = require("../parsing/emailFields");
+  buildNewAppealMessage,
+  buildDuplicateMessage,
+  buildContractMessage,
+} = require("./appealMessage");
 const {
   escapeHtml,
   formatRawEmailBlockForTelegram,
@@ -55,7 +57,10 @@ async function insertAppealFromEmail(emailText) {
     return { outcome: "blacklisted", phone: normalizedPhone, appealNumber: null };
   }
 
-  const name = extractName(emailText);
+  // Письмо разбирается один раз: раздел заявки, имя, город, продукт, промокод,
+  // почта и текст клиента. Дальше сообщения собираются только из непустых полей.
+  const fields = parseAppealFields(emailText);
+  const name = fields.name;
 
   // Признаки рассылки. Ничего не отсекают — только добавляют строку в сообщение.
   const spamReasons = await collectSpamReasons({ rawPhone, normalizedPhone, clientName: name });
@@ -64,16 +69,7 @@ async function insertAppealFromEmail(emailText) {
 
   const contract = findContractByPhoneFromFile(normalizedPhone);
   if (contract) {
-    await notifyIncomingChat(
-      `⛔️ <b>Клиент найден в завершённых договорах</b>\n` +
-        `Номер: <b>${esc(contract.appeal_id)}</b>\n` +
-        `Клиент: <b>${esc(contract.client_name)}</b>\n` +
-        `Телефон: <b>${esc(contract.phone)}</b>\n` +
-        `Город: <b>${esc(contract.city)}</b>\n` +
-        `Номер договора: <b>${esc(contract.dogovor_number)}</b>` +
-        spamNotice +
-        formatRawEmailBlockForTelegram(emailText),
-    );
+    await notifyIncomingChat(buildContractMessage({ contract, fields, spamNotice }));
     return {
       outcome: "contract",
       phone: normalizedPhone,
@@ -84,16 +80,9 @@ async function insertAppealFromEmail(emailText) {
 
   const existing = await findExistingAppealByPhone(normalizedPhone);
   if (existing) {
-    let msg = `📨 <b>Почтовая заявка с этим номером уже есть в базе</b>\n`;
-    msg += `Таблица: <b>${esc(existing.table)}</b>\n`;
-    msg += `ID: <b>${esc(existing.info.appeal_id || existing.info.appeal_number)}</b>\n`;
-    msg += `Клиент: <b>${esc(existing.info.client_name)}</b>\n`;
-    msg += `Телефон: <b>${esc(normalizedPhone)}</b>\n`;
-    msg += `Город: <b>${esc(existing.info.city)}</b>\n`;
-    msg += `Продукт: <b>${esc(existing.info.product_type)}</b>`;
-    msg += spamNotice;
-    msg += formatRawEmailBlockForTelegram(emailText);
-    await notifyIncomingChat(msg);
+    await notifyIncomingChat(
+      buildDuplicateMessage({ existing, fields, phone: normalizedPhone, spamNotice }),
+    );
     return {
       outcome: "duplicate",
       phone: normalizedPhone,
@@ -102,7 +91,8 @@ async function insertAppealFromEmail(emailText) {
     };
   }
 
-  const city = extractCity(emailText);
+  // Город из полей письма, а если поля нет — из ссылки на форму.
+  const city = fields.city || extractCity(emailText);
   const product_type = extractProduct(emailText);
   const appeal_id = await getFreeAppealId();
   await markAppealIdUsed(appeal_id);
@@ -130,14 +120,12 @@ async function insertAppealFromEmail(emailText) {
   await insertAppealRecord(appeal);
 
   await notifyIncomingChat(
-    `📨 <b>НОВАЯ ЗАЯВКА С ПОЧТЫ</b>\n` +
-      `Номер: <b>${esc(appeal_id)}</b>\n` +
-      `Клиент: <b>${esc(name)}</b>\n` +
-      `Телефон: <b>${esc(normalizedPhone)}</b>\n` +
-      `Город: <b>${esc(city)}</b>\n` +
-      `Продукт: <b>${esc(product_type)}</b>` +
-      spamNotice +
-      formatRawEmailBlockForTelegram(emailText),
+    buildNewAppealMessage({
+      appealNumber: appeal_id,
+      fields,
+      phone: normalizedPhone,
+      spamNotice,
+    }),
   );
 
   return {

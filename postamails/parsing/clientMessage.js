@@ -65,7 +65,7 @@ function formatClientMessageBlock(raw) {
     ? "\n<i>Текст длинный, показан не весь — целиком он в карточке заявки.</i>"
     : "";
 
-  return `\n\n<b>Что просит клиент:</b>\n${escapeHtml(text)}${tail}`;
+  return `\n<b>Что просит клиент:</b>\n${escapeHtml(text)}${tail}`;
 }
 
 module.exports = { MAX_LENGTH, normalizeClientMessage, formatClientMessageBlock };
