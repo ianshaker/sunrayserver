@@ -17,26 +17,12 @@ const { planNextRead, writeCursor } = require("../pipeline/cursor");
 const { isAppeal } = require("../pipeline/rules");
 const { processAppealMail } = require("../pipeline/processMail");
 const { isShadowMode } = require("../config");
-const { markMailSeen } = require("./watchdog");
+const { bump, markSuccess, markMailSeen, getCounters } = require("./counters");
 const { extractText } = require("../pipeline/processMail");
 const { insertAppealFromEmail } = require("../../postamails/appeals/insertFromEmail");
 
 /** Сколько писем разбираем за один проход, чтобы не залипнуть надолго. */
 const MAX_PER_RUN = 30;
-
-const counters = {
-  runs: 0,
-  seen: 0,
-  appeals: 0,
-  created: 0,
-  contract: 0,
-  wouldCreate: 0,
-  duplicate: 0,
-  blacklisted: 0,
-  noPhone: 0,
-  errors: 0,
-  lastSuccessAt: null,
-};
 
 function logPrefix() {
   const now = new Date();
@@ -46,7 +32,7 @@ function logPrefix() {
 
 async function checkOnce() {
   const prefix = logPrefix();
-  counters.runs += 1;
+  bump("runs");
 
   try {
     await withReadOnlyMailbox(async (client) => {
@@ -57,7 +43,7 @@ async function checkOnce() {
       // Боевой старт без закладки: историю не трогаем, просто отмечаем, где сейчас.
       if (plan.mode === "from_now") {
         await writeCursor({ uidValidity: mailbox.uidValidity, lastUid: plan.lastUid });
-        counters.lastSuccessAt = new Date().toISOString();
+        markSuccess();
         console.log(`${prefix} ${plan.reason} (закладка #${plan.lastUid})`);
         return;
       }
@@ -68,11 +54,11 @@ async function checkOnce() {
           : await fetchRecentHeaders(client, { days: Math.max(1, Math.ceil(plan.hours / 24)), limit: MAX_PER_RUN });
 
       if (!headers.length) {
-        counters.lastSuccessAt = new Date().toISOString();
+        markSuccess();
         return;
       }
 
-      counters.seen += headers.length;
+      bump("seen", headers.length);
       markMailSeen();
       const mine = headers.filter(isAppeal);
       let maxUid = plan.lastUid;
@@ -86,11 +72,11 @@ async function checkOnce() {
       }
 
       for (const header of mine) {
-        counters.appeals += 1;
+        bump("appeals");
         try {
           const raw = await fetchRawSource(client, header.uid);
           if (!raw) {
-            counters.errors += 1;
+            bump("errors");
             continue;
           }
 
@@ -101,11 +87,11 @@ async function checkOnce() {
             const text = await extractText(raw);
             const result = await insertAppealFromEmail(text);
 
-            if (result.outcome === "created") counters.created += 1;
-            else if (result.outcome === "duplicate") counters.duplicate += 1;
-            else if (result.outcome === "blacklisted") counters.blacklisted += 1;
-            else if (result.outcome === "no_phone") counters.noPhone += 1;
-            else if (result.outcome === "contract") counters.contract += 1;
+            if (result.outcome === "created") bump("created");
+            else if (result.outcome === "duplicate") bump("duplicate");
+            else if (result.outcome === "blacklisted") bump("blacklisted");
+            else if (result.outcome === "no_phone") bump("noPhone");
+            else if (result.outcome === "contract") bump("contract");
 
             console.log(
               `${prefix} письмо #${header.uid}: ${result.outcome}` +
@@ -113,28 +99,24 @@ async function checkOnce() {
             );
           } else {
             const result = await processAppealMail(raw, header);
-            if (result.outcome === "would_create") counters.wouldCreate += 1;
-            else if (result.outcome === "seen_duplicate") counters.duplicate += 1;
-            else if (result.outcome === "blacklisted") counters.blacklisted += 1;
-            else if (result.outcome === "no_phone") counters.noPhone += 1;
+            if (result.outcome === "would_create") bump("wouldCreate");
+            else if (result.outcome === "seen_duplicate") bump("duplicate");
+            else if (result.outcome === "blacklisted") bump("blacklisted");
+            else if (result.outcome === "no_phone") bump("noPhone");
           }
         } catch (error) {
-          counters.errors += 1;
+          bump("errors");
           console.error(`${prefix} письмо #${header.uid}:`, error.message);
         }
       }
 
       await writeCursor({ uidValidity: mailbox.uidValidity, lastUid: maxUid });
-      counters.lastSuccessAt = new Date().toISOString();
+      markSuccess();
     });
   } catch (error) {
-    counters.errors += 1;
+    bump("errors");
     console.error(`${prefix} проход не удался (${error.kind || "?"}):`, error.message);
   }
-}
-
-function getCounters() {
-  return { ...counters };
 }
 
 module.exports = { MAX_PER_RUN, checkOnce, getCounters };

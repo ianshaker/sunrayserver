@@ -14,7 +14,7 @@
 // ============================================================================
 
 const { notifyIncomingChatMarkdown } = require("../../postamails/telegramNotify");
-const { getCounters } = require("./runCheck");
+const { getCounters } = require("./counters");
 
 /** Нет успешного прохода дольше этого — связь потеряна. */
 const NO_SUCCESS_ALERT_MS = 10 * 60 * 1000;
@@ -28,7 +28,6 @@ const REPEAT_ALERT_MS = 60 * 60 * 1000;
 const WORK_HOURS_MSK = { from: 9, to: 21 };
 
 let lastAlertAt = { noSuccess: 0, noMail: 0 };
-let lastMailSeenAt = Date.now();
 
 function mskHour(now = new Date()) {
   return (now.getUTCHours() + 3) % 24;
@@ -37,11 +36,6 @@ function mskHour(now = new Date()) {
 function isWorkTime(now = new Date()) {
   const hour = mskHour(now);
   return hour >= WORK_HOURS_MSK.from && hour < WORK_HOURS_MSK.to;
-}
-
-/** Вызывается проходом, когда письма реально пришли. */
-function markMailSeen() {
-  lastMailSeenAt = Date.now();
 }
 
 async function alert(kind, text) {
@@ -75,6 +69,7 @@ async function inspect(now = Date.now()) {
     return;
   }
 
+  const lastMailSeenAt = counters.lastMailSeenAt || 0;
   if (isWorkTime(new Date(now)) && now - lastMailSeenAt > NO_MAIL_ALERT_MS) {
     const hours = Math.round((now - lastMailSeenAt) / 3600000);
     await alert(
@@ -90,7 +85,6 @@ module.exports = {
   NO_SUCCESS_ALERT_MS,
   NO_MAIL_ALERT_MS,
   REPEAT_ALERT_MS,
-  markMailSeen,
   inspect,
   isWorkTime,
 };

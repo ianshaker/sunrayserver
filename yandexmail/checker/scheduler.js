@@ -8,7 +8,8 @@
 
 const { isEnabled, isShadowMode, isReadOnly, describeSettings, listMissingSettings } = require("../config");
 const { assertReadOnlyModeEnabled } = require("../imap/guard");
-const { checkOnce, getCounters } = require("./runCheck");
+const { checkOnce } = require("./runCheck");
+const { getCounters } = require("./counters");
 const { inspect } = require("./watchdog");
 
 /** Первый проход — не сразу после старта: даём серверу подняться. */
