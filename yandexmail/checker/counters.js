@@ -18,16 +18,24 @@ const counters = {
   blacklisted: 0,
   noPhone: 0,
   errors: 0,
+  errorsInRow: 0,
+  skipped: 0,
   lastSuccessAt: null,
   lastMailSeenAt: Date.now(),
 };
 
 function bump(field, by = 1) {
-  if (typeof counters[field] === "number") counters[field] += by;
+  if (typeof counters[field] !== "number") {
+    console.error(`[yandexmail/счётчики] неизвестное поле «${field}» — опечатка в коде`);
+    return;
+  }
+  counters[field] += by;
+  if (field === "errors") counters.errorsInRow += 1;
 }
 
 function markSuccess() {
   counters.lastSuccessAt = new Date().toISOString();
+  counters.errorsInRow = 0;
 }
 
 function markMailSeen() {

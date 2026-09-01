@@ -97,7 +97,6 @@ function describeSettings() {
 }
 
 module.exports = {
-  DEFAULTS,
   isEnabled,
   isShadowMode,
   isReadOnly,

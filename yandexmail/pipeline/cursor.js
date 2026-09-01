@@ -124,4 +124,4 @@ async function planNextRead(mailboxState, { live = false } = {}) {
   return { mode: "uid", lastUid: saved.lastUid, hours: 0, reason: `идём от закладки #${saved.lastUid} (${saved.source})` };
 }
 
-module.exports = { TABLE, COLD_START_HOURS, readCursor, writeCursor, planNextRead };
+module.exports = { TABLE, COLD_START_HOURS, writeCursor, planNextRead };

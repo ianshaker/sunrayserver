@@ -83,7 +83,7 @@ const { registerGmailAuthRoutes, startEmailChecker } = require("./postamails");
 
 // Чтение Яндекс.Почты по IMAP — второй источник заявок, только на чтение.
 // Пока YANDEX_IMAP_ENABLED=false, модуль не создаёт ни таймеров, ни соединений.
-const { startYandexMailChecker } = require("./yandexmail");
+const { startYandexMailChecker, startMailWatchdog } = require("./yandexmail");
 
 // --- Обработка звонков: расшифровка (Google STT) + саммари (Gemini) --- //
 const {
@@ -213,6 +213,7 @@ fastify.listen(
     console.log(`Your app is listening on ${address}`);
     startEmailChecker(telegramBot);
     startYandexMailChecker();
+    startMailWatchdog();
     startDirectoryRefresh();
     startBotChatsRefresh();
     startAssistant();

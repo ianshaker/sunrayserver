@@ -1,15 +1,16 @@
 // ============================================================================
-// yandexmail/pipeline/processMail — что делать с письмом, признанным заявкой.
+// yandexmail/pipeline/processMail — показ письма в чате для тестового режима.
 //
-// На время теста ветка Яндекса НЕ заводит карточек и не тратит номера заявок:
-// это делает только ветка Gmail. Здесь письмо разбирается тем же кодом, что и
-// в Gmail, и отправляется в чат с пометкой, что источник новый.
+// Работает только когда YANDEX_IMAP_SHADOW_MODE=true. В боевом режиме письмо
+// уходит в общую обработку (insertAppealFromEmail), и этот файл не участвует.
 //
-// В чат уходит всё, что стало бы заявкой, — и новое, и то, что Gmail уже завёл.
-// Так сделано намеренно: Gmail успевает раньше на десятки секунд, и если молчать
-// на повторах, ветка Яндекса не покажет вообще ничего, а тест потеряет смысл.
-// Молча отсекается только рассылка из чёрного списка и письма без номера —
-// иначе чат утонет: через форму сайта идёт весь поток, включая спам.
+// Здесь письмо разбирается тем же кодом, что и в ветке Gmail, но карточка не
+// заводится и номер заявки не тратится: тест ничего не меняет в CRM.
+//
+// В чат уходит всё, что стало бы заявкой, — и новое, и то, что уже заведено.
+// Так сделано намеренно: при двух работающих источниках второй всегда видел бы
+// «повтор» и молчал, а тест потерял бы смысл. Молча отсекается только рассылка
+// из чёрного списка и письма без номера — иначе чат утонет.
 // ============================================================================
 
 const { simpleParser } = require("mailparser");
@@ -26,22 +27,9 @@ const {
 const { findSpamPhone } = require("../../postamails/appeals/spamPhones");
 const { findExistingAppealByPhone } = require("../../postamails/appeals/supabaseAppeals");
 const { notifyIncomingChat } = require("../../postamails/telegramNotify");
+const { formatMskDateTime } = require("../../lib/mskTime");
 
 const esc = (value) => escapeHtml(value || "");
-
-/** Время письма по-московски и по-человечески: «01.09.2026, 12:11». */
-function formatMsk(value) {
-  const date = value ? new Date(value) : null;
-  if (!date || Number.isNaN(date.getTime())) return "время неизвестно";
-  return date.toLocaleString("ru-RU", {
-    timeZone: "Europe/Moscow",
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
 
 /** Пометка, по которой Ян отличает сообщения нового источника от обычных. */
 const TEST_MARK = "🧪 <b>ЯНДЕКС · ТЕСТ НОВОГО ИСТОЧНИКА</b>";
@@ -92,7 +80,7 @@ async function processAppealMail(rawSource, header) {
       `Телефон: <b>${esc(normalizedPhone)}</b>\n` +
       `Город: <b>${esc(city)}</b>\n` +
       `Продукт: <b>${esc(product)}</b>\n` +
-      `Письмо от ${esc(formatMsk(header.date))}` +
+      `Письмо от ${esc(formatMskDateTime(header.date))}` +
       formatRawEmailBlockForTelegram(text),
   );
 

@@ -3,68 +3,47 @@
 //
 // Модуль ничего не запускает при подключении: ни таймеров, ни соединений.
 // Пока его никто не вызвал — его как будто нет. Это сделано намеренно, чтобы
-// появление папки в проекте не могло повлиять на работающую почту через Gmail.
+// появление папки в проекте не могло повлиять на работающую почту.
 //
 // Что умеет:
-//   - описать свои настройки, не раскрывая пароль;
-//   - подключиться к ящику и открыть папку только на чтение;
-//   - принести заголовки писем и, отдельно, письмо целиком;
-//   - проверить сам себя и объяснить человеку, что не так.
+//   - читать почту по расписанию и заводить заявки тем же кодом, что Gmail;
+//   - следить за тишиной и будить человека, если почту никто не читает;
+//   - проверять сам себя и объяснять, что не так.
 //
 // Чего не умеет и не будет: помечать, перемещать, удалять письма и отправлять
 // почту. Таких команд в модуле нет, и это проверяется его же средствами.
+//
+// Наружу отдаётся только то, что реально нужно серверу и ручной проверке.
+// Внутренние части (выборка писем, закладка, правила отбора) берутся напрямую
+// из своих файлов — так видно, кто чем пользуется.
 // ============================================================================
 
-const config = require("./config");
-const { withReadOnlyMailbox, YandexImapError } = require("./imap/client");
-const {
-  fetchRecentHeaders,
-  fetchHeadersAfterUid,
-  fetchRawSource,
-  readMailboxState,
-  normalizeMessageId,
-} = require("./imap/fetch");
-const {
-  scanModuleForMutations,
-  assertReadOnlyModeEnabled,
-  ReadOnlyViolation,
-} = require("./imap/guard");
-const authRetry = require("./imap/authRetry");
-const { runHealthCheck, formatReport } = require("./health/check");
+const { describeSettings, isEnabled, isShadowMode, isReadOnly } = require("./config");
 const { startYandexMailChecker, stopYandexMailChecker } = require("./checker/scheduler");
-const { checkOnce, getCounters } = require("./checker/runCheck");
-const rules = require("./pipeline/rules");
+const { startMailWatchdog, stopMailWatchdog } = require("./checker/watchdog");
+const { getCounters } = require("./checker/counters");
+const { runHealthCheck, formatReport } = require("./health/check");
+const { YandexImapError } = require("./imap/client");
+const { ReadOnlyViolation } = require("./imap/guard");
 
 module.exports = {
   // настройки и состояние
-  describeSettings: config.describeSettings,
-  isEnabled: config.isEnabled,
-  isShadowMode: config.isShadowMode,
-  isReadOnly: config.isReadOnly,
+  describeSettings,
+  isEnabled,
+  isShadowMode,
+  isReadOnly,
+  getCounters,
 
-  // работа с почтой, всё только на чтение
-  withReadOnlyMailbox,
-  fetchRecentHeaders,
-  fetchHeadersAfterUid,
-  fetchRawSource,
-  readMailboxState,
-  normalizeMessageId,
-
-  // работа по расписанию: при выключенном рубильнике не делает ничего
+  // работа: при выключенном рубильнике проверка почты не запускается,
+  // а сторож работает всегда — выключенный источник тоже повод разбудить
   startYandexMailChecker,
   stopYandexMailChecker,
-  checkOnce,
-  getCounters,
-  rules,
+  startMailWatchdog,
+  stopMailWatchdog,
 
-  // проверки и защита
+  // ручная проверка
   runHealthCheck,
   formatReport,
-  scanModuleForMutations,
-  assertReadOnlyModeEnabled,
-
-  // повторы, пока пароль приложения включается
-  authRetry,
 
   // ошибки
   YandexImapError,
