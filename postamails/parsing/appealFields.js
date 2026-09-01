@@ -12,6 +12,7 @@
 
 const { parseEmailFields, pickField } = require("./fields");
 const { detectFormType } = require("./formTypes");
+const { resolveCity } = require("./city");
 
 /** Понятие → как оно называется в письмах разных форм. */
 const FIELD_SYNONYMS = {
@@ -133,6 +134,8 @@ function parseAppealFields(emailText) {
   return {
     form: { key: form.key, label: form.label },
     ...byConcept,
+    // Города может не быть в полях — тогда он берётся из ссылки на форму.
+    city: resolveCity(byConcept.city, emailText),
     message: extractClientMessage(emailText),
   };
 }
