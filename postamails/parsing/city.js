@@ -89,4 +89,4 @@ function resolveCity(fieldCity, emailText) {
   return cityFromLink(emailText);
 }
 
-module.exports = { CITY_BY_SUBDOMAIN, cityFromLink, resolveCity };
+module.exports = { CITY_BY_SUBDOMAIN, resolveCity };

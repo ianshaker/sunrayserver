@@ -101,8 +101,6 @@ function buildContractMessage({ contract, fields, spamNotice = "" }) {
 }
 
 module.exports = {
-  line,
-  title,
   buildNewAppealMessage,
   buildDuplicateMessage,
   buildContractMessage,

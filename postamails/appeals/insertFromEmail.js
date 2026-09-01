@@ -7,7 +7,7 @@ const {
   insertAppealRecord,
 } = require("./supabaseAppeals");
 const { extractPhone, extractPhoneRaw } = require("../parsing/phone");
-const { extractCity, extractProduct } = require("../parsing/emailFields");
+const { extractProduct } = require("../parsing/emailFields");
 const { parseAppealFields } = require("../parsing/appealFields");
 const {
   buildNewAppealMessage,
@@ -91,8 +91,9 @@ async function insertAppealFromEmail(emailText) {
     };
   }
 
-  // Город из полей письма, а если поля нет — из ссылки на форму.
-  const city = fields.city || extractCity(emailText);
+  // Разбор уже искал город и в полях письма, и в ссылке на форму. Здесь остаётся
+  // только значение по умолчанию: карточка без города в CRM выглядит поломанной.
+  const city = fields.city || "Без города";
   const product_type = extractProduct(emailText);
   const appeal_id = await getFreeAppealId();
   await markAppealIdUsed(appeal_id);

@@ -11,16 +11,10 @@
 // ============================================================================
 
 const { escapeHtml } = require("./emailBodyForTelegram");
+const { FOOTER_MARKERS } = require("./appealFields");
 
 /** Предел с запасом: у Telegram на всё сообщение около 4000 знаков. */
 const MAX_LENGTH = 1200;
-
-/** Строки, которые пишет не человек, а шаблон формы. */
-const NOISE_LINES = [
-  /^сообщение сгенерировано автоматически/i,
-  /^-{5,}$/,
-  /^={5,}$/,
-];
 
 /**
  * Привести текст клиента к виду, годному для чата: без шаблонного мусора,
@@ -33,7 +27,8 @@ function normalizeClientMessage(raw) {
   const lines = String(raw || "")
     .split(/\r?\n/)
     .map((line) => line.trim())
-    .filter((line) => !NOISE_LINES.some((noise) => noise.test(line)));
+    // Шаблонный мусор — те же строки, по которым обрывается разбор письма.
+    .filter((line) => !FOOTER_MARKERS.some((marker) => marker.test(line)));
 
   const text = lines
     .join("\n")
