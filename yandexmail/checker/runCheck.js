@@ -17,6 +17,8 @@ const { planNextRead, writeCursor } = require("../pipeline/cursor");
 const { isAppeal } = require("../pipeline/rules");
 const { processAppealMail } = require("../pipeline/processMail");
 const { isShadowMode } = require("../config");
+const { extractText } = require("../pipeline/processMail");
+const { insertAppealFromEmail } = require("../../postamails/appeals/insertFromEmail");
 
 /** Сколько писем разбираем за один проход, чтобы не залипнуть надолго. */
 const MAX_PER_RUN = 30;
@@ -25,6 +27,8 @@ const counters = {
   runs: 0,
   seen: 0,
   appeals: 0,
+  created: 0,
+  contract: 0,
   wouldCreate: 0,
   duplicate: 0,
   blacklisted: 0,
@@ -46,7 +50,16 @@ async function checkOnce() {
   try {
     await withReadOnlyMailbox(async (client) => {
       const mailbox = readMailboxState(client);
-      const plan = await planNextRead(mailbox);
+      const live = !isShadowMode();
+      const plan = await planNextRead(mailbox, { live });
+
+      // Боевой старт без закладки: историю не трогаем, просто отмечаем, где сейчас.
+      if (plan.mode === "from_now") {
+        await writeCursor({ uidValidity: mailbox.uidValidity, lastUid: plan.lastUid });
+        counters.lastSuccessAt = new Date().toISOString();
+        console.log(`${prefix} ${plan.reason} (закладка #${plan.lastUid})`);
+        return;
+      }
 
       const headers =
         plan.mode === "uid"
@@ -79,15 +92,29 @@ async function checkOnce() {
             continue;
           }
 
-          if (isShadowMode()) {
+          if (live) {
+            // Боевой режим: та же обработка, что и у Gmail. Карточка, поиск
+            // дублей, чёрный список, сообщения в чат — всё общее, ничего
+            // своего: два источника обязаны вести себя одинаково.
+            const text = await extractText(raw);
+            const result = await insertAppealFromEmail(text);
+
+            if (result.outcome === "created") counters.created += 1;
+            else if (result.outcome === "duplicate") counters.duplicate += 1;
+            else if (result.outcome === "blacklisted") counters.blacklisted += 1;
+            else if (result.outcome === "no_phone") counters.noPhone += 1;
+            else if (result.outcome === "contract") counters.contract += 1;
+
+            console.log(
+              `${prefix} письмо #${header.uid}: ${result.outcome}` +
+                (result.appealNumber ? ` → заявка ${result.appealNumber}` : ""),
+            );
+          } else {
             const result = await processAppealMail(raw, header);
             if (result.outcome === "would_create") counters.wouldCreate += 1;
             else if (result.outcome === "seen_duplicate") counters.duplicate += 1;
             else if (result.outcome === "blacklisted") counters.blacklisted += 1;
             else if (result.outcome === "no_phone") counters.noPhone += 1;
-          } else {
-            // Боевой режим появится отдельной буквой, после решения владельца.
-            console.log(`${prefix} боевой режим ещё не включён, письмо #${header.uid} пропущено`);
           }
         } catch (error) {
           counters.errors += 1;

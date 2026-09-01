@@ -79,16 +79,40 @@ async function writeCursor({ uidValidity, lastUid }) {
 
 /**
  * С какого места читать в этот проход.
- * @param {{uidValidity: string|null}} mailboxState
- * @returns {Promise<{mode: 'uid'|'recent', lastUid: number, hours: number, reason: string}>}
+ *
+ * В боевом режиме история не разбирается вовсе: без закладки чтение начинается
+ * с текущего момента. Иначе первый же проход после перезапуска завёл бы заново
+ * все заявки за последние часы — а заявку нельзя ни потерять, ни удвоить.
+ *
+ * @param {{uidValidity: string|null, uidNext: string|null}} mailboxState
+ * @param {{live?: boolean}} options live — боевой режим, карточки заводятся
+ * @returns {Promise<{mode: 'uid'|'recent'|'from_now', lastUid: number, hours: number, reason: string}>}
  */
-async function planNextRead(mailboxState) {
+async function planNextRead(mailboxState, { live = false } = {}) {
   const saved = await readCursor();
+  const uidNow = Number(mailboxState.uidNext || 0) - 1;
 
   if (!saved || !saved.lastUid) {
+    if (live) {
+      return {
+        mode: "from_now",
+        lastUid: Math.max(uidNow, 0),
+        hours: 0,
+        reason: "боевой режим, закладки нет — начинаем с текущего момента, историю не разбираем",
+      };
+    }
     return { mode: "recent", lastUid: 0, hours: COLD_START_HOURS, reason: "закладки нет, холодный старт" };
   }
+
   if (saved.uidValidity && mailboxState.uidValidity && saved.uidValidity !== mailboxState.uidValidity) {
+    if (live) {
+      return {
+        mode: "from_now",
+        lastUid: Math.max(uidNow, 0),
+        hours: 0,
+        reason: `поколение ящика сменилось (${saved.uidValidity} → ${mailboxState.uidValidity}), боевой режим — начинаем заново с текущего момента`,
+      };
+    }
     return {
       mode: "recent",
       lastUid: 0,
@@ -96,6 +120,7 @@ async function planNextRead(mailboxState) {
       reason: `поколение ящика сменилось (${saved.uidValidity} → ${mailboxState.uidValidity}), пересверка за сутки`,
     };
   }
+
   return { mode: "uid", lastUid: saved.lastUid, hours: 0, reason: `идём от закладки #${saved.lastUid} (${saved.source})` };
 }
 

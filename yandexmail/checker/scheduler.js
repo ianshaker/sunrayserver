@@ -23,8 +23,9 @@ function logSummary() {
   const c = getCounters();
   console.log(
     `[yandexmail] за час: проходов ${c.runs}, писем просмотрено ${c.seen}, наших ${c.appeals} — ` +
-      `новых заявок ${c.wouldCreate}, повторов ${c.duplicate}, из чёрного списка ${c.blacklisted}, ` +
-      `без номера ${c.noPhone}, ошибок ${c.errors}; последний успешный проход: ${c.lastSuccessAt || "не было"}`,
+      `заведено ${c.created}, показано в тесте ${c.wouldCreate}, повторов ${c.duplicate}, ` +
+      `из чёрного списка ${c.blacklisted}, без номера ${c.noPhone}, договоров ${c.contract}, ` +
+      `ошибок ${c.errors}; последний успешный проход: ${c.lastSuccessAt || "не было"}`,
   );
 }
 
@@ -60,7 +61,7 @@ function startYandexMailChecker() {
 
   const mode = isShadowMode()
     ? "тест: сообщения в чат с пометкой, карточки НЕ заводятся"
-    : "боевой режим (ещё не реализован — письма будут пропускаться)";
+    : "БОЕВОЙ: заявки заводятся так же, как из Gmail";
 
   console.log(
     `[yandexmail] запущен. Ящик ${settings.user}, папка ${settings.mailbox}, ` +
