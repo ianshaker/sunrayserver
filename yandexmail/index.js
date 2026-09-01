@@ -31,6 +31,9 @@ const {
 } = require("./imap/guard");
 const authRetry = require("./imap/authRetry");
 const { runHealthCheck, formatReport } = require("./health/check");
+const { startYandexMailChecker, stopYandexMailChecker } = require("./checker/scheduler");
+const { checkOnce, getCounters } = require("./checker/runCheck");
+const rules = require("./pipeline/rules");
 
 module.exports = {
   // настройки и состояние
@@ -46,6 +49,13 @@ module.exports = {
   fetchRawSource,
   readMailboxState,
   normalizeMessageId,
+
+  // работа по расписанию: при выключенном рубильнике не делает ничего
+  startYandexMailChecker,
+  stopYandexMailChecker,
+  checkOnce,
+  getCounters,
+  rules,
 
   // проверки и защита
   runHealthCheck,
