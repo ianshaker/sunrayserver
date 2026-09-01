@@ -5,9 +5,11 @@
 // это делает только ветка Gmail. Здесь письмо разбирается тем же кодом, что и
 // в Gmail, и отправляется в чат с пометкой, что источник новый.
 //
-// В чат уходит только то, что стало бы новой заявкой. Спам из чёрного списка
-// и повторы по номеру считаются молча — иначе тест зальёт чат сотней сообщений
-// в сутки, ведь через форму сайта идёт весь поток, включая рассылку.
+// В чат уходит всё, что стало бы заявкой, — и новое, и то, что Gmail уже завёл.
+// Так сделано намеренно: Gmail успевает раньше на десятки секунд, и если молчать
+// на повторах, ветка Яндекса не покажет вообще ничего, а тест потеряет смысл.
+// Молча отсекается только рассылка из чёрного списка и письма без номера —
+// иначе чат утонет: через форму сайта идёт весь поток, включая спам.
 // ============================================================================
 
 const { simpleParser } = require("mailparser");
@@ -59,18 +61,19 @@ async function processAppealMail(rawSource, header) {
   }
 
   const existing = await findExistingAppealByPhone(normalizedPhone);
-  if (existing) {
-    return { outcome: "duplicate", phone: normalizedPhone };
-  }
 
   const name = extractName(text);
   const city = extractCity(text);
   const product = extractProduct(text);
 
+  const verdict = existing
+    ? `Gmail эту заявку уже завёл — <b>${esc(existing.info?.appeal_id || existing.info?.appeal_number || "номер не показан")}</b>`
+    : "Заявка новая: Gmail её пока не заводил";
+
   await notifyIncomingChat(
     `${TEST_MARK}\n` +
-      `Так выглядела бы заявка, если бы её нашла почта Яндекса напрямую.\n` +
-      `Карточка НЕ заведена — её по-прежнему заводит Gmail.\n\n` +
+      `Письмо найдено напрямую в почте Яндекса. Карточка НЕ заведена — её заводит Gmail.\n` +
+      `${verdict}\n\n` +
       `Клиент: <b>${esc(name)}</b>\n` +
       `Телефон: <b>${esc(normalizedPhone)}</b>\n` +
       `Город: <b>${esc(city)}</b>\n` +
@@ -79,7 +82,7 @@ async function processAppealMail(rawSource, header) {
       formatRawEmailBlockForTelegram(text),
   );
 
-  return { outcome: "would_create", phone: normalizedPhone };
+  return { outcome: existing ? "seen_duplicate" : "would_create", phone: normalizedPhone };
 }
 
 module.exports = { TEST_MARK, extractText, processAppealMail };

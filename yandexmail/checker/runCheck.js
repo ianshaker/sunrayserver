@@ -82,7 +82,7 @@ async function checkOnce() {
           if (isShadowMode()) {
             const result = await processAppealMail(raw, header);
             if (result.outcome === "would_create") counters.wouldCreate += 1;
-            else if (result.outcome === "duplicate") counters.duplicate += 1;
+            else if (result.outcome === "seen_duplicate") counters.duplicate += 1;
             else if (result.outcome === "blacklisted") counters.blacklisted += 1;
             else if (result.outcome === "no_phone") counters.noPhone += 1;
           } else {
