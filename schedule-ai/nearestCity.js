@@ -2,7 +2,7 @@
 // Поиск «ближайшего события в городе X» — ветка query_type: "nearest_city".
 //
 // Всё, кроме двух строк текста (cityRaw, typeFilterRaw — как назвал менеджер),
-// делает код: резолюция города по whitelist (cityAliases), резолюция мастера
+// делает код: резолюция города по справочнику (модуль cities), резолюция мастера
 // по whitelist (masterAliases), сам SQL, группировка результатов. LLM здесь
 // вообще не участвует — это отдельная гарантия точности для новой ветки,
 // которую ещё не проверяли в бою (см. commentary.js — для full_day/time_point
@@ -10,10 +10,14 @@
 // ============================================================================
 
 const { MAX_NEAREST_GROUPS, MAX_NEARBY_RADIUS_KM } = require("./config");
-const { resolveCityName } = require("./cityAliases");
+const {
+  resolveCity,
+  hasCoordinates,
+  citiesByName,
+  distanceBetweenCities,
+} = require("../cities");
 const { resolveMasterName } = require("./masterAliases");
 const { getCityEventsFromDate, getUpcomingEvents, getMasterEventsForDate } = require("./queries");
-const { distanceBetweenCities, hasCoordinates } = require("./cityCoordinates");
 const { nowMskParts } = require("../tasks/create/time");
 
 // Типы событий как они реально хранятся в eventsnew.type (см. .cursor/rules).
@@ -96,7 +100,7 @@ async function buildGroups(matchedRows, rowMeta = null) {
  * >}
  */
 async function findNearestCitySchedule({ cityRaw, mastersRaw, typeFilterRaw }) {
-  const cityResolved = resolveCityName(cityRaw);
+  const cityResolved = await resolveCity(cityRaw);
   if (!cityResolved.found) {
     return { status: "city_not_found", cityRaw };
   }
@@ -127,16 +131,18 @@ async function findNearestCitySchedule({ cityRaw, mastersRaw, typeFilterRaw }) {
   // Шаг 2: точных совпадений нет — ищем в соседних городах по прямому
   // расстоянию (Хаверсин, без API). Честно: если у искомого города нет
   // координат (агрегированные направления МСК) — фолбэк невозможен, не гадаем.
-  if (!hasCoordinates(cityResolved.canonical)) {
+  if (!(await hasCoordinates(cityResolved.canonical))) {
     return { status: "no_matches", cityCanonical: cityResolved.canonical, typeFilterResolved, nearbyChecked: false };
   }
 
   const allRows = await getUpcomingEvents(fromDate, typeFilterResolved);
+  // Справочник берём один раз на весь перебор: строк бывают сотни.
+  const cityIndex = await citiesByName();
   const nearbyCandidates = [];
   for (const row of allRows) {
     if (!row.city) continue;
     if (mastersCanonicalSet.size && !mastersCanonicalSet.has(normalizeForCompare(row.master))) continue;
-    const dist = distanceBetweenCities(cityResolved.canonical, row.city);
+    const dist = distanceBetweenCities(cityIndex, cityResolved.canonical, row.city);
     if (dist == null || dist <= 0 || dist > MAX_NEARBY_RADIUS_KM) continue; // dist<=0 — тот же город, там уже пусто
     nearbyCandidates.push({ ...row, __distanceKm: dist });
   }

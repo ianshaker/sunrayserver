@@ -33,7 +33,7 @@ async function getMasterEventsForDate(canonicalMaster, date) {
  * отсортированные по дате и времени — сырьё для поиска «ближайшего события
  * в городе X» (nearestCity.js). Таблица небольшая (~150 строк) — фильтрация
  * по мастеру/типу делается уже в JS после выборки, без лишних round-trip'ов.
- * @param {string} canonicalCity — точное значение из cityAliases.CITIES
+ * @param {string} canonicalCity — точное название из справочника (модуль cities)
  * @param {string} fromDateStr — "YYYY-MM-DD", включительно
  * @param {string|null} typeFilterResolved — точный тип из eventsnew.type или null
  */
