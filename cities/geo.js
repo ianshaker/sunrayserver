@@ -36,4 +36,4 @@ function distanceBetweenCities(byName, cityA, cityB) {
   return haversineKm(a.lat, a.lng, b.lat, b.lng);
 }
 
-module.exports = { haversineKm, distanceBetweenCities };
+module.exports = { distanceBetweenCities };

@@ -136,14 +136,31 @@ async function findNearestCitySchedule({ cityRaw, mastersRaw, typeFilterRaw }) {
   }
 
   const allRows = await getUpcomingEvents(fromDate, typeFilterResolved);
-  // Справочник берём один раз на весь перебор: строк бывают сотни.
+  // Справочник для расстояний берём один раз на весь перебор: строк бывают
+  // сотни. Разбор написания ниже ходит в тот же кэш, но по строке — дёшево.
   const cityIndex = await citiesByName();
+  // Город события в базе может быть записан не так, как в справочнике —
+  // «Королев» через е, «г. Клин». Разбираем его тем же правилом, что и строку
+  // менеджера, иначе такое событие молча выпадает из поиска соседей.
+  const rowCityCache = new Map();
+  const canonicalRowCity = async (raw) => {
+    if (!rowCityCache.has(raw)) {
+      rowCityCache.set(raw, (await resolveCity(raw)).canonical);
+    }
+    return rowCityCache.get(raw);
+  };
   const nearbyCandidates = [];
   for (const row of allRows) {
     if (!row.city) continue;
     if (mastersCanonicalSet.size && !mastersCanonicalSet.has(normalizeForCompare(row.master))) continue;
-    const dist = distanceBetweenCities(cityIndex, cityResolved.canonical, row.city);
-    if (dist == null || dist <= 0 || dist > MAX_NEARBY_RADIUS_KM) continue; // dist<=0 — тот же город, там уже пусто
+    const rowCity = await canonicalRowCity(row.city);
+    if (!rowCity) continue;
+    const dist = distanceBetweenCities(cityIndex, cityResolved.canonical, rowCity);
+    if (dist == null || dist > MAX_NEARBY_RADIUS_KM) continue;
+    // Расстояние ноль — тот же город. Точный поиск шага 1 его уже смотрел, но
+    // только по побайтовому совпадению: событие с «Королев» через е он не нашёл.
+    // Такое пропускать нельзя — это и есть ближайшая работа.
+    if (dist <= 0 && row.city === cityResolved.canonical) continue;
     nearbyCandidates.push({ ...row, __distanceKm: dist });
   }
 

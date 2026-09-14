@@ -66,4 +66,4 @@ function resolveCityName(names, rawName) {
   return { raw: rawName, canonical: null, found: false };
 }
 
-module.exports = { normalize, levenshtein, resolveCityName };
+module.exports = { resolveCityName };

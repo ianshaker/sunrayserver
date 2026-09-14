@@ -178,4 +178,4 @@ function fallbackCities() {
   });
 }
 
-module.exports = { FALLBACK_CITY_NAMES, FALLBACK_CITY_COORDINATES, fallbackCities };
+module.exports = { fallbackCities };

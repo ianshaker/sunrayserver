@@ -56,12 +56,16 @@ async function getCities({ force = false } = {}) {
       .catch((error) => {
         if (!fallbackReported) {
           fallbackReported = true;
+          const source = cache ? "на прошлом списке из базы" : "на резерве из кода";
           console.error(
-            `[cities] справочник из базы не прочитан (${error.message}) — работаем на резерве`,
+            `[cities] справочник из базы не прочитан (${error.message}) — работаем ${source}`,
           );
         }
-        // Старый кэш лучше резерва: он хотя бы приходил из базы.
-        return cache || fallbackCities();
+        // Отказ тоже запоминаем на те же десять минут: иначе каждый вопрос
+        // к боту снова шёл в упавшую базу и ждал таймаут.
+        cache = cache || fallbackCities();
+        cachedAt = Date.now();
+        return cache;
       })
       .finally(() => {
         inFlight = null;
@@ -71,10 +75,4 @@ async function getCities({ force = false } = {}) {
   return inFlight;
 }
 
-/** Сбросить кэш — например, после того как в CRM завели город. */
-function resetCache() {
-  cache = null;
-  cachedAt = 0;
-}
-
-module.exports = { getCities, resetCache, CACHE_TTL_MS };
+module.exports = { getCities };

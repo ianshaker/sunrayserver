@@ -8,14 +8,15 @@
 // Пользоваться так:
 //   const cities = require("../cities");
 //   const resolved = await cities.resolveCity("в Можайске");   // → «Можайск»
-//   const km = await cities.distanceBetween("Дубна", "Клин");  // → 43.6
+//   const index = await cities.citiesByName();
+//   const km = cities.distanceBetweenCities(index, "Дубна", "Клин");  // → 43.6
 //
 // Подробности — в README.md рядом.
 // ============================================================================
 
-const { getCities, resetCache } = require("./store");
-const { resolveCityName, normalize } = require("./matching");
-const { distanceBetweenCities, haversineKm } = require("./geo");
+const { getCities } = require("./store");
+const { resolveCityName } = require("./matching");
+const { distanceBetweenCities } = require("./geo");
 
 /** Названия городов справочника. */
 async function cityNames() {
@@ -38,12 +39,6 @@ async function resolveCity(rawName) {
   return resolveCityName(names, rawName);
 }
 
-/** Расстояние между городами справочника, км. null — если координат нет. */
-async function distanceBetween(cityA, cityB) {
-  const byName = await citiesByName();
-  return distanceBetweenCities(byName, cityA, cityB);
-}
-
 /** Есть ли у города координаты: у направлений МСК их нет — это не точки. */
 async function hasCoordinates(cityName) {
   const byName = await citiesByName();
@@ -52,16 +47,10 @@ async function hasCoordinates(cityName) {
 }
 
 module.exports = {
-  getCities,
+  resolveCity,
+  hasCoordinates,
+  citiesByName,
   // Счёт по готовому справочнику: берут, когда расстояний нужно много подряд
   // (перебор событий), чтобы не ждать справочник на каждой строке.
   distanceBetweenCities,
-  cityNames,
-  citiesByName,
-  resolveCity,
-  distanceBetween,
-  hasCoordinates,
-  resetCache,
-  normalize,
-  haversineKm,
 };
