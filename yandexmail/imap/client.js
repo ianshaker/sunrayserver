@@ -46,7 +46,7 @@ function classify(error) {
 }
 
 function buildClient(config) {
-  return new ImapFlow({
+  const client = new ImapFlow({
     host: config.host,
     port: config.port,
     secure: config.secure,
@@ -56,6 +56,19 @@ function buildClient(config) {
     emitLogs: false,
     clientInfo: { name: "SunRay server", version: "1.0" },
   });
+
+  // Обрыв соединения библиотека сообщает событием «error», а не отказом
+  // промиса — оно приходит уже после нашего catch. Без слушателя Node
+  // превращает такое событие в необработанное исключение и гасит весь
+  // сервер: 14.09.2026 Яндекс закрыл сокет посреди прохода, imapflow
+  // бросил «Already logged out», и Render перезапускал процесс.
+  client.on("error", (error) => {
+    console.error(
+      `[yandexmail/imap] соединение оборвалось: ${safeMessage(error, config.password)}`,
+    );
+  });
+
+  return client;
 }
 
 /**
