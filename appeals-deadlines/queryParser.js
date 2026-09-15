@@ -117,7 +117,9 @@ async function parseDeadlineQuery(text, { replyText } = {}) {
     }
   }
 
-  let limit = 1;
+  // Без числа: списки (на дату, прошедшие) — целиком до потолка, «самый срочный» — один.
+  let limit = mode === "urgent" ? 1 : QUERY_LIST_CAP;
+  let limitRequested = false;
   if (all) {
     limit = QUERY_LIST_CAP;
   } else if (parsed.limit != null && parsed.limit !== "") {
@@ -126,6 +128,7 @@ async function parseDeadlineQuery(text, { replyText } = {}) {
       return clarify("Не понял, сколько заявок показать — скажите число или «все».");
     }
     limit = Math.min(n, QUERY_LIST_CAP);
+    limitRequested = true;
   }
 
   return {
@@ -133,6 +136,7 @@ async function parseDeadlineQuery(text, { replyText } = {}) {
     mode,
     date,
     limit,
+    limitRequested,
     all,
     domainOk,
   };

@@ -244,7 +244,7 @@ function registerAssistant() {
 
       await dispatchIntent(ctx, classification);
     } catch (error) {
-      console.error("[assistant] ошибка обработки:", error.message);
+      console.error("[assistant] ошибка обработки:", error.stack || error.message);
       if (chatId != null) {
         try {
           if (ctx?.statusMsg?.messageId) {

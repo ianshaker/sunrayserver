@@ -92,6 +92,7 @@ function formatQueryCard(appeal) {
  *   appeals: object[],
  *   truncated: boolean,
  *   limit?: number,
+ *   limitRequested?: boolean,
  * }} opts
  * @returns {{
  *   empty: boolean,
@@ -101,7 +102,7 @@ function formatQueryCard(appeal) {
  *   parseMode: 'HTML',
  * }}
  */
-function buildDeadlineQueryMessages({ mode, date, appeals, truncated, limit }) {
+function buildDeadlineQueryMessages({ mode, date, appeals, truncated, limit, limitRequested }) {
   if (!appeals.length) {
     if (mode === "urgent") {
       return {
@@ -155,9 +156,13 @@ function buildDeadlineQueryMessages({ mode, date, appeals, truncated, limit }) {
 
   let footer = null;
   if (truncated) {
-    footer = `<i>Показаны первые ${appeals.length}. Чтобы сузить — попросите число, например «две заявки».</i>`;
+    footer =
+      appeals.length === 1
+        ? "<i>Есть и другие — скажите, сколько показать, например «5 срочных».</i>"
+        : `<i>Показаны первые ${appeals.length}, есть ещё. Уточните дату или назовите число.</i>`;
   } else if (
     mode === "recent_past" &&
+    limitRequested &&
     limit != null &&
     appeals.length < limit
   ) {

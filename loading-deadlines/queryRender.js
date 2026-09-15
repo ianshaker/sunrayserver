@@ -4,7 +4,7 @@
 // ============================================================================
 
 const { DIALOG_MAX_CHARS } = require("./config");
-const { formatDeadlineDateTimeHuman, escHtml, normalizeAppealNumber } = require("./messages");
+const { formatIsoDateHuman, formatDeadlineDateTimeHuman, escHtml, normalizeAppealNumber } = require("./messages");
 
 /**
  * Карточка просмотра (без memo про закрытие дедлайна).
@@ -72,9 +72,10 @@ function formatQueryCard(event) {
  *   events: object[],
  *   truncated: boolean,
  *   limit?: number,
+ *   limitRequested?: boolean,
  * }} opts
  */
-function buildDeadlineQueryMessages({ mode, date, events, truncated, limit }) {
+function buildDeadlineQueryMessages({ mode, date, events, truncated, limit, limitRequested }) {
   if (!events.length) {
     if (mode === "urgent") {
       return {
@@ -128,9 +129,13 @@ function buildDeadlineQueryMessages({ mode, date, events, truncated, limit }) {
 
   let footer = null;
   if (truncated) {
-    footer = `<i>Показаны первые ${events.length}. Чтобы сузить — попросите число, например «две заявки».</i>`;
+    footer =
+      events.length === 1
+        ? "<i>Есть и другие — скажите, сколько показать, например «5 срочных».</i>"
+        : `<i>Показаны первые ${events.length}, есть ещё. Уточните дату или назовите число.</i>`;
   } else if (
     mode === "recent_past" &&
+    limitRequested &&
     limit != null &&
     events.length < limit
   ) {

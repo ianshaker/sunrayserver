@@ -125,6 +125,7 @@ async function handle(ctx) {
     events: result.events,
     truncated: result.truncated,
     limit: parsed.limit,
+    limitRequested: parsed.limitRequested,
   });
 
   console.log(
