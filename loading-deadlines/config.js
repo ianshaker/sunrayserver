@@ -11,11 +11,8 @@ const VERTEX_LOCATION = process.env.LOADING_DEADLINES_VERTEX_LOCATION || "us-cen
 /** Telegram-чат «Погрузка» / «НА ЗАМЕР» — карточки и пинги. */
 const LOADING_DEADLINE_CHAT_ID = -1002669673493;
 
-/**
- * Часовой пояс для проверки рабочего окна и «сейчас».
- * eventsnew.deadline — календарный день; deadline_time — MSK wall-clock.
- */
-const MSK_OFFSET_HOURS = 3;
+// Московское время — в lib/mskTime.js. eventsnew.deadline — календарный день,
+// deadline_time — время по Москве.
 
 /** Рабочий час начала (включительно), MSK. */
 const WORK_HOUR_START = 9;
@@ -32,7 +29,7 @@ const DEADLINE_CRON_PATTERN = "0 */30 * * * *";
 /** Максимум символов диалога/заметки в карточке TG. */
 const DIALOG_MAX_CHARS = 800;
 
-/** Hard-cap карточек в ответе на «покажи все дедлайны по погрузке». */
+/** Потолок карточек за раз: ответ «дай дедлайны», список «На сегодня» в сводке, кнопки сводки. */
 const QUERY_LIST_CAP = 10;
 
 /**
@@ -54,20 +51,30 @@ const PINGS_BEFORE_SNOOZE = 10;
  */
 const FRESH_DEADLINE_DAYS = 7;
 
+/** Утренняя сводка по дедлайнам: время по Москве (cron с секундами). */
+const DIGEST_CRON_MSK = "0 0 9 * * *";
+
+/** Сколько заявок без дедлайна перечислять в сводке (остальные — «и ещё N»). */
+const DIGEST_PREVIEW_LIMIT = 5;
+
+/** Одна и та же кнопка сводки — не чаще раза в это время (чтобы двое не завалили чат). */
+const DIGEST_BUTTON_COOLDOWN_MS = 5 * 60 * 1000;
+
 /** Черновик превью (между командой и «Сохранить»). */
 const DRAFT_TTL_MS = 60 * 60 * 1000;
 
-/** Префикс callback: ld:save:<draftId> / ld:cancel:<draftId> */
+/**
+ * Префикс кнопок модуля:
+ *   ld:save|cancel:<черновик>   — превью команды,
+ *   ldc:<действие>:<id события> — кнопки под карточкой,
+ *   lds:<блок>                  — кнопки утренней сводки.
+ */
 const CALLBACK_PREFIX = "ld";
-
-/** Ключ права в telegram_bot_chats.permissions. */
-const PERMISSION = "loading_deadline";
 
 module.exports = {
   GEMINI_MODEL,
   VERTEX_LOCATION,
   LOADING_DEADLINE_CHAT_ID,
-  MSK_OFFSET_HOURS,
   WORK_HOUR_START,
   WORK_HOUR_END,
   DEADLINE_24_7,
@@ -77,7 +84,9 @@ module.exports = {
   QUERY_SEND_GAP_MS,
   PINGS_BEFORE_SNOOZE,
   FRESH_DEADLINE_DAYS,
+  DIGEST_CRON_MSK,
+  DIGEST_PREVIEW_LIMIT,
+  DIGEST_BUTTON_COOLDOWN_MS,
   DRAFT_TTL_MS,
   CALLBACK_PREFIX,
-  PERMISSION,
 };

@@ -1,5 +1,6 @@
 // ============================================================================
-// Кнопки превью дедлайна погрузки: «Сохранить» / «Отменить».
+// Нажатия кнопок: превью команды («Сохранить» / «Отменить») и кнопки под
+// карточкой дедлайна («Завтра» / «+3 дня» / «+7 дней» / «Отказ»).
 // ============================================================================
 
 const { onCallbackQuery } = require("../tgwebhook");
@@ -177,7 +178,7 @@ function registerLoadingDeadlineCallbacks() {
         await rescheduleLoadingDeadline(
           event.id,
           confirmed.newDate,
-          confirmed.newTime !== undefined ? confirmed.newTime : undefined,
+          confirmed.newTime,
         );
         await editMessage(
           ctx,
@@ -199,7 +200,7 @@ function registerLoadingDeadlineCallbacks() {
         await applyInfoAddedAndRescheduleLoading(event.id, confirmed.newDate, {
           fieldPatch: confirmed.fieldPatch || {},
           dialogAppend: confirmed.dialogAppend,
-          newTime: confirmed.newTime !== undefined ? confirmed.newTime : undefined,
+          newTime: confirmed.newTime,
         });
         await editMessage(
           ctx,
@@ -352,9 +353,22 @@ async function rewriteCardWithTail(chatId, messageId, event, what, who) {
   });
 }
 
+/**
+ * Меняет кнопки под карточкой. Ошибку не бросает: при двойном быстром нажатии
+ * Telegram отвечает «message is not modified», и если она уйдёт наружу, ответ
+ * на нажатие не отправится — у человека будет крутиться значок на кнопке.
+ */
 async function setCardKeyboard(chatId, messageId, keyboard) {
-  const bot = getTelegramBot();
-  await bot.editMessageReplyMarkup(keyboard, { chat_id: chatId, message_id: messageId });
+  try {
+    await getTelegramBot().editMessageReplyMarkup(keyboard, {
+      chat_id: chatId,
+      message_id: messageId,
+    });
+  } catch (error) {
+    if (!/message is not modified/i.test(error.message)) {
+      console.error("[loading-deadlines/card] editMessageReplyMarkup:", error.message);
+    }
+  }
 }
 
 const SHIFT_DAYS = { d1: 1, d3: 3, d7: 7 };
@@ -445,5 +459,9 @@ function registerLoadingDeadlineCardButtons() {
   console.log("[loading-deadlines] кнопки карточки: завтра / +3 / +7 / отказ");
 }
 
-module.exports = { registerLoadingDeadlineCallbacks, registerLoadingDeadlineCardButtons };
+module.exports = {
+  registerLoadingDeadlineCallbacks,
+  registerLoadingDeadlineCardButtons,
+  answerCallback,
+};
 

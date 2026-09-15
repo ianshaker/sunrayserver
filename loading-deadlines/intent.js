@@ -7,13 +7,12 @@
 const { PERMISSIONS } = require("../lib/telegramBotChats");
 const { sendText } = require("../assistant/reply");
 const { getTelegramBot } = require("../tgwebhook/bot");
-const { parseDeadlineCommand, formatDateHuman, formatDeadlineDateTimeHuman } = require("./parser");
+const { parseDeadlineCommand } = require("./parser");
 const {
   findLoadingEventByNumber,
   validateNewDeadlineDate,
   findExistingAppealsOtkaz,
   findExistingAppealByNumber,
-  normalizeDeadlineTime,
 } = require("./queries");
 const {
   formatActionStub,
@@ -26,6 +25,9 @@ const {
   formatNoAddressForAssign,
   formatSlotBusy,
   buildPreviewMessage,
+  formatIsoDateHuman,
+  formatDeadlineDateTimeHuman,
+  normalizeDeadlineTime,
 } = require("./messages");
 const { createDraft } = require("./draft");
 const { buildPreviewKeyboard } = require("./keyboards");
@@ -116,7 +118,7 @@ async function handleAssignZamer(ctx, parsed, event) {
     masterAssumed: master.assumed,
     masterTgKey: master.tgKey,
     date,
-    dateHuman: formatDateHuman(date),
+    dateHuman: formatIsoDateHuman(date),
     startTime,
     endTime,
     cleanAddress: addr.cleanAddress,

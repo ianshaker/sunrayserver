@@ -3,11 +3,15 @@
 // ============================================================================
 
 const { DIALOG_MAX_CHARS } = require("./config");
+const { mskDate } = require("../lib/mskTime");
 
 const MONTHS_RU = [
   "января", "февраля", "марта", "апреля", "мая", "июня",
   "июля", "августа", "сентября", "октября", "ноября", "декабря",
 ];
+
+/** Сутки в миллисекундах — возраст самой старой просрочки в сводке. */
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 function formatIsoDateHuman(isoDate) {
   if (!isoDate) return isoDate;
@@ -16,18 +20,28 @@ function formatIsoDateHuman(isoDate) {
   return `${parseInt(d, 10)} ${MONTHS_RU[parseInt(m, 10) - 1]}`;
 }
 
-/** HH:mm / HH:mm:ss → HH:mm */
-function formatTimeHuman(raw) {
+/**
+ * Время дедлайна «HH:mm» из «HH:mm» или «HH:mm:ss» (как в базе).
+ * Одна проверка на всё: карточка, превью команд, сводка и запись в базу.
+ * null — пусто или не время суток.
+ *
+ * @param {string|null|undefined} raw
+ * @returns {string|null}
+ */
+function normalizeDeadlineTime(raw) {
   if (raw == null || raw === "") return null;
   const m = String(raw).trim().match(/^(\d{1,2}):(\d{2})/);
   if (!m) return null;
-  return `${String(parseInt(m[1], 10)).padStart(2, "0")}:${m[2]}`;
+  const h = parseInt(m[1], 10);
+  const min = parseInt(m[2], 10);
+  if (!Number.isFinite(h) || !Number.isFinite(min) || h > 23 || min > 59) return null;
+  return `${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
 }
 
 /** Дата + опц. время MSK → «15 июля в 13:00» */
 function formatDeadlineDateTimeHuman(isoDate, timeRaw) {
   const day = formatIsoDateHuman(isoDate);
-  const time = formatTimeHuman(timeRaw);
+  const time = normalizeDeadlineTime(timeRaw);
   if (!day) return day;
   return time ? `${day} в ${time}` : day;
 }
@@ -61,8 +75,10 @@ function formatDeadlineCardHeader(event) {
   const lines = [`⏰ <b>Дедлайн ${escHtml(num)}</b>`];
   if (event.deadline) {
     const day = formatIsoDateHuman(event.deadline);
-    const time = formatTimeHuman(event.deadline_time);
+    const time = normalizeDeadlineTime(event.deadline_time);
     lines.push(`<i>${escHtml(time ? `${day}, ${time}` : day)}</i>`);
+  } else {
+    lines.push("<i>без даты</i>");
   }
   lines.push("---");
   return lines;
@@ -87,7 +103,17 @@ function extractLoadingCardAppealNumber(text) {
   return m ? `#${m[1]}` : null;
 }
 
+/** Раздел карточки: «--», «Заметка:» и текст, обрезанный до DIALOG_MAX_CHARS. */
+function pushCardSection(lines, title, raw) {
+  const text = (raw || "").trim();
+  if (!text) return;
+  const cut = text.length > DIALOG_MAX_CHARS ? text.slice(0, DIALOG_MAX_CHARS) + "…" : text;
+  lines.push("--", `${title}:`, escHtml(cut));
+}
+
 /**
+ * Карточка дедлайна — одна для воркера, кнопок сводки и ответа «дай дедлайны».
+ *
  * @param {object} event — строка eventsnew
  * @returns {{ text: string, parseMode: 'HTML' }}
  */
@@ -110,27 +136,8 @@ function formatDeadlineCard(event) {
     lines.push(escHtml(addr));
   }
 
-  const note = (event.note || "").trim();
-  if (note) {
-    lines.push("--");
-    lines.push("Заметка:");
-    const truncated =
-      note.length > DIALOG_MAX_CHARS
-        ? note.slice(0, DIALOG_MAX_CHARS) + "…"
-        : note;
-    lines.push(escHtml(truncated));
-  }
-
-  const dialog = (event.dialog || "").trim();
-  if (dialog) {
-    lines.push("--");
-    lines.push("Диалог:");
-    const truncated =
-      dialog.length > DIALOG_MAX_CHARS
-        ? dialog.slice(0, DIALOG_MAX_CHARS) + "…"
-        : dialog;
-    lines.push(escHtml(truncated));
-  }
+  pushCardSection(lines, "Заметка", event.note);
+  pushCardSection(lines, "Диалог", event.dialog);
 
   return {
     text: lines.join("\n"),
@@ -424,6 +431,95 @@ function formatCardActionTail(what, who, whenDate, whenTime) {
   return `\n<i>✅ ${escHtml(what)} — ${escHtml(who)}, ${escHtml(when)}</i>`;
 }
 
+/** 1 заявка · 2 заявки · 5 заявок */
+function pluralRu(n, one, few, many) {
+  const n10 = n % 10;
+  const n100 = n % 100;
+  if (n10 === 1 && n100 !== 11) return one;
+  if (n10 >= 2 && n10 <= 4 && (n100 < 12 || n100 > 14)) return few;
+  return many;
+}
+
+const formatRequestsCount = (n) => `${n} ${pluralRu(n, "заявка", "заявки", "заявок")}`;
+
+/** ISO-дата YYYY-MM-DD → «13.09». */
+function formatShortDate(isoDate) {
+  const [, m, d] = String(isoDate || "").match(/^\d{4}-(\d{2})-(\d{2})/) || [];
+  return m ? `${d}.${m}` : "";
+}
+
+/** Строка заявки в сводке: «#07278 Строгино». */
+function digestRequestLine(event) {
+  const parts = [escHtml(normalizeAppealNumber(event.appeal_number))];
+  const city = (event.city || "").trim();
+  if (city) parts.push(escHtml(city));
+  return parts.join(" ");
+}
+
+/** «и ещё N», если в сводке показаны не все заявки блока. */
+function pushRestCount(lines, total, shown) {
+  if (total > shown) lines.push(`и ещё ${total - shown}`);
+}
+
+/**
+ * Текст утренней сводки.
+ *
+ *   ☀️ Дедлайны · 15 сентября
+ *
+ *   На сегодня — 1 заявка
+ *   #07278 Строгино · 10:00
+ *
+ *   Без дедлайна — 13 заявок
+ *   бот их не видит · новые сверху
+ *   #09832 Раменское · сегодня
+ *   …
+ *   и ещё 8
+ *
+ *   Просрочено — 56 заявок · самой старой 58 дней
+ *
+ * @param {object} data — getDailyDigestData()
+ * @returns {string} HTML
+ */
+function formatDailyDigest(data) {
+  const { today, onToday, withoutDeadline, overdue } = data;
+  const lines = [`☀️ <b>Дедлайны · ${escHtml(formatIsoDateHuman(today))}</b>`, ""];
+
+  if (onToday.count) {
+    lines.push(`<b>На сегодня — ${formatRequestsCount(onToday.count)}</b>`);
+    for (const e of onToday.events) {
+      const time = normalizeDeadlineTime(e.deadline_time);
+      lines.push(digestRequestLine(e) + (time ? ` · ${time}` : ""));
+    }
+    pushRestCount(lines, onToday.count, onToday.events.length);
+  } else {
+    lines.push("<b>На сегодня дедлайнов нет</b>");
+  }
+
+  if (withoutDeadline.count) {
+    lines.push("", `<b>Без дедлайна — ${formatRequestsCount(withoutDeadline.count)}</b>`);
+    lines.push("<i>бот их не видит · новые сверху</i>");
+    for (const e of withoutDeadline.events) {
+      const created = e.created_at ? mskDate(e.created_at) : null;
+      const since = !created ? "" : created === today ? " · сегодня" : ` · с ${formatShortDate(created)}`;
+      lines.push(digestRequestLine(e) + since);
+    }
+    pushRestCount(lines, withoutDeadline.count, withoutDeadline.events.length);
+  }
+
+  if (overdue.count) {
+    let line = `<b>Просрочено — ${formatRequestsCount(overdue.count)}</b>`;
+    if (overdue.oldestDeadline) {
+      const days = Math.round(
+        (Date.parse(`${today}T00:00:00Z`) - Date.parse(`${overdue.oldestDeadline}T00:00:00Z`)) / DAY_MS,
+      );
+      line += ` · самой старой ${days} ${pluralRu(days, "день", "дня", "дней")}`;
+    }
+    lines.push("", line);
+  }
+
+  return lines.join("\n");
+}
+
 module.exports = {
   formatDeadlineCard,
   formatActionStub,
@@ -445,10 +541,10 @@ module.exports = {
   buildPreviewDismissedMessage,
   formatIsoDateHuman,
   formatDeadlineDateTimeHuman,
-  formatDeadlineCardHeader,
   extractLoadingCardAppealNumber,
   formatCardActionTail,
-  formatTimeHuman,
+  formatDailyDigest,
+  normalizeDeadlineTime,
   escHtml,
   normalizeAppealNumber,
 };

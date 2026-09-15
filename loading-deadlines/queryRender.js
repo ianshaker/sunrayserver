@@ -3,57 +3,7 @@
 // Модель сюда не пишет номера заявок — только строки из БД.
 // ============================================================================
 
-const { DIALOG_MAX_CHARS } = require("./config");
-const { formatIsoDateHuman, formatDeadlineCardHeader, escHtml } = require("./messages");
-
-/**
- * Карточка просмотра (без memo про закрытие дедлайна).
- * @param {object} event
- * @returns {string} HTML
- */
-function formatQueryCard(event) {
-  const lines = formatDeadlineCardHeader(event);
-
-  const name = (event.client_name || "").trim();
-  const phone = (event.phone || "").trim();
-  if (name || phone) {
-    lines.push(`${escHtml(name)} ${escHtml(phone)}`.trim());
-  }
-
-  const city = (event.city || "").trim();
-  if (city) {
-    lines.push(escHtml(city));
-  }
-
-  const addr = (event.detailed_address || event.address || "").trim();
-  if (addr) {
-    lines.push(escHtml(addr));
-  }
-
-  const note = (event.note || "").trim();
-  if (note) {
-    lines.push("--");
-    lines.push("Заметка:");
-    const truncated =
-      note.length > DIALOG_MAX_CHARS
-        ? note.slice(0, DIALOG_MAX_CHARS) + "…"
-        : note;
-    lines.push(escHtml(truncated));
-  }
-
-  const dialog = (event.dialog || "").trim();
-  if (dialog) {
-    lines.push("--");
-    lines.push("Диалог:");
-    const truncated =
-      dialog.length > DIALOG_MAX_CHARS
-        ? dialog.slice(0, DIALOG_MAX_CHARS) + "…"
-        : dialog;
-    lines.push(escHtml(truncated));
-  }
-
-  return lines.join("\n");
-}
+const { formatIsoDateHuman, formatDeadlineCard, escHtml } = require("./messages");
 
 /**
  * @param {{
@@ -135,13 +85,12 @@ function buildDeadlineQueryMessages({ mode, date, events, truncated, limit, limi
   return {
     empty: false,
     header,
-    cards: events.map(formatQueryCard),
+    cards: events.map((event) => formatDeadlineCard(event).text),
     footer,
     parseMode: "HTML",
   };
 }
 
 module.exports = {
-  formatQueryCard,
   buildDeadlineQueryMessages,
 };

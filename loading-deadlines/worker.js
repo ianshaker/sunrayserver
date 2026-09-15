@@ -1,7 +1,8 @@
 // ============================================================================
 // Воркер дедлайнов погрузки.
 //
-// Каждые 30 мин (9:00–20:00 MSK, или круглосуточно если DEADLINE_24_7):
+// По расписанию DEADLINE_CRON_PATTERN, в часы WORK_HOUR_START–WORK_HOUR_END по Москве
+// (или круглосуточно, если DEADLINE_24_7):
 //   1. Свежий дедлайн (не старше FRESH_DEADLINE_DAYS), по которому карточки ещё
 //      не было, — показываем сразу: новость важнее пинга по висяку. Иначе замер
 //      с дедлайном на сегодня встал бы 57-м в очередь и ждал месяц.
@@ -13,10 +14,10 @@
 // ============================================================================
 
 const schedule = require("node-schedule");
+const { mskHour } = require("../lib/mskTime");
 const {
   DEADLINE_CRON_PATTERN,
   DEADLINE_24_7,
-  MSK_OFFSET_HOURS,
   WORK_HOUR_START,
   WORK_HOUR_END,
   PINGS_BEFORE_SNOOZE,
@@ -35,15 +36,6 @@ const {
   sendDeadlineReminder,
   deleteDeadlineReminderMessage,
 } = require("./notifier");
-
-/**
- * Возвращает текущий час по Москве (UTC+3).
- */
-function getMskHour() {
-  const now = new Date();
-  const msk = new Date(now.getTime() + MSK_OFFSET_HOURS * 60 * 60 * 1000);
-  return msk.getUTCHours();
-}
 
 /**
  * Считает доставленные ⏰-пинги по заявке. Набралось PINGS_BEFORE_SNOOZE —
@@ -72,11 +64,19 @@ async function registerReminderAndMaybeSnooze(prefix, event, bot) {
   );
 }
 
+/** ⏰-пинг по заявке и, если он дошёл, счёт с откладыванием на десятом. */
+async function pingAndCount(prefix, event, bot) {
+  const delivered = await sendDeadlineReminder(event, bot);
+  if (delivered) {
+    await registerReminderAndMaybeSnooze(prefix, event, bot);
+  }
+}
+
 async function runDeadlineCheck(bot) {
   const prefix = `[loading-deadlines/worker ${new Date().toISOString()}]`;
 
   if (!DEADLINE_24_7) {
-    const hour = getMskHour();
+    const hour = mskHour();
     if (hour < WORK_HOUR_START || hour >= WORK_HOUR_END) {
       return;
     }
@@ -99,10 +99,7 @@ async function runDeadlineCheck(bot) {
       console.log(
         `${prefix} активное уведомление ${active.appeal_number} — отправляем напоминание`,
       );
-      const delivered = await sendDeadlineReminder(active, bot);
-      if (delivered) {
-        await registerReminderAndMaybeSnooze(prefix, active, bot);
-      }
+      await pingAndCount(prefix, active, bot);
       return;
     }
 
@@ -124,10 +121,7 @@ async function runDeadlineCheck(bot) {
     console.log(
       `${prefix} круг отложенных: ${returned.appeal_number} — отправляем напоминание`,
     );
-    const delivered = await sendDeadlineReminder(returned, bot);
-    if (delivered) {
-      await registerReminderAndMaybeSnooze(prefix, returned, bot);
-    }
+    await pingAndCount(prefix, returned, bot);
   } catch (err) {
     console.error(`${prefix} ошибка:`, err.message);
   }
@@ -138,9 +132,9 @@ function startLoadingDeadlineWorker(bot) {
     runDeadlineCheck(bot);
   });
 
-  const hoursLabel = DEADLINE_24_7 ? "круглосуточно (тест)" : "9–20 MSK";
+  const hoursLabel = DEADLINE_24_7 ? "круглосуточно (тест)" : `${WORK_HOUR_START}–${WORK_HOUR_END} МСК`;
   console.log(
-    `[loading-deadlines] воркер запущен: ${DEADLINE_CRON_PATTERN} (каждые 30 мин, ${hoursLabel})`,
+    `[loading-deadlines] воркер запущен: ${DEADLINE_CRON_PATTERN} (${hoursLabel})`,
   );
 
   setTimeout(() => {

@@ -1,18 +1,34 @@
 // ============================================================================
 // Модуль «Дедлайны погрузки» — точка входа.
 //
-// Подключается в server.js:
-//   const { startLoadingDeadlineWorker, registerLoadingDeadlineFastPath } = require("./loading-deadlines");
+// server.js берёт модуль из трёх файлов (так же устроены входящие):
+//   ./loading-deadlines           — startLoadingDeadlineWorker, registerLoadingDeadlineFastPath
+//   ./loading-deadlines/callbacks — registerLoadingDeadlineCallbacks (превью команды),
+//                                   registerLoadingDeadlineCardButtons (кнопки под карточкой)
+//   ./loading-deadlines/digest    — registerLoadingDeadlineDigestButtons, startLoadingDeadlineDigest
+//
 //   registerIntent(require("./loading-deadlines/intent"));
 //   registerIntent(require("./loading-deadlines/queryIntent"));
 //   registerLoadingDeadlineFastPath();
 //   // в onListen:
 //   startLoadingDeadlineWorker(telegramBot);
+//   startLoadingDeadlineDigest(telegramBot);
 // ============================================================================
 
-const { startLoadingDeadlineWorker, runDeadlineCheck } = require("./worker");
+const { startLoadingDeadlineWorker } = require("./worker");
 const { registerFastPath } = require("../assistant/fastPaths");
 const { extractLoadingCardAppealNumber } = require("./messages");
+
+/**
+ * Основы слов команды в ответе на карточку. Один список на всё: по нему быстрый
+ * путь и срабатывает, и проверяет конфликт слов с другими отделами.
+ */
+const REPLY_KEYWORDS = [
+  "перенес", "перенос", "дедлайн", "отказ", "назнач", "замер",
+  "тел", "телефон", "адрес", "диалог", "инфо", "добав", "входящ",
+  "верн", "возврат", "обращен", "остав", "опис",
+];
+const REPLY_KEYWORD_RE = new RegExp(REPLY_KEYWORDS.join("|"), "i");
 
 /**
  * Регистрирует fast-path роутера для этого отдела.
@@ -23,24 +39,14 @@ function registerLoadingDeadlineFastPath() {
     name: "loading_deadline_reply",
     intent: "loading_deadline_manage",
     priority: 11,
-    keywords: [
-      "перенес", "перенос", "дедлайн", "отказ", "назнач", "замер",
-      "тел", "телефон", "адрес", "диалог", "инфо", "добав", "входящ",
-      "верн", "возврат", "обращен", "остав", "опис",
-    ],
+    keywords: REPLY_KEYWORDS,
     detect: (text, replyText) => {
       if (!replyText) return null;
 
       const isLoadingDeadlineCard = extractLoadingCardAppealNumber(replyText) != null;
       if (!isLoadingDeadlineCard) return null;
 
-      if (
-        !/перенес|перенос|дедлайн|отказ|назнач|замер|тел|телефон|адрес|диалог|инфо|добав|входящ|верн|возврат|обращен|остав|опис/i.test(
-          text,
-        )
-      ) {
-        return null;
-      }
+      if (!REPLY_KEYWORD_RE.test(text)) return null;
 
       return {
         confidence: 0.96,
@@ -52,6 +58,5 @@ function registerLoadingDeadlineFastPath() {
 
 module.exports = {
   startLoadingDeadlineWorker,
-  runDeadlineCheck,
   registerLoadingDeadlineFastPath,
 };

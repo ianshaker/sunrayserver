@@ -331,33 +331,4 @@ async function parseDeadlineCommand(text, { replyText } = {}) {
   return result;
 }
 
-function formatDateHuman(isoDate) {
-  if (!isoDate) return isoDate;
-  const months = [
-    "января", "февраля", "марта", "апреля", "мая", "июня",
-    "июля", "августа", "сентября", "октября", "ноября", "декабря",
-  ];
-  const [, m, d] = isoDate.match(/^\d{4}-(\d{2})-(\d{2})$/) || [];
-  if (!m || !d) return isoDate;
-  return `${parseInt(d, 10)} ${months[parseInt(m, 10) - 1]}`;
-}
-
-/** Дата + опц. время → «15 июля в 13:00» */
-function formatDeadlineDateTimeHuman(isoDate, timeRaw) {
-  const day = formatDateHuman(isoDate);
-  if (!day) return day;
-  let time = normalizeStartTime(String(timeRaw || "").trim());
-  if (!time) {
-    const m = String(timeRaw || "").trim().match(/^(\d{1,2}):(\d{2})/);
-    if (m) {
-      const h = parseInt(m[1], 10);
-      const min = parseInt(m[2], 10);
-      if (h <= 23 && min <= 59) {
-        time = `${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
-      }
-    }
-  }
-  return time ? `${day} в ${time}` : day;
-}
-
-module.exports = { parseDeadlineCommand, formatDateHuman, formatDeadlineDateTimeHuman };
+module.exports = { parseDeadlineCommand };

@@ -1,5 +1,5 @@
 // ============================================================================
-// Inline-кнопки превью действия по дедлайну погрузки.
+// Inline-кнопки модуля: превью команды, карточка дедлайна, утренняя сводка.
 // ============================================================================
 
 const { CALLBACK_PREFIX } = require("./config");
@@ -66,10 +66,34 @@ function parseCardCallback(data) {
   return { action: match[1], eventId: Number(match[2]) };
 }
 
+// ============================================================================
+// Кнопки утренней сводки. В кнопке только имя блока — карточки собираются на
+// момент нажатия, на сервере ничего не хранится.
+// ============================================================================
+
+const DIGEST_PREFIX = `${CALLBACK_PREFIX}s`;
+const DIGEST_RE = new RegExp(`^${DIGEST_PREFIX}:(today|none|over)$`);
+
+/** Кнопки только для непустых блоков сводки; все пусты — без клавиатуры. */
+function buildDigestKeyboard({ today, none, over }) {
+  const row = [];
+  if (today) row.push({ text: "На сегодня", callback_data: `${DIGEST_PREFIX}:today` });
+  if (none) row.push({ text: "Без дедлайна", callback_data: `${DIGEST_PREFIX}:none` });
+  if (over) row.push({ text: "Просрочено", callback_data: `${DIGEST_PREFIX}:over` });
+  return row.length ? { inline_keyboard: [row] } : undefined;
+}
+
+function parseDigestCallback(data) {
+  const match = String(data || "").match(DIGEST_RE);
+  return match ? { block: match[1] } : null;
+}
+
 module.exports = {
   buildPreviewKeyboard,
   parsePreviewCallback,
   buildCardKeyboard,
   buildRejectConfirmKeyboard,
   parseCardCallback,
+  buildDigestKeyboard,
+  parseDigestCallback,
 };

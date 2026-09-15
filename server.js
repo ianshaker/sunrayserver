@@ -30,6 +30,10 @@ const {
   startLoadingDeadlineWorker,
   registerLoadingDeadlineFastPath,
 } = require("./loading-deadlines");
+const {
+  startLoadingDeadlineDigest,
+  registerLoadingDeadlineDigestButtons,
+} = require("./loading-deadlines/digest");
 const { registerAssistant, startAssistant } = require("./assistant");
 const { registerIntent } = require("./assistant/registry");
 const { startBotChatsRefresh } = require("./lib/telegramBotChats");
@@ -47,6 +51,7 @@ registerTaskManageCallbacks();
 registerAppealDeadlineCallbacks();
 registerLoadingDeadlineCallbacks();
 registerLoadingDeadlineCardButtons();
+registerLoadingDeadlineDigestButtons();
 registerIntent(require("./tasks/create/intent"));
 registerIntent(require("./tasks/manage/intent"));
 registerIntent(require("./appeals-deadlines/intent"));
@@ -224,6 +229,7 @@ fastify.listen(
     startTaskReminderWorker(telegramBot);
     startAppealDeadlineWorker(telegramBot);
     startLoadingDeadlineWorker(telegramBot);
+    startLoadingDeadlineDigest(telegramBot);
     startWebhookSelfHeal();
   }
 );

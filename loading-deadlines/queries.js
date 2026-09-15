@@ -3,42 +3,49 @@
 // ============================================================================
 
 const { supabase } = require("../lib/supabaseClient");
-const { MSK_OFFSET_HOURS } = require("./config");
+const { mskDate, mskClock } = require("../lib/mskTime");
+const { normalizeDeadlineTime } = require("./messages");
 
 const EVENT_CARD_SELECT =
   "id, appeal_number, client_name, phone, city, detailed_address, address, place_id, dialog, note, deadline, deadline_time, salemanager, type";
+
+/** Карусель с нуля: пинги считаются заново, заявка снова «ни разу не отложена». */
+const ROTATION_RESET = {
+  deadline_reminder_count: 0,
+  deadline_snoozed_until: null,
+  deadline_snoozed_at: null,
+};
+
+/** Заявка уходит из очереди пингов: карточка и пинг забыты, карусель с нуля. */
+const QUEUE_RESET = {
+  deadline_notif_sent_at: null,
+  deadline_notif_tg_msg_id: null,
+  deadline_reminder_tg_msg_id: null,
+  ...ROTATION_RESET,
+};
 
 /**
  * Возвращает дату «сегодня» по московскому времени в формате YYYY-MM-DD.
  */
 function getMskTodayDate() {
-  const now = new Date();
-  const msk = new Date(now.getTime() + MSK_OFFSET_HOURS * 60 * 60 * 1000);
-  return msk.toISOString().slice(0, 10);
+  return mskDate();
 }
 
 /**
  * Текущее время MSK как HH:mm.
  */
 function getMskNowTime() {
-  const now = new Date();
-  const msk = new Date(now.getTime() + MSK_OFFSET_HOURS * 60 * 60 * 1000);
-  return msk.toISOString().slice(11, 16);
+  return mskClock();
 }
 
 /**
- * PG TIME / HH:mm:ss → HH:mm.
- * @param {string|null|undefined} raw
- * @returns {string|null}
+ * Поле времени дедлайна для записи: undefined — время не трогаем,
+ * null или пусто — очищаем, строка — пишем как HH:mm:00 по Москве.
  */
-function normalizeDeadlineTime(raw) {
-  if (raw == null || raw === "") return null;
-  const m = String(raw).trim().match(/^(\d{1,2}):(\d{2})/);
-  if (!m) return null;
-  const h = parseInt(m[1], 10);
-  const min = parseInt(m[2], 10);
-  if (!Number.isFinite(h) || !Number.isFinite(min) || h > 23 || min > 59) return null;
-  return `${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
+function deadlineTimePatch(newTime) {
+  if (newTime === undefined) return {};
+  const normalized = normalizeDeadlineTime(newTime);
+  return { deadline_time: normalized ? `${normalized}:00` : null };
 }
 
 /**
@@ -167,9 +174,7 @@ async function markDeadlineNotifSent(id, tgMsgId) {
       deadline_notif_sent_at: new Date().toISOString(),
       deadline_notif_tg_msg_id: tgMsgId,
       deadline_reminder_tg_msg_id: null,
-      deadline_reminder_count: 0,
-      deadline_snoozed_until: null,
-      deadline_snoozed_at: null,
+      ...ROTATION_RESET,
     })
     .eq("id", id);
 
@@ -253,21 +258,12 @@ async function findLoadingEventByNumber(appealNumber) {
  * @param {string|null|undefined} newTime HH:mm — если undefined, время не трогаем;
  *   если null — очищаем; если строка — пишем MSK wall-clock.
  */
-async function rescheduleLoadingDeadline(id, newDate, newTime = undefined) {
+async function rescheduleLoadingDeadline(id, newDate, newTime) {
   const updatePayload = {
     deadline: newDate,
-    deadline_notif_sent_at: null,
-    deadline_notif_tg_msg_id: null,
-    deadline_reminder_tg_msg_id: null,
-    deadline_reminder_count: 0,
-    deadline_snoozed_until: null,
-    deadline_snoozed_at: null,
+    ...QUEUE_RESET,
+    ...deadlineTimePatch(newTime),
   };
-
-  if (newTime !== undefined) {
-    const normalized = normalizeDeadlineTime(newTime);
-    updatePayload.deadline_time = normalized ? `${normalized}:00` : null;
-  }
 
   const { error } = await supabase.from("eventsnew").update(updatePayload).eq("id", id);
 
@@ -307,18 +303,9 @@ async function applyInfoAddedAndRescheduleLoading(
   const updatePayload = {
     ...fieldPatch,
     deadline: newDate,
-    deadline_notif_sent_at: null,
-    deadline_notif_tg_msg_id: null,
-    deadline_reminder_tg_msg_id: null,
-    deadline_reminder_count: 0,
-    deadline_snoozed_until: null,
-    deadline_snoozed_at: null,
+    ...QUEUE_RESET,
+    ...deadlineTimePatch(newTime),
   };
-
-  if (newTime !== undefined) {
-    const normalized = normalizeDeadlineTime(newTime);
-    updatePayload.deadline_time = normalized ? `${normalized}:00` : null;
-  }
 
   if (append) {
     updatePayload.dialog = newDialog;
@@ -358,6 +345,79 @@ async function findLoadingEventById(id) {
 }
 
 /**
+ * Погрузки без дедлайна — для бота их не существует, пока дату не поставят.
+ * Новые сверху: свежая заявка — горячий клиент.
+ *
+ * @param {number} limit
+ * @returns {Promise<{ events: object[], count: number }>}
+ */
+async function listLoadingWithoutDeadline(limit) {
+  const { data, error, count } = await supabase
+    .from("eventsnew")
+    .select(`${EVENT_CARD_SELECT}, created_at`, { count: "exact" })
+    .eq("type", "Погрузка")
+    .is("deadline", null)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (error) {
+    console.error("[loading-deadlines/queries] listLoadingWithoutDeadline:", error.message);
+    throw error;
+  }
+
+  return { events: data || [], count: count ?? 0 };
+}
+
+/**
+ * Данные утренней сводки: на сегодня, без дедлайна, просрочено.
+ *
+ * @param {{ todayLimit: number, withoutLimit: number }} limits
+ */
+async function getDailyDigestData({ todayLimit, withoutLimit }) {
+  const today = getMskTodayDate();
+
+  const todayQuery = supabase
+    .from("eventsnew")
+    .select("appeal_number, city, deadline_time", { count: "exact" })
+    .eq("type", "Погрузка")
+    .eq("deadline", today)
+    .order("deadline_time", { ascending: true, nullsFirst: true })
+    .order("id", { ascending: false })
+    .limit(todayLimit);
+
+  const overdueQuery = supabase
+    .from("eventsnew")
+    .select("deadline", { count: "exact" })
+    .eq("type", "Погрузка")
+    .lt("deadline", today)
+    .order("deadline", { ascending: true })
+    .limit(1);
+
+  const [todayRes, overdueRes, without] = await Promise.all([
+    todayQuery,
+    overdueQuery,
+    listLoadingWithoutDeadline(withoutLimit),
+  ]);
+
+  for (const res of [todayRes, overdueRes]) {
+    if (res.error) {
+      console.error("[loading-deadlines/queries] getDailyDigestData:", res.error.message);
+      throw res.error;
+    }
+  }
+
+  return {
+    today,
+    onToday: { events: todayRes.data || [], count: todayRes.count ?? 0 },
+    withoutDeadline: without,
+    overdue: {
+      count: overdueRes.count ?? 0,
+      oldestDeadline: overdueRes.data?.[0]?.deadline ?? null,
+    },
+  };
+}
+
+/**
  * Записывает, что по событию ушёл очередной ⏰-пинг.
  *
  * @param {number} id
@@ -387,9 +447,9 @@ async function snoozeDeadlineEvent(id, untilDate) {
   const { error } = await supabase
     .from("eventsnew")
     .update({
+      ...ROTATION_RESET,
       deadline_snoozed_until: untilDate,
       deadline_snoozed_at: new Date().toISOString(),
-      deadline_reminder_count: 0,
       deadline_reminder_tg_msg_id: null,
     })
     .eq("id", id);
@@ -530,7 +590,7 @@ async function listLoadingDeadlinesForQuery({ mode, date, limit }) {
 
   let q = supabase
     .from("eventsnew")
-    .select(EVENT_CARD_SELECT)
+    .select(EVENT_CARD_SELECT, { count: "exact" })
     .eq("type", "Погрузка")
     .not("deadline", "is", null);
 
@@ -556,7 +616,7 @@ async function listLoadingDeadlinesForQuery({ mode, date, limit }) {
       .order("id", { ascending: false });
   }
 
-  const { data, error } = await q.limit(fetchLimit);
+  const { data, error, count } = await q.limit(fetchLimit);
 
   if (error) {
     console.error("[loading-deadlines/queries] listLoadingDeadlinesForQuery:", error.message);
@@ -570,7 +630,8 @@ async function listLoadingDeadlinesForQuery({ mode, date, limit }) {
   return {
     events,
     truncated,
-    totalMatched: truncated ? limit + 1 : events.length,
+    // Точное число совпадений — кнопки сводки пишут «10 из 13», а не молча режут список.
+    totalMatched: count ?? events.length,
   };
 }
 
@@ -578,8 +639,6 @@ module.exports = {
   getMskTodayDate,
   getMskNowTime,
   getMskDateOffset,
-  normalizeDeadlineTime,
-  isDeadlineDue,
   validateNewDeadlineDate,
   getActiveDeadlineNotif,
   getNextDeadlineEvent,
@@ -589,6 +648,8 @@ module.exports = {
   snoozeDeadlineEvent,
   findLoadingEventByNumber,
   findLoadingEventById,
+  listLoadingWithoutDeadline,
+  getDailyDigestData,
   rescheduleLoadingDeadline,
   applyInfoAddedAndRescheduleLoading,
   findExistingAppealsOtkaz,
