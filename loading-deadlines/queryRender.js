@@ -4,7 +4,7 @@
 // ============================================================================
 
 const { DIALOG_MAX_CHARS } = require("./config");
-const { formatIsoDateHuman, formatDeadlineDateTimeHuman, escHtml, normalizeAppealNumber } = require("./messages");
+const { formatIsoDateHuman, formatDeadlineCardHeader, escHtml } = require("./messages");
 
 /**
  * Карточка просмотра (без memo про закрытие дедлайна).
@@ -12,17 +12,7 @@ const { formatIsoDateHuman, formatDeadlineDateTimeHuman, escHtml, normalizeAppea
  * @returns {string} HTML
  */
 function formatQueryCard(event) {
-  const lines = [];
-  const num = normalizeAppealNumber(event.appeal_number);
-  const when = event.deadline
-    ? formatDeadlineDateTimeHuman(event.deadline, event.deadline_time)
-    : null;
-
-  lines.push(
-    when
-      ? `⏰ <b>ДЕДЛАЙН ПОГРУЗКИ ${escHtml(num)} - ${escHtml(when)}</b>`
-      : `⏰ <b>ДЕДЛАЙН ПОГРУЗКИ ${escHtml(num)}</b>`,
-  );
+  const lines = formatDeadlineCardHeader(event);
 
   const name = (event.client_name || "").trim();
   const phone = (event.phone || "").trim();

@@ -12,6 +12,7 @@
 
 const { startLoadingDeadlineWorker, runDeadlineCheck } = require("./worker");
 const { registerFastPath } = require("../assistant/fastPaths");
+const { extractLoadingCardAppealNumber } = require("./messages");
 
 /**
  * Регистрирует fast-path роутера для этого отдела.
@@ -30,7 +31,7 @@ function registerLoadingDeadlineFastPath() {
     detect: (text, replyText) => {
       if (!replyText) return null;
 
-      const isLoadingDeadlineCard = /ДЕДЛАЙН\s+ПОГРУЗКИ/i.test(replyText);
+      const isLoadingDeadlineCard = extractLoadingCardAppealNumber(replyText) != null;
       if (!isLoadingDeadlineCard) return null;
 
       if (

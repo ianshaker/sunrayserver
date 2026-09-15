@@ -46,21 +46,53 @@ function normalizeAppealNumber(appealNumber) {
 }
 
 /**
+ * Шапка карточки дедлайна погрузки — одна для карточки из воркера и для ответа
+ * на «дай дедлайны»:
+ *
+ *   ⏰ Дедлайн #07278
+ *   15 сентября, 10:00
+ *   ---
+ *
+ * @param {object} event
+ * @returns {string[]} HTML-строки
+ */
+function formatDeadlineCardHeader(event) {
+  const num = normalizeAppealNumber(event.appeal_number);
+  const lines = [`⏰ <b>Дедлайн ${escHtml(num)}</b>`];
+  if (event.deadline) {
+    const day = formatIsoDateHuman(event.deadline);
+    const time = formatTimeHuman(event.deadline_time);
+    lines.push(`<i>${escHtml(time ? `${day}, ${time}` : day)}</i>`);
+  }
+  lines.push("---");
+  return lines;
+}
+
+// Карточка погрузки в тексте, на который ответил менеджер. Старая шапка
+// «ДЕДЛАЙН ПОГРУЗКИ #…» — карточки до 15.09.2026 ещё висят в чате. Новая —
+// «Дедлайн #07278» с датой на следующей строке, пинг «Дедлайн #07278 не закрыт».
+// Новая сверяется с учётом регистра: у входящих шапка капсом «ДЕДЛАЙН #… - дата».
+const LOADING_CARD_OLD_RE = /ДЕДЛАЙН\s+ПОГРУЗКИ\s*#?(\d{5})/i;
+const LOADING_CARD_NEW_RE = /Дедлайн #(\d{5})(?=[ \t]*\n|\s+не закрыт)/;
+
+/**
+ * Номер заявки из карточки или пинга погрузки; null — это не наша карточка.
+ *
+ * @param {string|null|undefined} text
+ * @returns {string|null} «#07278»
+ */
+function extractLoadingCardAppealNumber(text) {
+  if (!text) return null;
+  const m = text.match(LOADING_CARD_OLD_RE) || text.match(LOADING_CARD_NEW_RE);
+  return m ? `#${m[1]}` : null;
+}
+
+/**
  * @param {object} event — строка eventsnew
  * @returns {{ text: string, parseMode: 'HTML' }}
  */
 function formatDeadlineCard(event) {
-  const lines = [];
-  const num = normalizeAppealNumber(event.appeal_number);
-  const when = event.deadline
-    ? formatDeadlineDateTimeHuman(event.deadline, event.deadline_time)
-    : null;
-
-  lines.push(
-    when
-      ? `⏰ <b>ДЕДЛАЙН ПОГРУЗКИ ${escHtml(num)} - ${escHtml(when)}</b>`
-      : `⏰ <b>ДЕДЛАЙН ПОГРУЗКИ ${escHtml(num)}</b>`,
-  );
+  const lines = formatDeadlineCardHeader(event);
 
   const name = (event.client_name || "").trim();
   const phone = (event.phone || "").trim();
@@ -413,6 +445,8 @@ module.exports = {
   buildPreviewDismissedMessage,
   formatIsoDateHuman,
   formatDeadlineDateTimeHuman,
+  formatDeadlineCardHeader,
+  extractLoadingCardAppealNumber,
   formatCardActionTail,
   formatTimeHuman,
   escHtml,

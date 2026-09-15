@@ -70,7 +70,7 @@ async function sendDeadlineNotification(event, bot) {
  * @returns {Promise<boolean>} дошёл ли пинг до чата (считаем только доставленные)
  */
 async function sendDeadlineReminder(event, bot) {
-  const replyText = `⏰ Дедлайн погрузки ${normalizeAppealNumber(event.appeal_number)} - не закрыт`;
+  const replyText = `⏰ Дедлайн ${normalizeAppealNumber(event.appeal_number)} не закрыт`;
 
   await deleteDeadlineReminderMessage(bot, event.deadline_reminder_tg_msg_id);
 

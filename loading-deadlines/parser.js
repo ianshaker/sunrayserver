@@ -4,6 +4,7 @@
 // Реализованы: reschedule | info_added | reject | assign_zamer | return_appeals.
 // ============================================================================
 
+const { extractLoadingCardAppealNumber } = require("./messages");
 const { hasCredentials } = require("../call-ai/googleAuth");
 const { generateContent } = require("../call-ai/geminiClient");
 const { GEMINI_MODEL, VERTEX_LOCATION } = require("./config");
@@ -27,9 +28,9 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 function extractAppealNumberFromReply(replyText) {
   if (!replyText) return null;
-  const m =
-    replyText.match(/ДЕДЛАЙН\s+ПОГРУЗКИ\s*#?(\d{5})/i) ||
-    replyText.match(/#(\d{5})\b/);
+  const fromCard = extractLoadingCardAppealNumber(replyText);
+  if (fromCard) return fromCard;
+  const m = replyText.match(/#(\d{5})\b/);
   return m ? `#${m[1]}` : null;
 }
 
