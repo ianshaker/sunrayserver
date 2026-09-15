@@ -46,8 +46,9 @@ const {
  * @param {string} prefix
  * @param {object} event
  * @param {object} bot
+ * @param {number|null} pingMessageId — только что отправленный пинг: его и убираем
  */
-async function registerReminderAndMaybeSnooze(prefix, event, bot) {
+async function registerReminderAndMaybeSnooze(prefix, event, bot, pingMessageId) {
   const sent = (event.deadline_reminder_count || 0) + 1;
 
   if (sent < PINGS_BEFORE_SNOOZE) {
@@ -57,7 +58,8 @@ async function registerReminderAndMaybeSnooze(prefix, event, bot) {
 
   const until = getMskDateOffset(1);
   await snoozeDeadlineEvent(event.id, until);
-  await deleteDeadlineReminderMessage(bot, event.deadline_reminder_tg_msg_id);
+  // В event лежит id прошлого пинга — его уже удалил sendDeadlineReminder.
+  await deleteDeadlineReminderMessage(bot, pingMessageId);
   console.log(
     `${prefix} ${event.appeal_number}: ${sent} напоминаний подряд — откладываем до ${until}, ` +
       "очередь берёт следующую",
@@ -66,9 +68,9 @@ async function registerReminderAndMaybeSnooze(prefix, event, bot) {
 
 /** ⏰-пинг по заявке и, если он дошёл, счёт с откладыванием на десятом. */
 async function pingAndCount(prefix, event, bot) {
-  const delivered = await sendDeadlineReminder(event, bot);
-  if (delivered) {
-    await registerReminderAndMaybeSnooze(prefix, event, bot);
+  const ping = await sendDeadlineReminder(event, bot);
+  if (ping.delivered) {
+    await registerReminderAndMaybeSnooze(prefix, event, bot, ping.messageId);
   }
 }
 

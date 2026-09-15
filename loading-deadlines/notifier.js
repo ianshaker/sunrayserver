@@ -67,7 +67,8 @@ async function sendDeadlineNotification(event, bot) {
  *
  * @param {object} event
  * @param {object} bot
- * @returns {Promise<boolean>} дошёл ли пинг до чата (считаем только доставленные)
+ * @returns {Promise<{ delivered: boolean, messageId: number|null }>} дошёл ли пинг и его id —
+ *   счёт идёт только по доставленным, а при откладывании убирается именно этот пинг
  */
 async function sendDeadlineReminder(event, bot) {
   const replyText = `⏰ Дедлайн ${normalizeAppealNumber(event.appeal_number)} не закрыт`;
@@ -97,13 +98,13 @@ async function sendDeadlineReminder(event, bot) {
       `[loading-deadlines/notifier] ⏰ напоминание отправлено для ${event.appeal_number}` +
         ` → msg_id=${newMsgId}`,
     );
-    return true;
+    return { delivered: true, messageId: newMsgId };
   } catch (err) {
     console.error(
       `[loading-deadlines/notifier] ошибка напоминания ${event.appeal_number}:`,
       err.message,
     );
-    return false;
+    return { delivered: false, messageId: null };
   }
 }
 
