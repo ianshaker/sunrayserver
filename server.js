@@ -22,7 +22,10 @@ const { registerTaskCreateCallbacks } = require("./tasks/create/callbacks");
 const { registerTaskManageCallbacks } = require("./tasks/manage/callbacks");
 const { registerAppealDeadlineCallbacks } = require("./appeals-deadlines/callbacks");
 const { startAppealDeadlineWorker, registerDeadlineFastPath } = require("./appeals-deadlines");
-const { registerLoadingDeadlineCallbacks } = require("./loading-deadlines/callbacks");
+const {
+  registerLoadingDeadlineCallbacks,
+  registerLoadingDeadlineCardButtons,
+} = require("./loading-deadlines/callbacks");
 const {
   startLoadingDeadlineWorker,
   registerLoadingDeadlineFastPath,
@@ -43,6 +46,7 @@ registerTaskCreateCallbacks();
 registerTaskManageCallbacks();
 registerAppealDeadlineCallbacks();
 registerLoadingDeadlineCallbacks();
+registerLoadingDeadlineCardButtons();
 registerIntent(require("./tasks/create/intent"));
 registerIntent(require("./tasks/manage/intent"));
 registerIntent(require("./appeals-deadlines/intent"));

@@ -41,6 +41,19 @@ const QUERY_LIST_CAP = 10;
  */
 const QUERY_SEND_GAP_MS = 450;
 
+/**
+ * Сколько ⏰-пингов подряд по одной заявке до того, как она отложится до завтра
+ * и уступит место следующей. 10 пингов ≈ полдня работы чата → 2 заявки в день.
+ */
+const PINGS_BEFORE_SNOOZE = 10;
+
+/**
+ * Свежий дедлайн (в днях назад): такие заявки показываются карточкой сразу,
+ * не дожидаясь, пока разгребётся очередь висяков. Иначе замер с дедлайном на
+ * сегодня встаёт 57-м в очередь и ждёт месяц.
+ */
+const FRESH_DEADLINE_DAYS = 7;
+
 /** Черновик превью (между командой и «Сохранить»). */
 const DRAFT_TTL_MS = 60 * 60 * 1000;
 
@@ -62,6 +75,8 @@ module.exports = {
   DIALOG_MAX_CHARS,
   QUERY_LIST_CAP,
   QUERY_SEND_GAP_MS,
+  PINGS_BEFORE_SNOOZE,
+  FRESH_DEADLINE_DAYS,
   DRAFT_TTL_MS,
   CALLBACK_PREFIX,
   PERMISSION,

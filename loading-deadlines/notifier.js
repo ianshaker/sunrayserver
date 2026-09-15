@@ -5,6 +5,7 @@
 const { LOADING_DEADLINE_CHAT_ID } = require("./config");
 const { formatDeadlineCard, normalizeAppealNumber } = require("./messages");
 const { markDeadlineNotifSent, updateDeadlineReminderMsgId } = require("./queries");
+const { buildCardKeyboard } = require("./keyboards");
 
 /**
  * Удаляет сообщение ⏰-пинга в чате погрузки (ошибку «уже нет» игнорируем).
@@ -40,6 +41,7 @@ async function sendDeadlineNotification(event, bot) {
     sentMsg = await bot.sendMessage(LOADING_DEADLINE_CHAT_ID, text, {
       parse_mode: parseMode,
       disable_web_page_preview: true,
+      reply_markup: buildCardKeyboard(event.id),
     });
   } catch (err) {
     console.error(
@@ -65,6 +67,7 @@ async function sendDeadlineNotification(event, bot) {
  *
  * @param {object} event
  * @param {object} bot
+ * @returns {Promise<boolean>} дошёл ли пинг до чата (считаем только доставленные)
  */
 async function sendDeadlineReminder(event, bot) {
   const replyText = `⏰ Дедлайн погрузки ${normalizeAppealNumber(event.appeal_number)} - не закрыт`;
@@ -94,11 +97,13 @@ async function sendDeadlineReminder(event, bot) {
       `[loading-deadlines/notifier] ⏰ напоминание отправлено для ${event.appeal_number}` +
         ` → msg_id=${newMsgId}`,
     );
+    return true;
   } catch (err) {
     console.error(
       `[loading-deadlines/notifier] ошибка напоминания ${event.appeal_number}:`,
       err.message,
     );
+    return false;
   }
 }
 

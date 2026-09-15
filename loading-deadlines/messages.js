@@ -377,6 +377,21 @@ function buildPreviewMessage(draft) {
   return { text: lines.join("\n"), parseMode: "HTML" };
 }
 
+/**
+ * Хвост, который дописывается к карточке после нажатия кнопки под ней:
+ * что сделали, кто и когда. Карточка остаётся на месте, кнопки убираются.
+ *
+ * @param {string} what — «перенесён на 18 сентября» / «отправлена в отказ»
+ * @param {string} who — кто нажал
+ * @param {string} whenDate ISO YYYY-MM-DD (MSK)
+ * @param {string} whenTime HH:mm (MSK)
+ * @returns {string} HTML-строка
+ */
+function formatCardActionTail(what, who, whenDate, whenTime) {
+  const when = `${formatIsoDateHuman(whenDate)} в ${whenTime}`;
+  return `\n<i>✅ ${escHtml(what)} — ${escHtml(who)}, ${escHtml(when)}</i>`;
+}
+
 module.exports = {
   formatDeadlineCard,
   formatActionStub,
@@ -398,6 +413,7 @@ module.exports = {
   buildPreviewDismissedMessage,
   formatIsoDateHuman,
   formatDeadlineDateTimeHuman,
+  formatCardActionTail,
   formatTimeHuman,
   escHtml,
   normalizeAppealNumber,

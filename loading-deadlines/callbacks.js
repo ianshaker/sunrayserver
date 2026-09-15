@@ -6,7 +6,13 @@ const { onCallbackQuery } = require("../tgwebhook");
 const { getTelegramBot } = require("../tgwebhook/bot");
 const { resolveProfileIdByTelegramUser } = require("../tasks/directory");
 const { takeDraft, getDraft } = require("./draft");
-const { parsePreviewCallback } = require("./keyboards");
+const {
+  parsePreviewCallback,
+  parseCardCallback,
+  buildCardKeyboard,
+  buildRejectConfirmKeyboard,
+} = require("./keyboards");
+const { LOADING_DEADLINE_CHAT_ID } = require("./config");
 const {
   buildPreviewDismissedMessage,
   formatRescheduleConfirm,
@@ -20,12 +26,18 @@ const {
   formatAssignTelegramFailed,
   formatNoAddressForAssign,
   formatSlotBusy,
+  formatDeadlineCard,
+  formatCardActionTail,
+  formatIsoDateHuman,
 } = require("./messages");
 const {
   findLoadingEventByNumber,
+  findLoadingEventById,
   rescheduleLoadingDeadline,
   applyInfoAddedAndRescheduleLoading,
   getMskTodayDate,
+  getMskNowTime,
+  getMskDateOffset,
 } = require("./queries");
 const { deleteDeadlineReminderMessage } = require("./notifier");
 const { executeLoadingReject } = require("./reject");
@@ -309,4 +321,129 @@ function registerLoadingDeadlineCallbacks() {
   console.log("[loading-deadlines] кнопки превью: сохранить / отменить");
 }
 
-module.exports = { registerLoadingDeadlineCallbacks };
+
+// ============================================================================
+// Кнопки под самой карточкой дедлайна: «Завтра», «+3 дня», «+7 дней», «Отказ».
+//
+// Зачем: чтобы сдвинуть дедлайн, менеджеру приходилось писать боту отдельным
+// сообщением с отметкой @бота — и почти никто этого не делал. Кнопка — прямое
+// действие человека, отметка для неё не нужна, а слушать чат бот по-прежнему
+// не начинает.
+// ============================================================================
+
+/** Кто нажал — для хвоста карточки и лога. */
+function describePresser(from) {
+  const name = [from?.first_name, from?.last_name].filter(Boolean).join(" ").trim();
+  if (name) return name;
+  if (from?.username) return `@${from.username}`;
+  return `tg:${from?.id ?? "?"}`;
+}
+
+/** Перерисовывает карточку с хвостом о выполненном действии и без кнопок. */
+async function rewriteCardWithTail(chatId, messageId, event, what, who) {
+  const bot = getTelegramBot();
+  const { text, parseMode } = formatDeadlineCard(event);
+  const tail = formatCardActionTail(what, who, getMskTodayDate(), getMskNowTime());
+  await bot.editMessageText(text + tail, {
+    chat_id: chatId,
+    message_id: messageId,
+    parse_mode: parseMode,
+    disable_web_page_preview: true,
+  });
+}
+
+async function setCardKeyboard(chatId, messageId, keyboard) {
+  const bot = getTelegramBot();
+  await bot.editMessageReplyMarkup(keyboard, { chat_id: chatId, message_id: messageId });
+}
+
+const SHIFT_DAYS = { d1: 1, d3: 3, d7: 7 };
+
+function registerLoadingDeadlineCardButtons() {
+  onCallbackQuery(async (callbackQuery) => {
+    const parsed = parseCardCallback(callbackQuery.data);
+    if (!parsed) return;
+
+    const chatId = callbackQuery.message?.chat?.id;
+    const messageId = callbackQuery.message?.message_id;
+    if (chatId == null || messageId == null) return;
+    // Кнопки живут только под карточками в чате погрузки.
+    if (chatId !== LOADING_DEADLINE_CHAT_ID) return;
+
+    const { action, eventId } = parsed;
+    const who = describePresser(callbackQuery.from);
+
+    // Отказ удаляет событие и заводит отказ — спрашиваем второй раз.
+    if (action === "rej") {
+      await setCardKeyboard(chatId, messageId, buildRejectConfirmKeyboard(eventId));
+      await answerCallback(callbackQuery, "Точно отказ?");
+      return;
+    }
+    if (action === "rjn") {
+      await setCardKeyboard(chatId, messageId, buildCardKeyboard(eventId));
+      await answerCallback(callbackQuery, "Отменено");
+      return;
+    }
+
+    let event;
+    try {
+      event = await findLoadingEventById(eventId);
+    } catch (error) {
+      console.error("[loading-deadlines/card] findLoadingEventById:", error.message);
+      await answerCallback(callbackQuery, "Не удалось получить заявку");
+      return;
+    }
+
+    if (!event) {
+      await setCardKeyboard(chatId, messageId, { inline_keyboard: [] });
+      await answerCallback(callbackQuery, "Заявка уже закрыта");
+      return;
+    }
+
+    const bot = getTelegramBot();
+
+    try {
+      if (SHIFT_DAYS[action]) {
+        const newDate = getMskDateOffset(SHIFT_DAYS[action]);
+        await deleteDeadlineReminderMessage(bot, event.deadline_reminder_tg_msg_id);
+        await rescheduleLoadingDeadline(event.id, newDate);
+        await rewriteCardWithTail(
+          chatId,
+          messageId,
+          event,
+          `перенесён на ${formatIsoDateHuman(newDate)}`,
+          who,
+        );
+        await answerCallback(callbackQuery, `Перенесено на ${formatIsoDateHuman(newDate)}`);
+        console.log(
+          `[loading-deadlines/card] ${event.appeal_number}: перенос на ${newDate} — ${who}`,
+        );
+        triggerDeadlineCheck();
+        return;
+      }
+
+      if (action === "rjy") {
+        await deleteDeadlineReminderMessage(bot, event.deadline_reminder_tg_msg_id);
+        await executeLoadingReject(event, "Отказ кнопкой под карточкой дедлайна", who);
+        await rewriteCardWithTail(chatId, messageId, event, "отправлена в отказ", who);
+        await answerCallback(callbackQuery, "Отправлена в отказ");
+        console.log(`[loading-deadlines/card] ${event.appeal_number}: отказ — ${who}`);
+        triggerDeadlineCheck();
+        return;
+      }
+    } catch (error) {
+      if (error.message === "already_rejected") {
+        await setCardKeyboard(chatId, messageId, { inline_keyboard: [] });
+        await answerCallback(callbackQuery, "Уже в отказах");
+        return;
+      }
+      console.error(`[loading-deadlines/card] ошибка ${action}:`, error.message);
+      await answerCallback(callbackQuery, "Не удалось выполнить действие");
+    }
+  });
+
+  console.log("[loading-deadlines] кнопки карточки: завтра / +3 / +7 / отказ");
+}
+
+module.exports = { registerLoadingDeadlineCallbacks, registerLoadingDeadlineCardButtons };
+

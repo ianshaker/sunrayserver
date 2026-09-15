@@ -82,17 +82,29 @@ function getMskDateOffset(dayOffset) {
  *
  * @returns {Promise<object|null>}
  */
-async function getActiveDeadlineNotif() {
+async function getActiveDeadlineNotif({ neverSnoozedOnly = false } = {}) {
   const today = getMskTodayDate();
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("eventsnew")
     .select(
-      "id, appeal_number, deadline, deadline_time, deadline_notif_sent_at, deadline_notif_tg_msg_id, deadline_reminder_tg_msg_id",
+      "id, appeal_number, deadline, deadline_time, deadline_notif_sent_at, deadline_notif_tg_msg_id, deadline_reminder_tg_msg_id, deadline_reminder_count, deadline_snoozed_until, deadline_snoozed_at",
     )
     .eq("type", "Погрузка")
     .lte("deadline", today)
-    .not("deadline_notif_sent_at", "is", null)
+    .not("deadline_notif_sent_at", "is", null);
+
+  if (neverSnoozedOnly) {
+    // Полоса «ещё ни разу не откладывали» — она идёт раньше висяков без карточки.
+    query = query.is("deadline_snoozed_at", null);
+  } else {
+    // Вернувшиеся из отложенных: те, у кого срок молчания истёк.
+    query = query.or(`deadline_snoozed_until.is.null,deadline_snoozed_until.lte.${today}`);
+  }
+
+  const { data, error } = await query
+    // Кого отложили раньше — тот раньше и вернётся: круг, а не «вечно самая старая».
+    .order("deadline_snoozed_at", { ascending: true, nullsFirst: true })
     .order("deadline", { ascending: true })
     .order("deadline_time", { ascending: true, nullsFirst: true })
     .order("deadline_notif_sent_at", { ascending: true })
@@ -114,15 +126,20 @@ async function getActiveDeadlineNotif() {
  *
  * @returns {Promise<object|null>}
  */
-async function getNextDeadlineEvent() {
+async function getNextDeadlineEvent({ notEarlierThan = null } = {}) {
   const today = getMskTodayDate();
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("eventsnew")
     .select(EVENT_CARD_SELECT)
     .eq("type", "Погрузка")
     .lte("deadline", today)
-    .is("deadline_notif_sent_at", null)
+    .is("deadline_notif_sent_at", null);
+
+  // Свежая полоса: заявки с недавним дедлайном показываем, не дожидаясь висяков.
+  if (notEarlierThan) query = query.gte("deadline", notEarlierThan);
+
+  const { data, error } = await query
     .order("deadline", { ascending: true })
     .order("deadline_time", { ascending: true, nullsFirst: true })
     .order("id", { ascending: false })
@@ -150,6 +167,9 @@ async function markDeadlineNotifSent(id, tgMsgId) {
       deadline_notif_sent_at: new Date().toISOString(),
       deadline_notif_tg_msg_id: tgMsgId,
       deadline_reminder_tg_msg_id: null,
+      deadline_reminder_count: 0,
+      deadline_snoozed_until: null,
+      deadline_snoozed_at: null,
     })
     .eq("id", id);
 
@@ -233,12 +253,15 @@ async function findLoadingEventByNumber(appealNumber) {
  * @param {string|null|undefined} newTime HH:mm — если undefined, время не трогаем;
  *   если null — очищаем; если строка — пишем MSK wall-clock.
  */
-async function rescheduleLoadingDeadline(id, newDate, newTime) {
+async function rescheduleLoadingDeadline(id, newDate, newTime = undefined) {
   const updatePayload = {
     deadline: newDate,
     deadline_notif_sent_at: null,
     deadline_notif_tg_msg_id: null,
     deadline_reminder_tg_msg_id: null,
+    deadline_reminder_count: 0,
+    deadline_snoozed_until: null,
+    deadline_snoozed_at: null,
   };
 
   if (newTime !== undefined) {
@@ -287,6 +310,9 @@ async function applyInfoAddedAndRescheduleLoading(
     deadline_notif_sent_at: null,
     deadline_notif_tg_msg_id: null,
     deadline_reminder_tg_msg_id: null,
+    deadline_reminder_count: 0,
+    deadline_snoozed_until: null,
+    deadline_snoozed_at: null,
   };
 
   if (newTime !== undefined) {
@@ -302,6 +328,74 @@ async function applyInfoAddedAndRescheduleLoading(
 
   if (error) {
     console.error("[loading-deadlines/queries] applyInfoAddedAndRescheduleLoading:", error.message);
+    throw error;
+  }
+}
+
+/**
+ * Событие погрузки по внутреннему id — для кнопок под карточкой: в кнопке
+ * лежит id, а не номер заявки (номер может повторяться у повторных обращений).
+ *
+ * @param {number} id
+ * @returns {Promise<object|null>}
+ */
+async function findLoadingEventById(id) {
+  const { data, error } = await supabase
+    .from("eventsnew")
+    .select(
+      `${EVENT_CARD_SELECT}, deadline_notif_sent_at, deadline_notif_tg_msg_id, deadline_reminder_tg_msg_id`,
+    )
+    .eq("type", "Погрузка")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (error) {
+    console.error("[loading-deadlines/queries] findLoadingEventById:", error.message);
+    throw error;
+  }
+
+  return data || null;
+}
+
+/**
+ * Записывает, что по событию ушёл очередной ⏰-пинг.
+ *
+ * @param {number} id
+ * @param {number} sentCount — сколько пингов стало (прежнее значение + 1)
+ */
+async function setDeadlineReminderCount(id, sentCount) {
+  const { error } = await supabase
+    .from("eventsnew")
+    .update({ deadline_reminder_count: sentCount })
+    .eq("id", id);
+
+  if (error) {
+    console.error("[loading-deadlines/queries] setDeadlineReminderCount:", error.message);
+    throw error;
+  }
+}
+
+/**
+ * Откладывает событие до указанной даты: пинги по нему прекращаются, очередь
+ * берёт следующее. Заявка остаётся в очереди — вернётся, когда дата наступит,
+ * и встанет позади тех, кого ещё не показывали.
+ *
+ * @param {number} id
+ * @param {string} untilDate YYYY-MM-DD (MSK)
+ */
+async function snoozeDeadlineEvent(id, untilDate) {
+  const { error } = await supabase
+    .from("eventsnew")
+    .update({
+      deadline_snoozed_until: untilDate,
+      deadline_snoozed_at: new Date().toISOString(),
+      deadline_reminder_count: 0,
+      deadline_reminder_tg_msg_id: null,
+    })
+    .eq("id", id);
+
+  if (error) {
+    console.error("[loading-deadlines/queries] snoozeDeadlineEvent:", error.message);
     throw error;
   }
 }
@@ -491,7 +585,10 @@ module.exports = {
   getNextDeadlineEvent,
   markDeadlineNotifSent,
   updateDeadlineReminderMsgId,
+  setDeadlineReminderCount,
+  snoozeDeadlineEvent,
   findLoadingEventByNumber,
+  findLoadingEventById,
   rescheduleLoadingDeadline,
   applyInfoAddedAndRescheduleLoading,
   findExistingAppealsOtkaz,
