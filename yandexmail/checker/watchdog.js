@@ -18,12 +18,20 @@ const { getCounters } = require("./counters");
 const { isWorkTime } = require("../../lib/mskTime");
 const { isEnabled } = require("../config");
 const { isGmailCheckerEnabled } = require("../../postamails/checker/scheduler");
+const { getCursorHealth } = require("../pipeline/cursor");
 
 /** Нет успешного прохода дольше этого — связь потеряна. */
 const NO_SUCCESS_ALERT_MS = 10 * 60 * 1000;
 
 /** Нет ни одного письма дольше этого в рабочие часы — что-то с отбором. */
 const NO_MAIL_ALERT_MS = 3 * 60 * 60 * 1000;
+
+/**
+ * Закладка не ложится в базу дольше этого — молчаливая беда: пока сервер не
+ * перезапускают, всё выглядит исправным, а перезапуск откатывает робота назад
+ * и сыплет повторами в чат. Ровно так вышло 22.09.2026.
+ */
+const CURSOR_STUCK_MS = 10 * 60 * 1000;
 
 /** Чаще этого одну и ту же тревогу не повторяем. */
 const REPEAT_ALERT_MS = 60 * 60 * 1000;
@@ -33,7 +41,7 @@ const WORK_HOURS_MSK = { from: 9, to: 21 };
 /** Как часто сторож осматривает почту. */
 const INSPECT_EVERY_MS = 5 * 60 * 1000;
 
-let lastAlertAt = { noSuccess: 0, noMail: 0, noSource: 0 };
+let lastAlertAt = { noSuccess: 0, noMail: 0, noSource: 0, cursorStuck: 0 };
 let inspectTimer = null;
 
 function isWorkHours(now = new Date()) {
@@ -83,6 +91,27 @@ async function inspect(now = Date.now()) {
         "Заявки с почты сейчас могут не доходить. Письма при этом в ящике не пропадают.",
     );
     return;
+  }
+
+  // Связь с почтой есть, письма идут — но закладка может не доходить до базы.
+  // Снаружи это не видно вовсе, поэтому спрашиваем у неё самой.
+  const cursor = getCursorHealth();
+  if (!cursor.tableMissing && cursor.failuresInRow > 0) {
+    const lastWrite = cursor.lastDbWriteAt ? Date.parse(cursor.lastDbWriteAt) : 0;
+    if (!lastWrite || now - lastWrite > CURSOR_STUCK_MS) {
+      const minutes = lastWrite ? Math.round((now - lastWrite) / 60000) : null;
+      await alert(
+        "cursorStuck",
+        "⚠️ *Закладка почты не сохраняется*\n\n" +
+          (minutes
+            ? `Последний раз легла в базу ${minutes} мин назад.`
+            : "Ни разу не легла в базу с запуска.") +
+          `\nНеудачных попыток подряд: ${cursor.failuresInRow}.` +
+          (cursor.lastError ? `\nПричина: ${cursor.lastError}` : "") +
+          "\n\nЗаявки сейчас обрабатываются нормально. Но если сервер перезапустить, " +
+          "робот вернётся к старому месту и пришлёт сюда пачку повторов.",
+      );
+    }
   }
 
   const lastMailSeenAt = counters.lastMailSeenAt || 0;
