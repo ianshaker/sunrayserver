@@ -1,10 +1,17 @@
 const { PRODUCT_KEYWORDS } = require("../config");
 const { parseEmailFields, pickField } = require("./fields");
 
-/** Ищет название из справочника внутри строки, не глядя на регистр. */
+/**
+ * Ищет название из справочника внутри строки, не глядя на регистр.
+ *
+ * Берётся **самое длинное** совпадение, а не первое: «Деревянные жалюзи» содержат и «Жалюзи»,
+ * и до 22.09.2026 форма с сайта записывалась общим словом — вид изделия терялся на входе.
+ */
 function matchProductKeyword(value) {
   const low = String(value || "").toLowerCase();
-  return PRODUCT_KEYWORDS.find((p) => low.includes(p.toLowerCase())) || null;
+  const sovpavshie = PRODUCT_KEYWORDS.filter((p) => low.includes(p.toLowerCase()));
+  if (sovpavshie.length === 0) return null;
+  return sovpavshie.reduce((a, b) => (b.length > a.length ? b : a));
 }
 
 function extractName(text) {
