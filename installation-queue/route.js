@@ -26,8 +26,16 @@ function registerInstallationQueueRoute(fastify, telegramBot) {
         queueStatus,
         documents,
         comments,
+        installerNote,
         contractScanPages,
       } = body;
+
+      // Заметка монтажникам. С 23.09.2026 CRM шлёт её отдельным полем installerNote,
+      // а comments договора стал историей сделки — переписка с клиентом монтажникам
+      // не нужна. Старая CRM installerNote не знает и шлёт comments: пока её не
+      // обновили у всех, печатаем его. Пустая строка в installerNote — «заметки нет»,
+      // и тогда comments не подставляется.
+      const note = installerNote !== undefined ? installerNote : comments;
 
       const pages = normalizePages(contractScanPages);
 
@@ -54,7 +62,7 @@ function registerInstallationQueueRoute(fastify, telegramBot) {
         factorySummary,
         queueStatus,
         documents,
-        comments,
+        comments: note,
         contractScanPages: pages,
       });
 
