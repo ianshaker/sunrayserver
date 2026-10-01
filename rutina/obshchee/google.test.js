@@ -37,7 +37,7 @@ test("адрес модели — Vertex global, проект из ключа", 
     "https://aiplatform.googleapis.com/v1/projects/p1/locations/global/publishers/google/models/gemini-3.5-flash-lite:generateContent",
   );
   assert.equal(MODEL, "gemini-3.5-flash-lite");
-  assert.equal(ZAPASNAYA_MODEL, "gemini-3-flash-preview");
+  assert.equal(ZAPASNAYA_MODEL, "gemini-3.1-flash-lite");
 });
 
 test("ключ: нет, не JSON, без проекта — своя ошибка без содержимого", () => {

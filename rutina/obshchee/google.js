@@ -11,7 +11,7 @@
 const { OshibkaRutiny, zhurnalPoUmolchaniyu } = require("./otvety");
 
 const MODEL = "gemini-3.5-flash-lite";
-const ZAPASNAYA_MODEL = "gemini-3-flash-preview"; // если основной ответит 404
+const ZAPASNAYA_MODEL = "gemini-3.1-flash-lite"; // если основной ответит 404; рассуждение по умолчанию minimal, как у основной
 const REGION = "global";
 const TAYMAUT_MS = 45 * 1000; // браузер ждёт 60 с
 const OBLAST_DOSTUPA = "https://www.googleapis.com/auth/cloud-platform";

@@ -30,7 +30,10 @@
 20 МБ inline-запроса Vertex. Тайм-аут 45 с — меньше 60 с ожидания браузера.
 
 **Модель.** `gemini-3.5-flash-lite`, Vertex `global`; на 404 — запасная
-`gemini-3-flash-preview`. Без `temperature`/`thinkingBudget` (3.x). Ответ —
+`gemini-3.1-flash-lite` (стабильная, Google снимет не раньше 07.05.2027; до 01.10.2026 —
+`gemini-3-flash-preview`: пробная, рассуждала по умолчанию на high и стоила
+дороже). У обеих рассуждение по умолчанию `minimal`, поэтому
+`thinkingConfig` не шлём. Без `temperature`/`thinkingBudget` (3.x). Ответ —
 JSON по схеме `{ status: "ok" | "empty", text }`, `maxOutputTokens` 8192.
 Инструкция — в `diktovka.js` (`INSTRUKCIYA`).
 
@@ -40,10 +43,11 @@ JSON по схеме `{ status: "ok" | "empty", text }`, `maxOutputTokens` 8192.
 `usageMetadata`). Ни аудио, ни текста, ни токенов входа.
 
 **Смотреть на первом живом вызове** (ревью Г-1, Н2, Н5): не пришёл ли 400 на
-`enum` в схеме; сколько `tokenovMysli` у запасной модели — она рассуждает по
-умолчанию, и рассуждение ест `maxOutputTokens`: на длинной записи это
-`max_tokens` в `diktovka_sboy`. Тогда — `thinkingConfig: { thinkingLevel:
-"low" }` для запасной, проверив пробой, что Vertex его принимает.
+`enum` в схеме (не пришёл: 01.10.2026 живые вызовы — 200); сколько
+`tokenovMysli` — рассуждение ест `maxOutputTokens`, на длинной записи это
+`max_tokens` в `diktovka_sboy`. У основной в журнале пока `null`; запасная с
+01.10.2026 тоже `minimal` по умолчанию — это почти ноль, но не обещание
+нуля: малое число в `tokenovMysli` — не беда.
 
 **Чем проверено.** `diktovka.test.js` — чистые функции; `../testy/kak-sunray.test.js`
 — адреса на сервере «как Sunray» через `inject`. Живой Google — только после

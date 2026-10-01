@@ -120,8 +120,8 @@ function razobratOtvet(data) {
 }
 
 // Сколько токенов ушло на рассуждение и на ответ — только числа, для
-// журнала (ревью Г-1, Н2: у запасной модели рассуждение по умолчанию
-// включено и ест предел maxOutputTokens — видно ли это, скажет журнал).
+// журнала (ревью Г-1, Н2: рассуждение ест предел maxOutputTokens — видно
+// ли это, скажет журнал).
 function tokenyIz(data) {
   const u = data && typeof data === "object" ? data.usageMetadata : null;
   const chislo = (v) => (typeof v === "number" && Number.isFinite(v) ? v : null);
