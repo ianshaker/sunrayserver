@@ -8,6 +8,12 @@
 
 const { otvetitOshibkoy, kodPoOshibke, zhurnalPoUmolchaniyu } = require("./obshchee/otvety");
 
+// Логики области — их адреса. /rutina/zdorov сверяет, что каждый встал:
+// сбой одной логики обёртка Ы24 гасит молча, и без этой сверки «здоров»
+// отвечал бы 200 при мёртвой диктовке (проверка П-Б, находка 08).
+// Новая логика — строка здесь и своя регистрация ниже.
+const LOGIKI = [{ imya: "diktovka", metod: "POST", adres: "/diktovka" }];
+
 // nastroyki — только для тестов: { vhod, google, zhurnal }.
 function podklyuchitRutinu(fastify, nastroyki = {}) {
   const zhurnal = nastroyki.zhurnal || zhurnalPoUmolchaniyu;
@@ -28,7 +34,7 @@ function podklyuchitRutinu(fastify, nastroyki = {}) {
       return otvetitOshibkoy(reply, kod);
     });
 
-    app.register(require("./zdorov"));
+    app.register(require("./zdorov"), { logiki: LOGIKI });
     app.register(require("./diktovka"), { vhod, google, zhurnal });
   }
 
@@ -50,3 +56,4 @@ function podklyuchitRutinu(fastify, nastroyki = {}) {
 }
 
 module.exports = podklyuchitRutinu;
+module.exports.LOGIKI = LOGIKI;

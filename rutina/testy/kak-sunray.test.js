@@ -59,11 +59,15 @@ test("сборка поверх корневого audio/mpeg проходит r
   const { app, stroki } = await server();
   // Обёртка Ы24 гасит сбой области молча для Sunray — здесь он должен быть виден.
   assert.ok(!stroki.some((s) => s.startsWith("oblast_ne_vstala")), stroki.join("\n"));
-  assert.equal((await app.inject({ method: "GET", url: "/rutina/zdorov" })).statusCode, 200);
+  const zdorov = await app.inject({ method: "GET", url: "/rutina/zdorov" });
+  assert.equal(zdorov.statusCode, 200);
+  assert.deepEqual(zdorov.json(), { status: "ok", logiki: { diktovka: true } });
   await app.close();
 });
 
-test("проверка ловит Ы1: свой audio/mpeg в области уронил бы сервер", async () => {
+test("Ы1 без обёртки: повтор разбора в дочерней области — FST_ERR_CTP_ALREADY_PRESENT в ready()", async () => {
+  // Голый Fastify, без нашей обёртки Ы24: так повтор ронял бы сервер. С
+  // обёрткой Sunray жив, а сбой виден в zdorov — тест частичного сбоя ниже.
   const fastify = require("fastify")();
   fastify.addContentTypeParser("audio/mpeg", { parseAs: "buffer" }, (_r, b, d) => d(null, b));
   fastify.register(async (oblast) => {
@@ -89,16 +93,40 @@ test("Ы24: область RUTINA не встала — Sunray жив, /ping о�
   await app.close();
 });
 
-test("Ы24: повтор разбора тела в области (как Ы1) не роняет Sunray", async () => {
+test("Ы24 и П-Б: повтор разбора (как Ы1) — Sunray жив, диктовка не встала, zdorov это говорит 503", async () => {
+  // Частичный сбой: Sunray однажды вешает на корень свой audio/webm. zdorov
+  // встаёт раньше diktovka и без сверки отвечал бы 200 (проверка П-Б, 08).
   const { stroki, zhurnal } = zhurnalVPamyat();
   const fastify = require("fastify")();
   fastify.addContentTypeParser("audio/webm", { parseAs: "buffer" }, (_r, b, d) => d(null, b));
-  require("../index")(fastify, { zhurnal });
+  require("../index")(fastify, {
+    zhurnal,
+    vhod: vhodNaSvoyomKlyuche(),
+    google: googleOtvechaet({ status: "ok", text: "x" }),
+  });
   fastify.get("/ping", async () => ({ status: "pong" }));
   await fastify.ready();
   assert.equal((await fastify.inject({ method: "GET", url: "/ping" })).statusCode, 200);
-  assert.ok(stroki.some((s) => s.includes("FST_ERR_CTP_ALREADY_PRESENT")));
+  assert.ok(stroki.some((s) => s.startsWith("oblast_ne_vstala") && s.includes("FST_ERR_CTP_ALREADY_PRESENT")));
+  const zdorov = await fastify.inject({ method: "GET", url: "/rutina/zdorov" });
+  assert.equal(zdorov.statusCode, 503);
+  assert.deepEqual(zdorov.json(), { status: "ne_vse", logiki: { diktovka: false } });
+  assert.equal(zdorov.headers["cache-control"], "no-store");
+  assert.equal((await golos(fastify)).statusCode, 404);
   await fastify.close();
+});
+
+test("П-Б: zdorov сверяет адрес каждой логики из LOGIKI", async () => {
+  const { LOGIKI } = require("../index");
+  assert.deepEqual(
+    LOGIKI.map((l) => l.imya),
+    ["diktovka"],
+  );
+  const { app } = await server();
+  for (const l of LOGIKI) {
+    assert.ok(app.hasRoute({ method: l.metod, url: "/rutina" + l.adres }), l.imya);
+  }
+  await app.close();
 });
 
 test("Ы24: сбой плагина Sunray до нашей строки не гасится нашей обёрткой", async () => {
@@ -114,7 +142,8 @@ test("GET /rutina/zdorov — жива, без входа", async () => {
   const { app } = await server();
   const otvet = await app.inject({ method: "GET", url: "/rutina/zdorov" });
   assert.equal(otvet.statusCode, 200);
-  assert.deepEqual(otvet.json(), { status: "ok" });
+  assert.deepEqual(otvet.json(), { status: "ok", logiki: { diktovka: true } });
+  assert.equal(otvet.headers["cache-control"], "no-store");
   await app.close();
 });
 

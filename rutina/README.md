@@ -30,12 +30,14 @@ require("./rutina")(fastify);   // после CORS, до listen
 ```
 rutina/
   index.js            область /rutina: setErrorHandler, zdorov, diktovka;
-                      сбой загрузки области гасится обёрткой — Sunray жив (Ы24)
+                      сбой загрузки области гасится обёрткой — Sunray жив (Ы24);
+                      LOGIKI — адреса логик, их сверяет zdorov
   obshchee/
     otvety.js         ответы ошибок { oshibka: "<код>" }, журнал
     vhod.js           «это вход RUTINA»: ES256 по JWKS базы RUTINA, crypto Node
     google.js         свой клиент Google (googleapis), Gemini на Vertex global
-  zdorov/             GET /rutina/zdorov
+  zdorov/             GET /rutina/zdorov — 200, если адрес каждой логики
+                      встал; 503 { status: "ne_vse", logiki } — если нет
   diktovka/           POST /rutina/diktovka — голос → текст
   testy/              сервер «как Sunray» и помощники тестов
 ```
@@ -52,11 +54,20 @@ node --test "rutina/**/*.test.js"
 ставит нашу область и зовёт `ready()` — падение здесь, а не на Render.
 Google и JWKS в тестах — подменой, живых вызовов нет.
 
-## Наши логики — реестр
+## После выкатки
 
-Тот же реестр, что в скилле RUTINA `/10-2-sunray-logika`, «Наши логики».
+`GET /rutina/zdorov` — не только `/ping`: Sunray жив и при сбое нашей
+области (Ы24), а сбой одной логики виден только здесь — `503` и
+`logiki: { diktovka: false }` — и строкой `oblast_ne_vstala` в журнале.
 
-| Логика | Адрес | Что делает | Чем | Коммит на сервере | Дата |
-|---|---|---|---|---|---|
-| `zdorov` | `GET /rutina/zdorov` | жива ли область RUTINA | — | не выкачена (ветка `rutina-diktovka-2026-10-01`) | — |
-| `diktovka` | `POST /rutina/diktovka` | голос Яна → текст для мысли Reels (Г-1) | Gemini на Vertex, свой клиент | не выкачена (ветка `rutina-diktovka-2026-10-01`) | — |
+## Наши логики
+
+Здесь — что есть и с какого коммита. Какой коммит стоит на Render сейчас и
+что ждёт выкатки — реестр в скилле RUTINA `/10-2-sunray-logika`, «Наши
+логики»: правка этого файла — новая отправка в `main`, то есть новая
+выкатка, и коммит своего же хеша знать не может (проверка П-Б, находка 09).
+
+| Логика | Адрес | Что делает | Чем | Впервые на сервере |
+|---|---|---|---|---|
+| `zdorov` | `GET /rutina/zdorov` | жива ли область RUTINA и встала ли каждая логика | — | `5de6caf`, выкачена 01.10.2026 |
+| `diktovka` | `POST /rutina/diktovka` | голос Яна → текст для мысли Reels (Г-1) | Gemini на Vertex, свой клиент | `5de6caf`, выкачена 01.10.2026 |

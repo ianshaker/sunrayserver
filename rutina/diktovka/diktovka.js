@@ -6,7 +6,8 @@
 const { OshibkaRutiny } = require("../obshchee/otvety");
 
 // Белый список. audio/mpeg здесь нет и не будет: его разбор уже висит на
-// корне Sunray, повтор уронит весь сервер (Ы1).
+// корне Sunray, повтор — FST_ERR_CTP_ALREADY_PRESENT (Ы1). Sunray обёртка
+// Ы24 спасает, но диктовка не встанет: /rutina/zdorov ответит 503.
 const TIPY = ["audio/webm", "audio/mp4", "audio/ogg", "audio/wav"];
 
 const PREDEL_BAYT = 10 * 1024 * 1024; // ≈ 40 минут при 32 кбит/с; браузер пишет до 5
