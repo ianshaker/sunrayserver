@@ -46,16 +46,24 @@ async function diktovka(app, { vhod, google, zhurnal }) {
         const itog = await raspoznat({ audio, tip, google });
         const ms = Date.now() - nachalo;
         if (itog.status !== "ok") {
-          zhurnal("diktovka_tishina", { tip, bayt: audio.length, ms, model: itog.model });
+          zhurnal("diktovka_tishina", { tip, bayt: audio.length, ms, model: itog.model, ...itog.tokeny });
           return otvetitOshibkoy(reply, "golos_tishina");
         }
-        zhurnal("diktovka_ok", { tip, bayt: audio.length, ms, znakov: itog.text.length, model: itog.model });
+        zhurnal("diktovka_ok", { tip, bayt: audio.length, ms, znakov: itog.text.length, model: itog.model, ...itog.tokeny });
         reply.header("cache-control", "no-store");
         return { status: "ok", text: itog.text };
       } catch (oshibka) {
         const ms = Date.now() - nachalo;
         if (oshibka instanceof OshibkaRutiny) {
-          zhurnal("diktovka_sboy", { kod: oshibka.kod, prichina: oshibka.prichina, tip, bayt: audio.length, ms });
+          zhurnal("diktovka_sboy", {
+            kod: oshibka.kod,
+            prichina: oshibka.prichina,
+            tip,
+            bayt: audio.length,
+            ms,
+            ...(oshibka.model ? { model: oshibka.model } : {}),
+            ...(oshibka.tokeny || {}),
+          });
           return otvetitOshibkoy(reply, oshibka.kod);
         }
         // Чужая ошибка — только имя, не сообщение и не сама ошибка.

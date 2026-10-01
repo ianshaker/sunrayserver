@@ -118,11 +118,34 @@ function razobratOtvet(data) {
   return { status: "ok", text };
 }
 
+// Сколько токенов ушло на рассуждение и на ответ — только числа, для
+// журнала (ревью Г-1, Н2: у запасной модели рассуждение по умолчанию
+// включено и ест предел maxOutputTokens — видно ли это, скажет журнал).
+function tokenyIz(data) {
+  const u = data && typeof data === "object" ? data.usageMetadata : null;
+  const chislo = (v) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+  return {
+    tokenovMysli: chislo(u && u.thoughtsTokenCount),
+    tokenovOtveta: chislo(u && u.candidatesTokenCount),
+  };
+}
+
 // Голос → текст. google — { sprositModel(telo, { dlinaZaprosa }) }.
+// Ответ — { status, text, model, tokeny }; своя ошибка разбора несёт
+// model и tokeny для журнала.
 async function raspoznat({ audio, tip, google }) {
   const telo = sobratZapros(audio, tip);
   const { data, model } = await google.sprositModel(telo, { dlinaZaprosa: audio.length });
-  return { ...razobratOtvet(data), model };
+  const tokeny = tokenyIz(data);
+  try {
+    return { ...razobratOtvet(data), model, tokeny };
+  } catch (oshibka) {
+    if (oshibka instanceof OshibkaRutiny) {
+      oshibka.model = model;
+      oshibka.tokeny = tokeny;
+    }
+    throw oshibka;
+  }
 }
 
 module.exports = {
@@ -135,5 +158,6 @@ module.exports = {
   sobratZapros,
   pochistitTekst,
   razobratOtvet,
+  tokenyIz,
   raspoznat,
 };

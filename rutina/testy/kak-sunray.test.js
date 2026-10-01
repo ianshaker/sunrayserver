@@ -56,7 +56,10 @@ function golos(app, { tip = "audio/webm;codecs=opus", telo = Buffer.from("zvuk-w
 }
 
 test("сборка поверх корневого audio/mpeg проходит ready()", async () => {
-  const { app } = await server();
+  const { app, stroki } = await server();
+  // Обёртка Ы24 гасит сбой области молча для Sunray — здесь он должен быть виден.
+  assert.ok(!stroki.some((s) => s.startsWith("oblast_ne_vstala")), stroki.join("\n"));
+  assert.equal((await app.inject({ method: "GET", url: "/rutina/zdorov" })).statusCode, 200);
   await app.close();
 });
 
@@ -67,6 +70,44 @@ test("проверка ловит Ы1: свой audio/mpeg в области у�
     oblast.addContentTypeParser("audio/mpeg", { parseAs: "buffer" }, (_r, b, d) => d(null, b));
   });
   await assert.rejects(fastify.ready(), (o) => o.code === "FST_ERR_CTP_ALREADY_PRESENT");
+});
+
+test("Ы24: область RUTINA не встала — Sunray жив, /ping отвечает, в журнале код", async () => {
+  const { stroki, zhurnal } = zhurnalVPamyat();
+  const nastroyki = {
+    zhurnal,
+    get vhod() {
+      throw Object.assign(new Error("opechatka"), { code: "OPYT_SBOY" });
+    },
+  };
+  const app = sobratKakSunray({ nastroyki });
+  await app.ready();
+  assert.equal((await app.inject({ method: "GET", url: "/ping" })).statusCode, 200);
+  assert.equal((await app.inject({ method: "GET", url: "/rutina/zdorov" })).statusCode, 404);
+  assert.ok(stroki.some((s) => s.startsWith("oblast_ne_vstala") && s.includes("OPYT_SBOY")));
+  assert.ok(!stroki.some((s) => s.includes("opechatka")), "сообщение ошибки в журнал не идёт");
+  await app.close();
+});
+
+test("Ы24: повтор разбора тела в области (как Ы1) не роняет Sunray", async () => {
+  const { stroki, zhurnal } = zhurnalVPamyat();
+  const fastify = require("fastify")();
+  fastify.addContentTypeParser("audio/webm", { parseAs: "buffer" }, (_r, b, d) => d(null, b));
+  require("../index")(fastify, { zhurnal });
+  fastify.get("/ping", async () => ({ status: "pong" }));
+  await fastify.ready();
+  assert.equal((await fastify.inject({ method: "GET", url: "/ping" })).statusCode, 200);
+  assert.ok(stroki.some((s) => s.includes("FST_ERR_CTP_ALREADY_PRESENT")));
+  await fastify.close();
+});
+
+test("Ы24: сбой плагина Sunray до нашей строки не гасится нашей обёрткой", async () => {
+  const fastify = require("fastify")();
+  fastify.register(async () => {
+    throw Object.assign(new Error("chuzhoy"), { code: "CHUZHOY_SBOY" });
+  });
+  require("../index")(fastify, { zhurnal: () => {} });
+  await assert.rejects(fastify.ready(), (o) => o.code === "CHUZHOY_SBOY");
 });
 
 test("GET /rutina/zdorov — жива, без входа", async () => {

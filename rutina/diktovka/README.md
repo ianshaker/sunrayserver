@@ -31,8 +31,15 @@ JSON по схеме `{ status: "ok" | "empty", text }`, `maxOutputTokens` 8192.
 Инструкция — в `diktovka.js` (`INSTRUKCIYA`).
 
 **Журнал.** События `diktovka_ok`, `diktovka_tishina`, `diktovka_sboy`,
-`google_sboy`, `google_dolgo`: тип, байты, мс, знаков, модель, статус, код.
-Ни аудио, ни текста, ни токенов.
+`google_sboy`, `google_dolgo`: тип, байты, мс, знаков, модель, статус, код;
+у ответа модели — `tokenovMysli` и `tokenovOtveta` (числа из
+`usageMetadata`). Ни аудио, ни текста, ни токенов входа.
+
+**Смотреть на первом живом вызове** (ревью Г-1, Н2, Н5): не пришёл ли 400 на
+`enum` в схеме; сколько `tokenovMysli` у запасной модели — она рассуждает по
+умолчанию, и рассуждение ест `maxOutputTokens`: на длинной записи это
+`max_tokens` в `diktovka_sboy`. Тогда — `thinkingConfig: { thinkingLevel:
+"low" }` для запасной, проверив пробой, что Vertex его принимает.
 
 **Чем проверено.** `diktovka.test.js` — чистые функции; `../testy/kak-sunray.test.js`
 — адреса на сервере «как Sunray» через `inject`. Живой Google — только после

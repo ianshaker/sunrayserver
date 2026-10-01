@@ -9,6 +9,7 @@ const {
   sobratZapros,
   pochistitTekst,
   razobratOtvet,
+  tokenyIz,
   raspoznat,
 } = require("./diktovka");
 const { googleOtvechaet } = require("../testy/pomoshchniki");
@@ -106,7 +107,36 @@ test("чистка: переводы строк, тройные переносы
 test("распознать: зовёт модель с длиной аудио, отдаёт текст и модель", async () => {
   const google = googleOtvechaet({ status: "ok", text: "Абзац один.\n\n\n\nАбзац два." });
   const itog = await raspoznat({ audio: Buffer.from("zvuk"), tip: "audio/mp4", google });
-  assert.deepEqual(itog, { status: "ok", text: "Абзац один.\n\nАбзац два.", model: "testovaya" });
+  assert.deepEqual(itog, {
+    status: "ok",
+    text: "Абзац один.\n\nАбзац два.",
+    model: "testovaya",
+    tokeny: { tokenovMysli: null, tokenovOtveta: null },
+  });
   assert.equal(google.vyzovy[0].opts.dlinaZaprosa, 4);
   assert.equal(google.vyzovy[0].telo.contents[0].parts[0].inlineData.mimeType, "audio/mp4");
+});
+
+test("токены рассуждения и ответа — только числа для журнала (ревью Г-1, Н2)", async () => {
+  assert.deepEqual(tokenyIz({ usageMetadata: { thoughtsTokenCount: 812, candidatesTokenCount: 140, promptTokenCount: 9 } }), {
+    tokenovMysli: 812,
+    tokenovOtveta: 140,
+  });
+  assert.deepEqual(tokenyIz({}), { tokenovMysli: null, tokenovOtveta: null });
+  assert.deepEqual(tokenyIz({ usageMetadata: { thoughtsTokenCount: "много" } }), { tokenovMysli: null, tokenovOtveta: null });
+  // MAX_TOKENS: ошибка несёт модель и токены — журнал покажет, что съело предел
+  const google = {
+    async sprositModel() {
+      return {
+        model: "zapasnaya",
+        data: { ...otvetModeli('{"status":"ok","text":"обры', "MAX_TOKENS"), usageMetadata: { thoughtsTokenCount: 8000, candidatesTokenCount: 192 } },
+      };
+    },
+  };
+  await assert.rejects(raspoznat({ audio: Buffer.from("z"), tip: "audio/webm", google }), (o) => {
+    assert.equal(o.prichina, "max_tokens");
+    assert.equal(o.model, "zapasnaya");
+    assert.deepEqual(o.tokeny, { tokenovMysli: 8000, tokenovOtveta: 192 });
+    return true;
+  });
 });
