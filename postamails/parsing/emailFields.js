@@ -23,9 +23,12 @@ function extractCity(text) {
 }
 
 function extractProduct(text) {
-  // Форма прислала продукт явно — он важнее любых слов в тексте письма.
+  // Форма прислала продукт явно — он важнее любых слов в тексте письма. Но в «Тип продукта» идёт только вид изделия
+  // из справочника: поле без него — ткань или модель («Лен Dimout Бежевый 83023 (Однотонные ткани)», «Горизонтальные
+  // Лента 7525»), и в карточке оно стало бы пунктом, которого нет в списке (01.10.2026, #010037). Само поле не
+  // теряется — письмо целиком лежит в диалоге карточки.
   const declared = pickField(parseEmailFields(text), "продукт", "товар");
-  if (declared) return matchProductKeyword(declared) || declared;
+  if (declared) return matchProductKeyword(declared) || "Продукт не указан";
 
   return matchProductKeyword(text) || "Продукт не указан";
 }
