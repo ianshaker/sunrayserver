@@ -205,6 +205,7 @@ registerGmailAuthRoutes(fastify);
 // --- Telegram webhook: приём апдейтов + страница управления /telegram/setup --- //
 registerTelegramWebhook(fastify);
 registerBotChatsAdminRoutes(fastify);
+require("./rutina")(fastify);
 
 // --- Тестовый пинг --- //
 fastify.get("/ping", async (req, reply) => {
