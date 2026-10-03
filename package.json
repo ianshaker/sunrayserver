@@ -4,7 +4,8 @@
   "description": "A simple Node app built on fastify, instantly up and running. Built to be remixed on Glitch.com.",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "NODE_OPTIONS=--max-old-space-size=1024 node --test --test-concurrency=2 \"rutina/**/*.test.js\""
   },
   "dependencies": {
     "@fastify/cors": "^8.5.0",
