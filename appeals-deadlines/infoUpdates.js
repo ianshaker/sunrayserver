@@ -336,6 +336,8 @@ function mergeAppealForLoading(appeal, updates, managerLabel) {
     city: patch.city ?? appeal.city ?? "",
     address: appeal.address ?? "",
     detailed_address: patch.detailed_address ?? appeal.detailed_address ?? null,
+    // Точка адреса — для ссылки мастеру на Яндекс Карты; адрес бот не меняет, значит и она та же
+    coordinates: appeal.coordinates ?? null,
     dialog: dialog || null,
   };
 }

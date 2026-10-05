@@ -275,7 +275,7 @@ async function findAppealByNumber(appealNumber) {
   const { data, error } = await supabase
     .from("appeals")
     .select(
-      "id, appeal_number, client_name, phone, city, address, detailed_address, reminder_date, reminder_time, status, deadline_resolved_at, deadline_reminder_tg_msg_id, dialog, product_type, source, manager, task_description",
+      "id, appeal_number, client_name, phone, city, address, detailed_address, coordinates, reminder_date, reminder_time, status, deadline_resolved_at, deadline_reminder_tg_msg_id, dialog, product_type, source, manager, task_description",
     )
     .ilike("appeal_number", `%${normalized}%`)
     .limit(1)

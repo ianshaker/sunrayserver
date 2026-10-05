@@ -2,12 +2,15 @@
 // Текст Telegram-карточек для отдела событий.
 // ============================================================================
 
+const { yandexMapsLink } = require("./format");
+
 /**
  * Полная карточка клиента (заявка / обновление).
  *
  * @param {object} p
  * @param {string} p.header — первая строка (шапка)
  * @param {string|null|undefined} [p.masterName] — если есть, добавляем мастер/дату/время
+ * @param {string|null|undefined} [p.coordinates] — «55.753960, 37.620393»: строка «Карта» со ссылкой на Яндекс
  */
 function buildClientCard({
   appealNumber,
@@ -16,6 +19,7 @@ function buildClientCard({
   city,
   address,
   detailedAddress,
+  coordinates,
   dialog,
   masterName,
   formattedDate,
@@ -27,6 +31,8 @@ function buildClientCard({
   msg += city ? `Город: ${city}\n` : "";
   msg += address ? `Адрес: (технический адрес скрыт)\n` : "";
   msg += detailedAddress ? `Детальный: ${detailedAddress}\n` : "";
+  const mapLink = yandexMapsLink(coordinates);
+  msg += mapLink ? `Карта: ${mapLink}\n` : "";
   msg += dialog ? `Диалог: ${dialog}\n` : "";
   msg += "---------------------\n";
   if (masterName) {

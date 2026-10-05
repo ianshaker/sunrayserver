@@ -23,6 +23,7 @@ function buildAppealsOtkazRow(appeal, reason) {
     city: appeal.city || "",
     address: appeal.address || "",
     detailed_address: appeal.detailed_address || null,
+    coordinates: appeal.coordinates || null,
     source: appeal.source || "",
     product_type: appeal.product_type || null,
     manager: appeal.manager || "",

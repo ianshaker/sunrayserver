@@ -44,8 +44,24 @@ function formatTimeRange(start, end) {
   return `${formatTime(start)}${end ? "-" + formatTime(end) : ""}`;
 }
 
+// Координаты в CRM — как их копирует Яндекс и как их пропускает проверка колонки coordinates в базе.
+const COORDINATES_RE = /^(-?\d{1,2}\.\d{6}), (-?\d{1,3}\.\d{6})$/;
+
+/**
+ * Ссылка мастеру на точку в Яндекс Картах. В базе «широта, долгота» (55.753960, 37.620393),
+ * а в `pt` Яндекс ждёт долготу первой — переставляем. Обычная ссылка, не API: бесплатно, без ключа.
+ * Нет координат или формат чужой — null, строки «Карта» в сообщении не будет.
+ */
+function yandexMapsLink(coordinates) {
+  const m = COORDINATES_RE.exec(String(coordinates || "").trim());
+  if (!m) return null;
+  const [, lat, lng] = m;
+  return `https://yandex.ru/maps/?pt=${lng},${lat}&z=17&l=map`;
+}
+
 module.exports = {
   formatDate,
   formatTime,
   formatTimeRange,
+  yandexMapsLink,
 };

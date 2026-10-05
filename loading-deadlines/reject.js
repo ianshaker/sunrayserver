@@ -29,6 +29,7 @@ function buildAppealsOtkazRow(event, reason, managerLabel) {
     city: event.city || "",
     address: event.address || "",
     detailed_address: event.detailed_address || "",
+    coordinates: event.coordinates || null,
     dialog: event.dialog || "",
     source: "Система",
     manager: String(managerLabel || event.salemanager || "Система").trim() || "Система",

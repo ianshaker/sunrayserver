@@ -7,7 +7,7 @@ const { mskDate, mskClock } = require("../lib/mskTime");
 const { normalizeDeadlineTime } = require("./messages");
 
 const EVENT_CARD_SELECT =
-  "id, appeal_number, client_name, phone, city, detailed_address, address, place_id, dialog, note, deadline, deadline_time, salemanager, type";
+  "id, appeal_number, client_name, phone, city, detailed_address, address, place_id, coordinates, dialog, note, deadline, deadline_time, salemanager, type";
 
 /** Карусель с нуля: пинги считаются заново, заявка снова «ни разу не отложена». */
 const ROTATION_RESET = {

@@ -9,6 +9,7 @@ const {
   deleteAppealById,
 } = require("./queries");
 const { updateManagerRecords } = require("./loadingManager");
+const { yandexMapsLink } = require("../info-na-zamer/format");
 
 const LOADING_CHAT_ID = -1002669673493;
 
@@ -35,6 +36,7 @@ function buildLoadingEventRow(snapshot, salemanager) {
     city: snapshot.city || null,
     address: snapshot.address || null,
     detailed_address: snapshot.detailed_address || null,
+    coordinates: snapshot.coordinates || null,
     dialog: snapshot.dialog || null,
     master: null,
     date: null,
@@ -64,6 +66,8 @@ async function notifyLoadingTelegram(snapshot) {
   if (city) msg += `Город: ${city}\n`;
   if (address) msg += `Адрес: (технический адрес скрыт)\n`;
   if (detailedAddress) msg += `Детальный: ${detailedAddress}\n`;
+  const mapLink = yandexMapsLink(snapshot.coordinates);
+  if (mapLink) msg += `Карта: ${mapLink}\n`;
   if (dialog) msg += `Диалог: ${dialog}\n`;
   msg += "---------------------\n";
 

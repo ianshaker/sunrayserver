@@ -27,6 +27,7 @@ function buildAppealRowFromLoading(event) {
     city: event.city || "",
     address: event.address || "",
     detailed_address: event.detailed_address || "",
+    coordinates: event.coordinates || null,
     dialog: updatedDialog,
     source: "Звонок",
     manager: "Света",
