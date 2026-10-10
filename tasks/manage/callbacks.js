@@ -29,6 +29,7 @@ const {
   buildAlreadyClosedMessage,
 } = require("./messages");
 const { sendTaskOriginReply } = require("../originReply");
+const { isCrmChat } = require("../../assistant/crmBot");
 
 async function answerCallback(callbackQuery, text) {
   const bot = getTelegramBot();
@@ -61,7 +62,9 @@ async function finishManageAction(ctx, task, resultText, parseMode) {
   }
 
   const sentToOrigin = await sendTaskOriginReply(bot, task, resultText, null, parseMode);
-  if (sentToOrigin) {
+  // Из CRM (Нейробот, PLANS/CRM/18): итог видят и в чате задачи в Telegram, и в CRM — превью становится итогом,
+  // а не исчезает (иначе в CRM сообщение просто пропало бы)
+  if (sentToOrigin && !isCrmChat(ctx.chatId)) {
     try {
       await bot.deleteMessage(ctx.chatId, ctx.messageId);
     } catch (error) {
@@ -205,4 +208,4 @@ function registerTaskManageCallbacks() {
   console.log("[tasks/manage] кнопки превью: сохранить / отменить");
 }
 
-module.exports = { registerTaskManageCallbacks };
+module.exports = { registerTaskManageCallbacks, finishManageAction };

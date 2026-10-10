@@ -137,3 +137,88 @@ test("адрес: без пропуска — 401, пустой текст — 4
   assert.equal("vChuzhieChaty" in telo, false);
   await app.close();
 });
+
+// ---- Буква В: кнопки из CRM ----
+const { onCallbackQuery } = require("../tgwebhook/dispatcher");
+const { resolveProfileIdByTelegramUser } = require("../tasks/directory");
+const { knopkaIzCrm } = require("./crm");
+const { getTelegramBot } = require("../tgwebhook/bot");
+
+// Подставной обработчик «tc:» — как tasks/create/callbacks.js: сверяет автора и правит превью
+onCallbackQuery(async (cb) => {
+  if (!String(cb.data).startsWith("tc:")) return;
+  const presser = await resolveProfileIdByTelegramUser(cb.from);
+  const bot = getTelegramBot();
+  if (presser !== YAN) {
+    await bot.answerCallbackQuery(cb.id, { text: "Только автор может подтвердить задачу" });
+    return;
+  }
+  const save = cb.data.startsWith("tc:save");
+  await bot.editMessageText(save ? "✅ Создал задачу #17" : "Отменено", {
+    chat_id: cb.message.chat.id, message_id: cb.message.message_id, reply_markup: { inline_keyboard: [] },
+  });
+  await bot.answerCallbackQuery(cb.id, { text: save ? "Сохранено" : "Отменено" });
+});
+
+async function prevyu() {
+  sleduyushchiyOtvetRoutera = ponyal("task_create");
+  const o = await soobshchenieIzCrm({ profileId: YAN, text: "напомни позвонить" });
+  return o.messages[0];
+}
+
+test("кнопка «Сохранить» под своим превью: тот же обработчик, автор узнан из CRM, превью стало итогом", async () => {
+  tgVyzovy.length = 0;
+  const m = await prevyu();
+  const o = await knopkaIzCrm({ profileId: YAN, messageId: m.id, data: "tc:save:x1" });
+  assert.deepEqual(o.messages.map((x) => [x.id, x.text, x.buttons.length]), [[m.id, "✅ Создал задачу #17", 0]]);
+  assert.deepEqual(o.toasts, ["Сохранено"]);
+  assert.equal(tgVyzovy.length, 0, "в Telegram ничего");
+});
+
+test("кнопку, которой нет под сообщением, не нажать; устаревшее и чужое сообщение — «устарело»", async () => {
+  const m = await prevyu();
+  assert.equal((await knopkaIzCrm({ profileId: YAN, messageId: m.id, data: "mt:done:17" })).oshibka, "net_knopki");
+  assert.equal((await knopkaIzCrm({ profileId: YAN, messageId: 999999, data: "tc:save:x1" })).oshibka, "net_soobshcheniya");
+  assert.equal(
+    (await knopkaIzCrm({ profileId: BEZ_PRAV, messageId: m.id, data: "tc:save:x1" })).oshibka,
+    "net_soobshcheniya",
+    "разговор у каждого свой: чужое превью не видно",
+  );
+});
+
+test("Telegram-нажатие с подделанным crmProfileId невозможно: Telegram такого поля не шлёт, а без него — поиск по Telegram", async () => {
+  assert.equal(await resolveProfileIdByTelegramUser({ is_bot: false, crmProfileId: YAN }), YAN);
+  assert.equal(await resolveProfileIdByTelegramUser(null), null);
+});
+
+test("адрес кнопки: 400 на кривое тело, 404 на устаревшее, 200 с итогом", async () => {
+  const Fastify = require("fastify");
+  const { registerNeurobotRoutes, BUTTON_PATH } = require("./crmRoutes");
+  const app = Fastify();
+  registerNeurobotRoutes(app, { proveritPolzovatelya: async () => ({ id: YAN, email: "yan@test" }) });
+  let r = await app.inject({ method: "POST", url: BUTTON_PATH, payload: { messageId: "x", data: "" } });
+  assert.equal(r.statusCode, 400);
+  r = await app.inject({ method: "POST", url: BUTTON_PATH, payload: { messageId: 999999, data: "tc:save:x1" } });
+  assert.equal(r.statusCode, 404);
+  const m = await prevyu();
+  r = await app.inject({ method: "POST", url: BUTTON_PATH, payload: { messageId: m.id, data: "tc:cancel:x1" } });
+  assert.equal(r.statusCode, 200);
+  assert.equal(r.json().messages[0].text, "Отменено");
+  await app.close();
+});
+
+test("«Завершить задачу» из CRM: итог — и в чат задачи в Telegram, и в CRM (превью не исчезает)", async () => {
+  tgVyzovy.length = 0;
+  const { finishManageAction } = require("../tasks/manage/callbacks");
+  const { CrmBot } = require("./crmBot");
+  const { runWithBot } = require("../tgwebhook/bot");
+  const chatId = crmChatIdFor(YAN);
+  const bot = new CrmBot(chatId);
+  const { message_id } = await bot.sendMessage(chatId, "Завершить задачу #17?");
+  await runWithBot(bot, () =>
+    finishManageAction({ chatId, messageId: message_id }, { tg_chat_id: -1009876543210, tg_message_id: 55 }, "✅ Завершил задачу #17"),
+  );
+  assert.equal(tgVyzovy[0][0], -1009876543210, "в Telegram-чат задачи — как раньше");
+  assert.deepEqual(bot.otvet().messages.map((m) => m.text), ["✅ Завершил задачу #17"]);
+  assert.deepEqual(bot.otvet().deleted, []);
+});

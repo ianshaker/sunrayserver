@@ -8,6 +8,7 @@
 // ============================================================================
 
 const { runWithBot } = require("../tgwebhook/bot");
+const { dispatchCallbackQuery } = require("../tgwebhook/dispatcher");
 const { getPersonalChatByProfile } = require("../lib/telegramBotChats");
 const { getEnabledIntents } = require("./registry");
 const { StatusMessage } = require("./statusMessage");
@@ -93,4 +94,33 @@ async function soobshchenieIzCrm({ profileId, text }) {
   return { ...bot.otvet(), vChuzhieChaty: bot.vChuzhieChaty };
 }
 
-module.exports = { soobshchenieIzCrm, NET_LICHNOGO_CHATA, NET_PRAV };
+let nomerNazhatiya = 0;
+
+/**
+ * Нажатие кнопки под сообщением бота в CRM (буква В) — те же подписчики onCallbackQuery, что у Telegram
+ * («Сохранить / Отменить» задачи, дедлайнов). Нажать можно только кнопку, которая стоит под этим сообщением
+ * этого человека: data берётся из разговора, а не на веру. Автора черновика обработчики сверяют сами —
+ * resolveProfileIdByTelegramUser узнаёт профиль из crmProfileId.
+ * @returns {Promise<{ oshibka?: "net_soobshcheniya" | "net_knopki", messages?: object[], deleted?: number[], toasts?: string[] }>}
+ */
+async function knopkaIzCrm({ profileId, messageId, data }) {
+  const chatId = crmChatIdFor(profileId);
+  const bot = new CrmBot(chatId);
+  const m = bot.soobshchenie(messageId);
+  if (!m) return { oshibka: "net_soobshcheniya" };
+  const knopki = (m.reply_markup?.inline_keyboard || []).flat();
+  if (!knopki.some((k) => k.callback_data === data)) return { oshibka: "net_knopki" };
+
+  const callbackQuery = {
+    id: `crm:${++nomerNazhatiya}`,
+    data,
+    chat_instance: "crm",
+    from: { is_bot: false, crmProfileId: profileId },
+    message: { message_id: m.message_id, chat: { id: chatId, type: "private" }, date: m.date, text: m.text },
+  };
+  console.log(`[assistant] кнопка CRM: профиль ${profileId}, ${String(data).slice(0, 40)}, сообщение ${m.message_id}`);
+  await runWithBot(bot, () => dispatchCallbackQuery(callbackQuery));
+  return { ...bot.otvet(), vChuzhieChaty: bot.vChuzhieChaty };
+}
+
+module.exports = { soobshchenieIzCrm, knopkaIzCrm, NET_LICHNOGO_CHATA, NET_PRAV };

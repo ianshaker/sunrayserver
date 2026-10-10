@@ -145,6 +145,12 @@ class CrmBot {
     return real().getMe();
   }
 
+  /** Сообщение разговора по номеру — кнопка из CRM жмётся только под своим сообщением */
+  soobshchenie(messageId) {
+    const m = razgovor(this.chatId).messages.get(Number(messageId));
+    return m ? { ...m } : null;
+  }
+
   /** Что этот запрос изменил в разговоре — ответ CRM */
   otvet() {
     const messages = razgovor(this.chatId).messages;

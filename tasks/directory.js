@@ -75,6 +75,8 @@ async function getChatIdForUser(userId) {
  */
 async function resolveProfileIdByTelegramUser(from) {
   if (!from) return null;
+  // Нажатие из CRM (assistant/crm.js): профиль из проверенного пропуска CRM; у Telegram такого поля нет
+  if (from.crmProfileId) return from.crmProfileId;
 
   const tgUserId = from.id != null ? Number(from.id) : null;
   const uname = normalizeUsername(from.username);

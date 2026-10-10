@@ -53,6 +53,11 @@ async function runHandlers(list, payload, update) {
   }
 }
 
+/** Одно нажатие кнопки мимо вебхука — из CRM (assistant/crm.js, PLANS/CRM/18, буква В): те же подписчики */
+async function dispatchCallbackQuery(callbackQuery) {
+  await runHandlers(callbackHandlers, callbackQuery, { callback_query: callbackQuery });
+}
+
 async function dispatchUpdate(update) {
   if (!update || typeof update !== "object") return;
 
@@ -74,6 +79,7 @@ async function dispatchUpdate(update) {
 module.exports = {
   onMessage,
   onCallbackQuery,
+  dispatchCallbackQuery,
   onUpdate,
   dispatchUpdate,
 };
