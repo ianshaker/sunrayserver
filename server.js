@@ -35,6 +35,7 @@ const {
   registerLoadingDeadlineDigestButtons,
 } = require("./loading-deadlines/digest");
 const { registerAssistant, startAssistant } = require("./assistant");
+const { registerNeurobotRoutes } = require("./assistant/crmRoutes");
 const { registerIntent } = require("./assistant/registry");
 const { startBotChatsRefresh } = require("./lib/telegramBotChats");
 const { registerBotChatsAdminRoutes } = require("./lib/telegramBotChatsAdmin");
@@ -187,6 +188,9 @@ registerPushRoutes(fastify);
 
 // --- AI: вопрос по истории звонков клиента (CRM) --- //
 registerAskRoute(fastify);
+
+// --- Нейробот на Главной CRM: тот же бот, что в Telegram (PLANS/CRM/18) --- //
+registerNeurobotRoutes(fastify);
 
 // --- CRM Settings: удаление строк mango_calls без файла записи --- //
 registerMangoCallsRoutes(fastify);

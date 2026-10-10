@@ -6,6 +6,7 @@
 
 const { supabase } = require("../supabaseClient");
 const { DEFAULT_PRIORITY, DEFAULT_STATUS } = require("./config");
+const { isCrmChat } = require("../../assistant/crmBot");
 
 /**
  * @param {{ authorProfileId:string, title:string, description:string,
@@ -40,6 +41,9 @@ async function insertManagerTask({ authorProfileId, title, description, dueDateU
 
 /** Привязать сообщение-отбивку к задаче (для reply-напоминаний). */
 async function attachTelegramOrigin(taskId, chatId, messageId) {
+  // Задача из Нейробота CRM: чата Telegram нет — напоминания уйдут в личные чаты исполнителей (reminder/processTask.js)
+  if (isCrmChat(chatId)) return;
+
   const { error } = await supabase
     .from("manager_tasks")
     .update({ tg_chat_id: chatId, tg_message_id: messageId })

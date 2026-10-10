@@ -11,19 +11,17 @@ const { getTelegramBot } = require("../tgwebhook/bot");
 const { getBotChat } = require("../lib/telegramBotChats");
 const { resolveProfileIdByTelegramUser } = require("../tasks/directory");
 const { shouldHandle, stripMention, setBotUser } = require("./trigger");
-const { getEnabledIntents, getIntent } = require("./registry");
-const { classifyIntent, isActionableClassification } = require("./router");
+const { getEnabledIntents } = require("./registry");
 const { sendUnknown, sendError, sendAiDisabled, sendPermissionDenied, sendText } = require("./reply");
 const { detectPermissionGap } = require("./permissionHints");
 const {
   MAX_INPUT_CHARS,
   REPLIES,
   ASSISTANT_DISABLED,
-  buildPermissionReply,
-  ADMIN_TELEGRAM_USERNAME,
 } = require("./config");
 const { extractReplyContext, labelUnsupportedKind } = require("./replyExtract");
 const { StatusMessage } = require("./statusMessage");
+const { obrabotatZapros } = require("./obrabotka");
 
 const RECENT_MSG_MAX = 500;
 const recentMsgOrder = [];
@@ -123,24 +121,6 @@ async function buildContext(msg, bot) {
   };
 }
 
-async function dispatchIntent(ctx, classification) {
-  const intentDef = getIntent(classification.intent);
-  if (!intentDef) {
-    await ctx.statusMsg.update(REPLIES.UNKNOWN);
-    return;
-  }
-
-  console.log(
-    `[assistant] → ${classification.intent} (${classification.confidence.toFixed(2)}): ` +
-      `${classification.reason}`,
-  );
-
-  await intentDef.handle({
-    ...ctx,
-    classification,
-  });
-}
-
 function registerAssistant() {
   onMessage(async (msg) => {
     const chatId = msg.chat?.id;
@@ -205,44 +185,7 @@ function registerAssistant() {
           (ctx.replyText ? ` replyCtx="${ctx.replyText.slice(0, 60)}…"` : ""),
       );
 
-      // Обновляем статус перед вызовом Gemini (роутер + парсер).
-      // Если голосовое не расшифровалось — показываем предупреждение в той же строке.
-      if (ctx.replyVoiceFailed) {
-        await ctx.statusMsg.update(
-          `⚠️ Голосовое не взял в контекст — ${ctx.replyVoiceFailed}.\n💭 Думаю над запросом...`,
-        );
-      } else {
-        await ctx.statusMsg.update("💭 Думаю над запросом...");
-      }
-
-      const classification = await classifyIntent(ctx.text, ctx.enabledIntents, {
-        replyText: ctx.replyText,
-        chat: ctx.chat,
-      });
-
-      if (classification.aiDisabled) {
-        await ctx.statusMsg.update(REPLIES.AI_DISABLED);
-        return;
-      }
-
-      if (!isActionableClassification(classification)) {
-        console.log(
-          `[assistant] unknown/low confidence: intent=${classification.intent}, ` +
-            `confidence=${classification.confidence}`,
-        );
-        const gap = detectPermissionGap({
-          chat: ctx.chat,
-          text: ctx.text,
-          classification,
-        });
-        const errText = gap
-          ? buildPermissionReply(gap, ADMIN_TELEGRAM_USERNAME)
-          : REPLIES.UNKNOWN;
-        await ctx.statusMsg.update(errText || REPLIES.UNKNOWN);
-        return;
-      }
-
-      await dispatchIntent(ctx, classification);
+      await obrabotatZapros(ctx);
     } catch (error) {
       console.error("[assistant] ошибка обработки:", error.stack || error.message);
       if (chatId != null) {

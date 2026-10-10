@@ -10,8 +10,10 @@ const MIN_STATUS_MS = 1000;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 class StatusMessage {
-  constructor(bot, chatId, replyToMsgId = null) {
+  /** minMs — пауза между статусами; в CRM 0: промежуточных статусов там не видно, пауза — только задержка ответа */
+  constructor(bot, chatId, replyToMsgId = null, { minMs = MIN_STATUS_MS } = {}) {
     this.bot = bot;
+    this.minMs = minMs;
     this.chatId = chatId;
     this.replyToMsgId = replyToMsgId;
     this._messageId = null;
@@ -32,7 +34,7 @@ class StatusMessage {
     return this;
   }
 
-  async update(text, minMs = MIN_STATUS_MS, options = {}) {
+  async update(text, minMs = this.minMs, options = {}) {
     if (!this._messageId || !this.bot) return;
     const elapsed = Date.now() - this._lastUpdateAt;
     if (elapsed < minMs) await sleep(minMs - elapsed);
@@ -55,7 +57,7 @@ class StatusMessage {
   async finalize(text, replyMarkup, parseMode) {
     if (!this._messageId || !this.bot) return null;
     const elapsed = Date.now() - this._lastUpdateAt;
-    if (elapsed < MIN_STATUS_MS) await sleep(MIN_STATUS_MS - elapsed);
+    if (elapsed < this.minMs) await sleep(this.minMs - elapsed);
     const opts = {
       chat_id: this.chatId,
       message_id: this._messageId,
