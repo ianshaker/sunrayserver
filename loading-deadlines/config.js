@@ -2,7 +2,7 @@
 // Конфиг модуля «Дедлайны погрузки».
 // ============================================================================
 
-// Только loading-deadlines. НЕ трогаем CALL_AI_* / DAILY_HIGHLIGHTS_* / другие отделы.
+// Только loading-deadlines. НЕ трогаем CALL_AI_* / другие отделы.
 // Было через call-ai SUMMARY (= gemini-2.5-flash @ us-central1).
 //   LOADING_DEADLINES_GEMINI_MODEL / LOADING_DEADLINES_VERTEX_LOCATION
 const GEMINI_MODEL = process.env.LOADING_DEADLINES_GEMINI_MODEL || "gemini-2.5-flash";

@@ -10,7 +10,6 @@
 //   safety-sweep редко добирает pending; CRM request-ai — force.
 //
 // Отдельный стек: call-ai/ask/ — CRM Q&A по AI-сводкам (POST /api/calls/ask).
-// Факты дня для главной CRM — НЕ здесь: см. ../home-highlights/
 // ============================================================================
 
 const { startTranscriptionWorker, triggerTranscription } = require("./transcription");

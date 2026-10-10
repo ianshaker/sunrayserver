@@ -102,17 +102,12 @@ const {
   registerAskRoute,
   registerRecordingUploadRoute,
 } = require("./call-ai");
-const {
-  startHomeHighlightsWorker,
-  registerHomeHighlightsRoutes,
-} = require("./home-highlights");
 
 // --- Админ-чистка mango_calls (CRM Settings, без файла записи) --- //
 const { registerMangoCallsRoutes } = require("./mango-calls");
 
 setTelegramBot(telegramBot);
 startCallAiWorkers();
-startHomeHighlightsWorker();
 
 // --- CORS, чтобы фронт мог делать запросы! --- //
 fastify.register(require('@fastify/cors'), {
@@ -192,9 +187,6 @@ registerPushRoutes(fastify);
 
 // --- AI: вопрос по истории звонков клиента (CRM) --- //
 registerAskRoute(fastify);
-
-// --- Главная CRM: факты дня (отдельный отдел home-highlights, не call-ai) --- //
-registerHomeHighlightsRoutes(fastify);
 
 // --- CRM Settings: удаление строк mango_calls без файла записи --- //
 registerMangoCallsRoutes(fastify);

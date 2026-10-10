@@ -25,10 +25,10 @@ module.exports = {
 
   // --- Саммари нейро-сводок звонков (Gemini / Vertex AI) ---
   // Только call-ai (summary + ask по звонкам). НЕ трогаем чужие env:
-  //   DAILY_HIGHLIGHTS_* | ASSISTANT_* | SCHEDULE_AI_* | TASKS_* |
+  //   ASSISTANT_* | SCHEDULE_AI_* | TASKS_* |
   //   APPEALS_DEADLINES_* | LOADING_DEADLINES_* | GOOGLE_STT_MODEL
   //
-  // Выбор модели (как у home-highlights):
+  // Выбор модели:
   //   CALL_AI_GEMINI_MODEL      — id модели (дефолт: gemini-3-flash-preview, не Pro)
   //   CALL_AI_VERTEX_LOCATION   — endpoint (для Gemini 3 Flash — global)
   SUMMARY: {

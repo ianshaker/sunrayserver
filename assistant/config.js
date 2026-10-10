@@ -2,7 +2,7 @@
 // assistant — конфигурация AI-роутера входящих сообщений Telegram.
 // ============================================================================
 
-// Только assistant. НЕ трогаем CALL_AI_* / DAILY_HIGHLIGHTS_* / другие отделы.
+// Только assistant. НЕ трогаем CALL_AI_* / другие отделы.
 // Было через call-ai SUMMARY (= gemini-2.5-flash @ us-central1).
 //   ASSISTANT_GEMINI_MODEL / ASSISTANT_VERTEX_LOCATION
 module.exports = {

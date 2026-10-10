@@ -2,7 +2,7 @@
 // Расписание AI — настройки.
 // ============================================================================
 
-// Только schedule-ai. НЕ трогаем CALL_AI_* / DAILY_HIGHLIGHTS_* / другие отделы.
+// Только schedule-ai. НЕ трогаем CALL_AI_* / другие отделы.
 // Было через call-ai SUMMARY (= gemini-2.5-flash @ us-central1).
 //   SCHEDULE_AI_GEMINI_MODEL / SCHEDULE_AI_VERTEX_LOCATION
 module.exports = {
