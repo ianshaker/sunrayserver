@@ -203,3 +203,74 @@ test("з) секрет и значения заголовка не попада�
   assert.ok(!tekst.includes(NEVERNYY), "значение заголовка попало в журнал");
   assert.ok(!tekst.includes(DRUGOY), "значение заголовка попало в журнал");
 });
+
+test("и) пробелы по краям секрета в env и в заголовке не мешают (в Render при вставке легко прилипает перевод строки)", async () => {
+  const { log, vyzovy } = zhurnal();
+  const env = { MANGO_PROXY_SECRET: `  ${SEKRET}\n`, MANGO_PROXY_SECRET_REQUIRED: "1" };
+  for (const zagolovok of [SEKRET, ` ${SEKRET} `, `${SEKRET}\r\n`, `\t${SEKRET}`]) {
+    const req = zapros({ xff: CHUZHOY_IP, zagolovok });
+    utverditPropusk(await progon(env, req, log));
+    assert.equal(req.mangoProxySecretOk, true, JSON.stringify(zagolovok));
+  }
+  // пробелы внутри и чужие значения по-прежнему не проходят
+  for (const zagolovok of [`SEKRET-PROKSI- d41d8cd9`, NEVERNYY, ` ${NEVERNYY} `, "   "]) {
+    const req = zapros({ xff: NASH_IP, zagolovok });
+    utverdit403(await progon(env, req, log));
+    assert.notEqual(req.mangoProxySecretOk, true);
+  }
+  // секрет из одних пробелов — это «секрета нет»: «требовать» закрывает всё
+  utverdit403(await progon({ MANGO_PROXY_SECRET: "  \n", MANGO_PROXY_SECRET_REQUIRED: "1" }, zapros({ xff: NASH_IP, zagolovok: "" }), log));
+  assert.ok(!JSON.stringify(vyzovy).includes(SEKRET));
+});
+
+test("к) «требовать» включается значениями 1 и true (без учёта регистра и пробелов), другие значения его не включают", async () => {
+  for (const znachenie of ["1", "true", "TRUE", "True", " true ", " 1\n"]) {
+    const env = { MANGO_PROXY_SECRET: SEKRET, MANGO_PROXY_SECRET_REQUIRED: znachenie };
+    utverdit403(await progon(env, zapros({ xff: NASH_IP }), zhurnal().log));
+    utverditPropusk(await progon(env, zapros({ xff: CHUZHOY_IP, zagolovok: SEKRET }), zhurnal().log));
+  }
+  for (const znachenie of ["0", "false", "yes", "да", "", "11", "truee", undefined]) {
+    const env = { MANGO_PROXY_SECRET: SEKRET, MANGO_PROXY_SECRET_REQUIRED: znachenie };
+    utverditPropusk(await progon(env, zapros({ xff: NASH_IP }), zhurnal().log));
+  }
+});
+
+test("л) при создании замка одна строка в лог: секрет задан/нет, обязателен да/нет — без значений", () => {
+  const stroki = (env) => {
+    const zapisi = [];
+    sozdatZamok({ env, zhurnalStarta: (stroka) => zapisi.push(stroka) });
+    return zapisi;
+  };
+  assert.deepEqual(stroki({}), ["замок прокси: секрет нет, обязателен нет"]);
+  assert.deepEqual(stroki({ MANGO_PROXY_SECRET: SEKRET }), ["замок прокси: секрет задан, обязателен нет"]);
+  assert.deepEqual(stroki({ MANGO_PROXY_SECRET: SEKRET, MANGO_PROXY_SECRET_REQUIRED: "true" }), ["замок прокси: секрет задан, обязателен да"]);
+  assert.deepEqual(stroki({ MANGO_PROXY_SECRET_REQUIRED: "1" }), ["замок прокси: секрет нет, обязателен да"]);
+  assert.deepEqual(stroki({ MANGO_PROXY_SECRET: "   " }), ["замок прокси: секрет нет, обязателен нет"]);
+  for (const stroka of stroki({ MANGO_PROXY_SECRET: SEKRET, MANGO_PROXY_SECRET_REQUIRED: "1" })) assert.ok(!stroka.includes(SEKRET));
+  // без zhurnalStarta замок молчит (так живут остальные тесты)
+  assert.doesNotThrow(() => sozdatZamok({ env: { MANGO_PROXY_SECRET: SEKRET } }));
+});
+
+test("м) tolkoSekret — замок новых маршрутов прокси: без верного секрета 403 всегда, адрес и «требовать» ни при чём", async () => {
+  const strogiy = (env, req, log) => {
+    const reply = otvet();
+    return sozdatZamok({ env, log, tolkoSekret: true })(req, reply).then(() => reply);
+  };
+  for (const env of [{}, { MANGO_PROXY_SECRET: SEKRET }, { MANGO_PROXY_SECRET: SEKRET, MANGO_PROXY_SECRET_REQUIRED: "1" }, { MANGO_PROXY_SECRET_REQUIRED: "1" }]) {
+    for (const zapr of [zapros({ xff: NASH_IP }), zapros({ ip: NASH_IP }), zapros({ xff: NASH_IP, zagolovok: NEVERNYY }), zapros({ xff: NASH_IP, zagolovok: "" })]) {
+      const { log, vyzovy } = zhurnal();
+      utverdit403(await strogiy(env, zapr, log));
+      assert.notEqual(zapr.mangoProxySecretOk, true);
+      assert.deepEqual(predupezhdeniya(vyzovy), ["замок прокси: без секрета/не совпал"]);
+    }
+  }
+  // верный секрет (и с пробелами по краям) пускает, даже с чужого адреса
+  const env = { MANGO_PROXY_SECRET: SEKRET };
+  for (const zagolovok of [SEKRET, ` ${SEKRET}\n`]) {
+    const req = zapros({ xff: CHUZHOY_IP, zagolovok });
+    utverditPropusk(await strogiy(env, req, zhurnal().log));
+    assert.equal(req.mangoProxySecretOk, true);
+  }
+  // секрета в env нет: «верный» заголовок пустого значения не пускает
+  utverdit403(await strogiy({}, zapros({ xff: NASH_IP, zagolovok: "" }), zhurnal().log));
+});

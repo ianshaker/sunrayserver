@@ -21,7 +21,8 @@ function unixToISO(sec) {
     return new Date(sec * 1000).toISOString();
 }
 
-// Сохраняем итог звонка (summary) одной строкой; повторный summary обновит ту же строку
+// Сохраняем итог звонка (summary) одной строкой; повторный summary обновит ту же строку.
+// Возвращает { error }: ошибку upsert вызывающий превращает в ответ 503, чтобы прокси дослал итог.
 async function saveCallSummary(body, info) {
     const entryId = body.entry_id;
     if (!entryId) return;
@@ -90,7 +91,11 @@ async function saveCallSummary(body, info) {
         .from("mango_calls")
         .upsert([row], { onConflict: "entry_id" });
 
-    if (error) console.log("⚠️ mango_calls upsert(summary) error:", error.message);
+    if (error) {
+        console.log("⚠️ mango_calls upsert(summary) error:", error.message);
+        return { error };
+    }
+    return { error: null };
 }
 
 // Обновляем поля записи в строке звонка; если строки ещё нет — создаём минимальную

@@ -31,6 +31,71 @@ async function syncSessionCard(telegramBot, session) {
     await session.card.sync(telegramBot, renderCallCard(session));
 }
 
+// Свободный номер заявки из ids. Бросает при ошибке базы и когда свободных номеров нет.
+async function vzyatSvobodnyyNomerZayavki() {
+    const { data: ids, error: idError } = await supabase
+        .from("ids")
+        .select("appeal_id")
+        .eq("is_used", false)
+        .is('used_at', null)
+        .order("id", { ascending: true })
+        .limit(1);
+    if (idError) throw idError;
+    if (!ids || !ids.length) throw new Error("Нет свободных айди!");
+    return ids[0].appeal_id;
+}
+
+// Пометить номер занятым и записать источник (ошибка не мешает создать заявку — как и раньше).
+async function zanyatNomerZayavki(appeal_id, appealSource) {
+    try {
+        const used_at = new Date().toISOString();
+        await supabase
+            .from("ids")
+            .update({ is_used: true, used_at, source: appealSource })
+            .eq("appeal_id", appeal_id);
+    } catch {}
+}
+
+// Заявка нового клиента по входящему звонку (поля те же, что всегда).
+function sobratZayavkuNovogoKlienta({ appeal_id, formattedFromNumber, managerName, appealSource }) {
+    return {
+        appeal_number: appeal_id,
+        client_name: "",
+        phone: formattedFromNumber,
+        city: "",
+        address: "",
+        detailed_address: "",
+        source: appealSource,
+        manager: managerName,
+        dialog: "",
+        reminder_date: getMskTodayDate(),
+        reminder_time: null,
+        task_description: "",
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        status: "Активно",
+        product_type: "Продукт не указан"
+    };
+}
+
+// Поздний повтор Appeared из очереди прокси (журнал выставил request.mangoBezTelegram): карточка Telegram и
+// сессии звонка (callMessages/activeCalls) уже не нужны, а заявку новому клиенту создать надо.
+// Поиск клиента и создание заявки — те же помощники, что в живой ветке. Бросает при ошибке базы.
+async function zayavkaBezTelegram({ formattedFromNumber, managerName, lineNumber }) {
+    const foundList = await findAllClientInfoByPhone(formattedFromNumber);
+    if (foundList.length > 0) return { status: "client_found" };
+
+    const appeal_id = await vzyatSvobodnyyNomerZayavki();
+    const appealSource = getAppealSourceByLine(lineNumber);
+    await zanyatNomerZayavki(appeal_id, appealSource);
+
+    const { error } = await supabase
+        .from("appeals")
+        .insert([sobratZayavkuNovogoKlienta({ appeal_id, formattedFromNumber, managerName, appealSource })]);
+    if (error) throw error;
+    return { status: "appeal_created", appeal_id };
+}
+
 async function handleMangoWebhook(request, reply, telegramBot) {
     const rawBody = request.body ? { ...request.body } : {};
     let body = { ...rawBody };
@@ -60,16 +125,20 @@ async function handleMangoWebhook(request, reply, telegramBot) {
             const timing = buildCallTiming(body);
             const disconnectLabel = getDisconnectLabel(body.disconnect_reason);
 
+            let oshibkaSokhraneniya = null;
             try {
-                await saveCallSummary(body, {
+                oshibkaSokhraneniya = (await saveCallSummary(body, {
                     timing,
                     disconnectLabel,
                     lineNumber,
                     lineName: getCompanyLineName(lineNumber),
-                });
+                }))?.error || null;
             } catch (e) {
                 console.log("⚠️ Не удалось сохранить исходящий звонок в Supabase:", e.message);
+                oshibkaSokhraneniya = e;
             }
+            // Не сохранили — 503: прокси дошлёт итог, upsert по entry_id повторяется без вреда.
+            if (oshibkaSokhraneniya) return reply.code(503).send({ error: "summary_save_failed" });
 
             return reply.send({ status: "outgoing_saved" });
         }
@@ -82,11 +151,10 @@ async function handleMangoWebhook(request, reply, telegramBot) {
         const disconnectLabel = getDisconnectLabel(body.disconnect_reason);
         const managerName = getManagerName(toNumber);
 
-        if (entryId) delete entryCallMeta[entryId];
-
-        // === Сохраняем звонок в Supabase (история для CRM) — не блокирует Telegram ===
+        // === Сохраняем звонок в Supabase (история для CRM) ===
+        let oshibkaSokhraneniya = null;
         try {
-            await saveCallSummary(body, {
+            oshibkaSokhraneniya = (await saveCallSummary(body, {
                 formattedFromNumber,
                 timing,
                 disconnectLabel,
@@ -94,10 +162,16 @@ async function handleMangoWebhook(request, reply, telegramBot) {
                 acceptedManager: timing.answered ? managerName : null,
                 lineNumber,
                 lineName: getCompanyLineName(lineNumber),
-            });
+            }))?.error || null;
         } catch (e) {
             console.log("⚠️ Не удалось сохранить звонок в Supabase:", e.message);
+            oshibkaSokhraneniya = e;
         }
+        // Не сохранили — 503 до карточки Telegram: прокси дошлёт итог, и повтор отработает целиком один раз
+        // (карточку не трогали; метаданные IVR остались, линия определится так же).
+        if (oshibkaSokhraneniya) return reply.code(503).send({ error: "summary_save_failed" });
+
+        if (entryId) delete entryCallMeta[entryId];
 
         const messageData = callMessages[formattedFromNumber];
 
@@ -180,6 +254,17 @@ async function handleMangoWebhook(request, reply, telegramBot) {
         const formattedFromNumber = formatPhoneNumber(fromNumber);
         const managerName = getManagerName(toNumber);
 
+        // Поздний повтор из очереди прокси: только заявка новому клиенту, без карточки и без сессий в памяти.
+        if (request.mangoBezTelegram === true) {
+            try {
+                const itog = await zayavkaBezTelegram({ formattedFromNumber, managerName, lineNumber });
+                return reply.send({ status: `appeared_late_${itog.status}` });
+            } catch (e) {
+                console.log("⚠️ Поздний Appeared: заявка не создана:", e.message);
+                return reply.code(503).send({ error: "late_appeal_failed" });
+            }
+        }
+
         // === ПРОВЕРЯЕМ: это новый звонок или дозвон? ===
         if (callMessages[formattedFromNumber]) {
             const session = callMessages[formattedFromNumber];
@@ -217,6 +302,12 @@ async function handleMangoWebhook(request, reply, telegramBot) {
             },
         };
         callMessages[formattedFromNumber] = session;
+        // Перед ответом 5xx: прокси дошлёт это же событие. Сессию и метку звонка убираем (чужую сессию того же номера не трогаем),
+        // иначе повтор примут за дозвон другому менеджеру или за «already_appeared», и заявка так и не создастся.
+        const sbrositSessiyu = () => {
+            if (callMessages[formattedFromNumber] === session) delete callMessages[formattedFromNumber];
+            delete activeCalls[callId];
+        };
 
         const ts = getEventTimestamp(body);
         const ivrPrep = ivrMeta?.ivrAppearedAt && ts > ivrMeta.ivrAppearedAt
@@ -245,23 +336,16 @@ async function handleMangoWebhook(request, reply, telegramBot) {
             // Клиент не найден нигде — создаём новую заявку
             let appeal_id = null;
             try {
-                const { data: ids, error: idError } = await supabase
-                    .from("ids")
-                    .select("appeal_id")
-                    .eq("is_used", false)
-                    .is('used_at', null)
-                    .order("id", { ascending: true })
-                    .limit(1);
-                if (idError) throw idError;
-                if (!ids || !ids.length) throw new Error("Нет свободных айди!");
-                appeal_id = ids[0].appeal_id;
+                appeal_id = await vzyatSvobodnyyNomerZayavki();
             } catch (e) {
                 if (!callMessages[formattedFromNumber]) {
+                    sbrositSessiyu();
                     return reply.code(500).send({ error: "id_error" });
                 }
                 session.errorNote = `Ошибка при получении айди\n${e.message}`;
                 session.crmPhase = null;
                 await syncSessionCard(telegramBot, session);
+                sbrositSessiyu();
                 return reply.code(500).send({ error: "id_error" });
             }
 
@@ -270,38 +354,17 @@ async function handleMangoWebhook(request, reply, telegramBot) {
             // аналитика считает обращения по источникам.
             const appealSource = getAppealSourceByLine(lineNumber);
 
-            try {
-                const used_at = new Date().toISOString();
-                await supabase
-                    .from("ids")
-                    .update({ is_used: true, used_at, source: appealSource })
-                    .eq("appeal_id", appeal_id);
-            } catch {}
+            await zanyatNomerZayavki(appeal_id, appealSource);
 
-            const newAppeal = {
-                appeal_number: appeal_id,
-                client_name: "",
-                phone: formattedFromNumber,
-                city: "",
-                address: "",
-                detailed_address: "",
-                source: appealSource,
-                manager: managerName,
-                dialog: "",
-                reminder_date: getMskTodayDate(),
-                reminder_time: null,
-                task_description: "",
-                created_at: new Date().toISOString(),
-                updated_at: new Date().toISOString(),
-                status: "Активно",
-                product_type: "Продукт не указан"
-            };
+            const newAppeal = sobratZayavkuNovogoKlienta({ appeal_id, formattedFromNumber, managerName, appealSource });
 
             console.log("Попытка создания новой заявки в appeals:", newAppeal);
 
             try {
                 const { data, error } = await supabase.from("appeals").insert([newAppeal]);
                 console.log("Результат вставки в appeals:", { data, error });
+                // supabase-js ошибку не бросает, а возвращает: без этой строки карточка писала «заявка создана» при сбое
+                if (error) throw error;
 
                 if (!callMessages[formattedFromNumber]) {
                     return reply.send({ status: "appeared_processed" });
@@ -312,12 +375,14 @@ async function handleMangoWebhook(request, reply, telegramBot) {
                 await syncSessionCard(telegramBot, session);
             } catch (e) {
                 if (!callMessages[formattedFromNumber]) {
-                    return reply.code(500).send({ error: "insert_error" });
+                    sbrositSessiyu();
+                    return reply.code(503).send({ error: "insert_error" });
                 }
                 session.errorNote = `Ошибка создания заявки\n${formattedFromNumber}\n${e.message}`;
                 session.crmPhase = null;
                 await syncSessionCard(telegramBot, session);
-                return reply.code(500).send({ error: "insert_error" });
+                sbrositSessiyu();
+                return reply.code(503).send({ error: "insert_error" });
             }
         }
         return reply.send({ status: "appeared_processed" });

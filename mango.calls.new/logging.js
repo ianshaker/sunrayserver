@@ -86,8 +86,9 @@ function logMangoWebhook(request, rawBody, parsedBody) {
         path: request.url,
         event: eventType,
         call_id: parsedBody.call_id || parsedBody.entry_id || null,
-        raw: rawBody,
-        parsed: parsedBody,
+        // и в консоль, и в mango_webhook_debug.jsonl — без vpbx_api_key и sign (как в compact, где тела нет совсем)
+        raw: redactSecrets(rawBody),
+        parsed: redactSecrets(parsedBody),
     };
 
     console.log(`\n${divider}`);
@@ -97,9 +98,9 @@ function logMangoWebhook(request, rawBody, parsedBody) {
     if (logEntry.call_id) console.log(`   call_id: ${logEntry.call_id}`);
     console.log(`${divider}`);
     console.log("📦 RAW (как пришло от Mango):");
-    console.log(JSON.stringify(redactSecrets(rawBody), null, 2));
+    console.log(JSON.stringify(logEntry.raw, null, 2));
     console.log("📋 PARSED (распарсенный json):");
-    console.log(JSON.stringify(redactSecrets(parsedBody), null, 2));
+    console.log(JSON.stringify(logEntry.parsed, null, 2));
     console.log(`${divider}\n`);
 
     if (!MANGO_DEBUG_LOG) return;

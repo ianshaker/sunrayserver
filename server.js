@@ -138,11 +138,18 @@ fastify.get("/", async (request, reply) => {
 });
 
 // --- Замок вебхуков Манго: секрет Selectel-прокси (x-proxy-secret), пока он не задан — проверка по IP --- //
-const checkSelectelIP = require('./mango.calls.new/zamokProksi').sozdatZamok({ log: fastify.log });
+const zamokProksi = require('./mango.calls.new/zamokProksi');
+const checkSelectelIP = zamokProksi.sozdatZamok({ log: fastify.log, zhurnalStarta: console.log });
+// Новые маршруты прокси (/internal/mango-event и др.): старого клиента у них нет, секрет обязателен всегда, без запасного пути по адресу.
+const zamokSekretProksi = zamokProksi.sozdatZamok({ log: fastify.log, tolkoSekret: true });
 
-// --- Маршруты для вебхуков Mango Office (только с Selectel) --- //
-fastify.post("/events/call", { preHandler: checkSelectelIP }, (req, res) => handleMangoWebhook(req, res, telegramBot));
-fastify.post("/events/summary", { preHandler: checkSelectelIP }, (req, res) => handleMangoWebhook(req, res, telegramBot));
+// --- Журнал сырых событий Mango (mango_events) и новые маршруты прокси /internal/* --- //
+const zhurnalSobytiy = require('./mango.calls.new/marshrutyProksi').registerMarshrutyProksi(fastify, zamokSekretProksi);
+
+// --- Маршруты для вебхуков Mango Office (секрет прокси или адрес Selectel) --- //
+// Замок — на onRequest, до чтения тела; тело не больше 1 МБ (у Mango ~0,6 КБ); журнал — preHandler, итог ответа — onSend.
+fastify.post("/events/call", { bodyLimit: 1024 * 1024, onRequest: checkSelectelIP, preHandler: zhurnalSobytiy.preHandler, onSend: zhurnalSobytiy.onSend }, (req, res) => handleMangoWebhook(req, res, telegramBot));
+fastify.post("/events/summary", { bodyLimit: 1024 * 1024, onRequest: checkSelectelIP, preHandler: zhurnalSobytiy.preHandler, onSend: zhurnalSobytiy.onSend }, (req, res) => handleMangoWebhook(req, res, telegramBot));
 // Записи: Selectel качает у Mango (геоблок) и шлёт mp3 сюда → Storage + STT.
 registerRecordingUploadRoute(fastify, checkSelectelIP);
 
