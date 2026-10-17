@@ -4,7 +4,12 @@
  * Браузер приходит параметром, здесь его не запускают и не подключают: в пробе на Mac это установленный Google
  * Chrome, на сервере (буква Б) — Chrome сервера. Опции печати те же, что у Api2Pdf в старой функции
  * (generate-estimate-pdf/index.ts:52-62): A4, фон печатается, поля нулевые.
+ *
+ * Защита (буква Б, дыра 5): тело запроса подставляется в HTML, а печатает его Chrome на нашем сервере. Поэтому в странице
+ * выключен JS, а запросы пускаются только к data:, шрифтам Google и публичному Storage нашего Supabase — остальное abort.
  */
+
+const { SUPABASE_URL } = require('./shablon');
 
 const PDF_OPTIONS = {
   format: 'A4',
@@ -12,15 +17,49 @@ const PDF_OPTIONS = {
   margin: { top: 0, right: 0, bottom: 0, left: 0 },
 };
 
+const HOSTY_SHRIFTOV = new Set(['fonts.googleapis.com', 'fonts.gstatic.com']);
+const PUT_STORAGE = '/storage/v1/object/public/';
+
+/**
+ * Можно ли странице сметы грузить этот адрес. Разрешено: data:, шрифты Google (https) и публичный Storage того же хоста,
+ * что SUPABASE_URL (https, путь /storage/v1/object/public/). Всё остальное — нельзя.
+ * @param {string} adres
+ * @param {string} [supabaseUrl]
+ * @returns {boolean}
+ */
+function razreshenAdres(adres, supabaseUrl = SUPABASE_URL) {
+  let u;
+  try { u = new URL(adres); } catch (e) { return false; }
+  if (u.protocol === 'data:') return true;
+  if (u.protocol !== 'https:') return false;
+  if (HOSTY_SHRIFTOV.has(u.hostname)) return true;
+  let s;
+  try { s = new URL(supabaseUrl); } catch (e) { return false; }
+  return s.protocol === 'https:' && u.host === s.host && u.pathname.startsWith(PUT_STORAGE);
+}
+
 /**
  * @param {import('puppeteer-core').Browser} browser — уже запущенный браузер (puppeteer / puppeteer-core)
  * @param {string} html — готовая страница, из shablon.buildHtml
- * @param {{ timeout?: number }} [options] — предел в миллисекундах на загрузку страницы и на саму печать
+ * @param {{ timeout?: number, supabaseUrl?: string }} [options] — timeout: предел в миллисекундах на загрузку страницы и
+ *   на саму печать; supabaseUrl: чей Storage пускать (по умолчанию SUPABASE_URL шаблона)
  * @returns {Promise<Buffer>} — PDF
  */
-async function pechatatPdf(browser, html, { timeout = 30000 } = {}) {
+async function pechatatPdf(browser, html, { timeout = 30000, supabaseUrl = SUPABASE_URL } = {}) {
   const page = await browser.newPage();
   try {
+    // JS в странице не нужен, а чужой HTML исполнять нельзя; до setContent, иначе скрипты успеют сработать
+    await page.setJavaScriptEnabled(false);
+    await page.setRequestInterception(true);
+    page.on('request', (request) => {
+      if (request.isInterceptResolutionHandled()) return;
+      // Отказ continue/abort (страница уже закрыта) не должен ронять сервер необработанным rejection
+      if (razreshenAdres(request.url(), supabaseUrl)) Promise.resolve(request.continue()).catch(() => {});
+      else {
+        console.warn(`[pdf-smet] запрос страницы сметы заблокирован: ${request.url().slice(0, 200)}`);
+        Promise.resolve(request.abort('blockedbyclient')).catch(() => {});
+      }
+    });
     // Ждём сеть (шрифт, обложка, печать) и шрифты: иначе смета выйдет другим шрифтом
     await page.setContent(html, { waitUntil: 'networkidle0', timeout });
     await page.evaluate(async () => { await document.fonts.ready; });
@@ -32,4 +71,4 @@ async function pechatatPdf(browser, html, { timeout = 30000 } = {}) {
   }
 }
 
-module.exports = { pechatatPdf, PDF_OPTIONS };
+module.exports = { pechatatPdf, razreshenAdres, PDF_OPTIONS };

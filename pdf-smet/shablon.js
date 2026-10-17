@@ -352,7 +352,9 @@ function buildHtml(data) {
   // словоДней ↔ склонить — src/utils/formatters.ts (в CRM его зовёт daysWord);
   // дни от дня составления ↔ daysFromValidUntil, прежний текст про 14 дней ↔ LEGACY_PDF_VALIDITY_DAYS —
   // src/components/department/calculations/estimate/validity.ts
-  const днём = (day) => day.split('-').reverse().join('.');
+  // Всё, что днём() возвращает, идёт прямо в HTML, поэтому экранируем здесь (дыра 5): для настоящих дат
+  // «2026-09-29» результат тот же, а подставное тело запроса не вставит в страницу разметку
+  const днём = (day) => escapeHtml(day.split('-').reverse().join('.'));
   // Запасной путь для старых вкладок CRM, которые не шлют день: считаем его по Москве сами
   const деньПечатиIso = printDay || new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Europe/Moscow', year: 'numeric', month: '2-digit', day: '2-digit',
@@ -607,7 +609,7 @@ ${getStyles()}
 </head>
 <body>
   <div class="header-wrap">
-    <img src="${imgUrl}" class="header-image" />
+    <img src="${escapeHtml(imgUrl)}" class="header-image" />
   </div>
   <div class="content">
 

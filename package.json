@@ -5,13 +5,14 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "NODE_OPTIONS=--max-old-space-size=1024 node --test --test-concurrency=2 \"rutina/**/*.test.js\" \"mango.calls.new/*.test.js\""
+    "test": "NODE_OPTIONS=--max-old-space-size=1024 node --test --test-concurrency=2 \"rutina/**/*.test.js\" \"mango.calls.new/*.test.js\" \"pdf-smet/*.test.js\""
   },
   "dependencies": {
     "@fastify/cors": "^8.5.0",
     "@fastify/formbody": "^7.4.0",
     "@fastify/static": "^6.10.2",
     "@fastify/view": "^8.0.0",
+    "@sparticuz/chromium": "153.0.0",
     "@supabase/supabase-js": "^2.49.7",
     "fastify": "^4.21.0",
     "googleapis": "^130.0.0",
@@ -20,6 +21,7 @@
     "mailparser": "^3.9.19",
     "node-schedule": "^2.1.1",
     "node-telegram-bot-api": "^0.61.0",
+    "puppeteer-core": "25.11.0",
     "web-push": "^3.6.7"
   },
   "engines": {
