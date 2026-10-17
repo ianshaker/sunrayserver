@@ -68,14 +68,53 @@ function limitOcheredi(znachenie) {
   return Math.min(n, OCHERED_LIMIT_MAKS);
 }
 
-// PostgREST: значение в двойных кавычках (внутри or=(...) запятые и скобки в значении иначе ломают разбор).
-function vKavychkakh(znachenie) {
-  return `"${String(znachenie).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
-}
-
 // Нарушение уникальности (entry_id или recording_id в mango_calls).
 function konfliktUnikalnosti(oshibka) {
   return Boolean(oshibka) && oshibka.code === "23505";
+}
+
+// recording.js:24 и recordingPipeline.js:33: записать recording_id в строку звонка. Только простые фильтры, без or=:
+// в бою разбор or-фильтра на update давал 42703 («column mango_calls.recording_id does not exist»).
+//  1) update recording_id where entry_id = X and recording_id is null — есть пустая строка: готово (updated);
+//  2) иначе читаем recording_id этой строки: строки нет — заготовка, как у прокси (inserted); тот же номер — same;
+//     другой непустой — conflict (затирать нельзя).
+// Строку могли создать или изменить между шагами — тогда один раз проходим заново.
+// Не бросает: { itog: "updated" | "inserted" | "same" | "conflict" } или { error }.
+async function zapisatNomerZapisi(supabase, entryId, recordingId) {
+  try {
+    for (let popytka = 0; popytka < 2; popytka += 1) {
+      const obnovlenie = await supabase
+        .from(TABLITSA_ZVONKOV)
+        .update({ recording_id: recordingId })
+        .eq("entry_id", entryId)
+        .is("recording_id", null)
+        .select("id");
+      if (obnovlenie.error) return { error: obnovlenie.error };
+      if (Array.isArray(obnovlenie.data) && obnovlenie.data.length > 0) return { itog: "updated" };
+
+      const chtenie = await supabase.from(TABLITSA_ZVONKOV).select("recording_id").eq("entry_id", entryId).limit(1);
+      if (chtenie.error) return { error: chtenie.error };
+      const stroka = Array.isArray(chtenie.data) ? chtenie.data[0] : null;
+
+      if (!stroka) {
+        const vstavka = await supabase
+          .from(TABLITSA_ZVONKOV)
+          .insert({ entry_id: entryId, client_phone: "", client_phone_digits: "", recording_id: recordingId });
+        if (!vstavka.error) return { itog: "inserted" };
+        // строку успели создать между чтением и вставкой (уникальный entry_id): читаем заново
+        if (popytka === 0 && konfliktUnikalnosti(vstavka.error) && /entry_id/.test(String(vstavka.error.message))) continue;
+        return { error: vstavka.error };
+      }
+      if (stroka.recording_id === recordingId) return { itog: "same" };
+      if (stroka.recording_id) return { itog: "conflict" };
+      // номер пуст, а update строку не нашёл: между шагами что-то изменилось — один повтор
+      if (popytka === 0) continue;
+      return { error: new Error("mango_calls: строка с пустым recording_id не обновляется") };
+    }
+    return { error: new Error("mango_calls: не удалось записать recording_id") };
+  } catch (e) {
+    return { error: e };
+  }
 }
 
 // mango-proxy supabase.js:10-41 updateCallRow: обновить строку звонка по entry_id, а если её нет — создать заготовку
@@ -239,7 +278,7 @@ function registerMarshrutyProksi(fastify, zamokSekret, opts = {}) {
   });
 
   // recording.js:24 и recordingPipeline.js:33: { recording_id } в строку звонка; строки нет — заготовка (не 404).
-  // Пустой recording_id — 400 (прокси такое не шлёт). Заменить можно только пустой номер записи или тот же самый:
+  // Пустой recording_id — 400 (прокси такое не шлёт). Заменить можно только пустой номер записи; тот же самый — same:true;
   // другой непустой, как и номер записи, уже занятый другим звонком, — 409 (прокси положит в otkazano, не повторяет).
   fastify.post("/internal/recording-id", parametry, async (req, reply) => {
     const entryId = idIzTela(req.body?.entry_id);
@@ -247,20 +286,16 @@ function registerMarshrutyProksi(fastify, zamokSekret, opts = {}) {
     if (!entryId || !recordingId) {
       return reply.code(400).send({ ok: false, error: "bad_request" });
     }
-    const itog = await obnovitStrokuZvonka(
-      supabase,
-      entryId,
-      { recording_id: recordingId },
-      { uslovie: (obnovlenie) => obnovlenie.or(`recording_id.is.null,recording_id.eq.${vKavychkakh(recordingId)}`) },
-    );
-    if (konfliktUnikalnosti(itog.error)) {
+    const itog = await zapisatNomerZapisi(supabase, entryId, recordingId);
+    if (konfliktUnikalnosti(itog.error) || itog.itog === "conflict") {
       return reply.code(409).send({ ok: false, error: "recording_id_conflict" });
     }
     if (itog.error) {
       log.error(`[proksi] recording-id entry=${entryId}: ${tekstOshibki(itog.error)}`);
       return reply.code(500).send({ ok: false, error: "db_error" });
     }
-    return reply.send({ ok: true, inserted: itog.inserted });
+    if (itog.itog === "same") return reply.send({ ok: true, same: true });
+    return reply.send({ ok: true, inserted: itog.itog === "inserted" });
   });
 
   // Остальное, что прокси писал в mango_calls: failed (recording.js:29) и pending (markPendingIfNotReady). Одним update
@@ -312,6 +347,7 @@ module.exports = {
   registerMarshrutyProksi,
   sozdatZhurnalMarshrutov,
   obnovitStrokuZvonka,
+  zapisatNomerZapisi,
   ocherediZapisey,
   POZDNIY_POVTOR_MS,
 };

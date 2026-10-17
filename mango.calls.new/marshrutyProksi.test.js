@@ -201,6 +201,15 @@ function utverditTotZhe(fakt, ozhidaemyy, { bez = [] } = {}) {
   assert.deepEqual(pary(f), pary(o));
 }
 
+// Боевой сбой: or-фильтр на update ломал PostgREST (42703). В запросах к базе только простые фильтры: ни or=, ни and=.
+function utverditBezOr(zaprosy) {
+  assert.ok(zaprosy.length > 0, "запросов к базе не было — проверять нечего");
+  for (const z of zaprosy) {
+    assert.ok(!z.url.searchParams.has("or") && !z.url.searchParams.has("and"), `в запросе ${z.metod} ${z.url.search} есть or=/and=`);
+    assert.ok(!/(^|[?&])(or|and)=/.test(z.url.search), `в строке запроса ${z.url.search} есть or=/and=`);
+  }
+}
+
 function tekstZhurnala(zhurnalLog) {
   return JSON.stringify(zhurnalLog.zapisi);
 }
@@ -276,6 +285,7 @@ test("а2) настоящий supabase-js: запись POST mango_events?on_con
   assert.equal(zhurnalLog.zapisi.filter((z) => z.uroven === "error").length, 1);
   utverditChistyyZhurnal(zhurnalLog);
 
+  utverditBezOr(zaprosy);
   const vstavki = zaprosy.filter((z) => z.metod === "POST");
   assert.equal(vstavki.length, 3);
   for (const z of vstavki) {
@@ -724,42 +734,78 @@ test("м) маршруты прокси принимают тело не бол�
 // POST /internal/recording-id, POST /internal/recording-attempt, GET /internal/recording-queue
 // ---------------------------------------------------------------------------------------------
 
-test("н) /internal/recording-id: PATCH mango_calls по entry_id; пустой номер записи или тот же самый заменяем (or-условие), тело {recording_id}", async (t) => {
+test("н) /internal/recording-id: пустая строка звонка — один PATCH recording_id=is.null (простые фильтры, без or=), тело {recording_id}", async (t) => {
   const ENTRY = "MToxMDA+/=&x y";
   const { klient, zaprosy } = klientSPodmenoyiSeti(() => ({ body: [{ id: 7 }] }));
   const { app } = await sobratPrilozhenie(t, { supabase: klient });
 
-  const otvet = await vnutrenneePost(app, "/internal/recording-id", JSON.stringify({ entry_id: ENTRY, recording_id: "REC-1" }));
+  const otvet = await vnutrenneePost(app, "/internal/recording-id", JSON.stringify({ entry_id: ENTRY, recording_id: "MToxMDIwNjUzMjoyODEyNDIxMTY4OTow" }));
   assert.equal(otvet.statusCode, 200);
   assert.deepEqual(otvet.json(), { ok: true, inserted: false });
-  assert.equal(zaprosy.length, 1);
+  assert.equal(zaprosy.length, 1, "одного запроса достаточно");
   const [z] = zaprosy;
   assert.equal(z.metod, "PATCH");
-  // у прокси к PATCH нет ни select, ни условия на номер записи; наши — select=id (как в db.js) и «пустой или тот же»
-  utverditTotZhe(z.url, proksi.patch(ENTRY), { bez: ["select", "or"] });
-  assert.equal(z.url.searchParams.get("select"), "id");
-  assert.equal(z.url.searchParams.get("or"), '(recording_id.is.null,recording_id.eq."REC-1")');
-  assert.deepEqual(z.telo, { recording_id: "REC-1" });
+  utverditBezOr(zaprosy);
+  // у прокси к PATCH только entry_id; наши — ещё «номер пуст» (recording_id=is.null) и select=id (как в db.js)
+  utverditTotZhe(z.url, proksi.patch(ENTRY), { bez: ["select", "recording_id"] });
+  assert.deepEqual([...z.url.searchParams], [["entry_id", `eq.${ENTRY}`], ["recording_id", "is.null"], ["select", "id"]]);
+  assert.deepEqual(z.telo, { recording_id: "MToxMDIwNjUzMjoyODEyNDIxMTY4OTow" });
   assert.equal(z.zagolovki.get("prefer"), "return=representation");
   assert.equal(z.zagolovki.get("authorization"), "Bearer TEST-SERVICE-ROLE-KEY", "ключ у клиента сервера");
-
-  // кавычки, запятые, скобки и обратная косая в номере записи не ломают условие
-  zaprosy.length = 0;
-  await vnutrenneePost(app, "/internal/recording-id", JSON.stringify({ entry_id: "E", recording_id: 'a,b)"c\\d' }));
-  assert.equal(zaprosy[0].url.searchParams.get("or"), '(recording_id.is.null,recording_id.eq."a,b)\\"c\\\\d")');
 });
 
-test("о) /internal/recording-id: строки нет — та же заготовка, что у прокси (POST), ответ 200 inserted:true, не 404", async (t) => {
+test("н2) /internal/recording-id: update ничего не взял — читаем recording_id строки: тот же номер → same:true, другой непустой → 409, записать нечего; без or=", async (t) => {
+  const ENTRY = "ENTRY-ZANYATA";
+  const sStrokoy = (nomer) => klientSPodmenoyiSeti((z) => (z.metod === "PATCH" ? { body: [] } : { body: [{ recording_id: nomer }] }));
+
+  const odinakovyy = sStrokoy("REC-1");
+  const prilozhenieSame = await sobratPrilozhenie(t, { supabase: odinakovyy.klient });
+  const same = await vnutrenneePost(prilozhenieSame.app, "/internal/recording-id", JSON.stringify({ entry_id: ENTRY, recording_id: "REC-1" }));
+  assert.deepEqual([same.statusCode, same.json()], [200, { ok: true, same: true }]);
+  assert.deepEqual(odinakovyy.zaprosy.map((z) => z.metod), ["PATCH", "GET"], "ни заготовки, ни повторной записи");
+  utverditBezOr(odinakovyy.zaprosy);
+  // чтение: select=recording_id & entry_id=eq.X & limit=1
+  assert.deepEqual([...odinakovyy.zaprosy[1].url.searchParams], [["select", "recording_id"], ["entry_id", `eq.${ENTRY}`], ["limit", "1"]]);
+
+  const drugoy = sStrokoy("REC-STARYY");
+  const prilozhenieDrugoy = await sobratPrilozhenie(t, { supabase: drugoy.klient });
+  const konflikt = await vnutrenneePost(prilozhenieDrugoy.app, "/internal/recording-id", JSON.stringify({ entry_id: ENTRY, recording_id: "REC-NOVYY" }));
+  assert.deepEqual([konflikt.statusCode, konflikt.json()], [409, { ok: false, error: "recording_id_conflict" }]);
+  assert.deepEqual(drugoy.zaprosy.map((z) => z.metod), ["PATCH", "GET"], "чужой номер не затираем и заготовку не заводим");
+  utverditBezOr(drugoy.zaprosy);
+  assert.equal(prilozhenieDrugoy.zhurnalLog.zapisi.length, 0, "409 — не поломка, в лог не пишем");
+});
+
+test("н3) /internal/recording-id: гонка — между update и чтением строку заполнили или создали; один повтор, дальше ошибка", async (t) => {
+  // строку создали между чтением и вставкой: заготовка упёрлась в уникальный entry_id → второй заход, update её берёт
+  let vstavok = 0;
+  const sGonkoy = klientSPodmenoyiSeti((z) => {
+    if (z.metod === "POST") {
+      vstavok += 1;
+      return { status: 409, body: { code: "23505", message: 'duplicate key value violates unique constraint "mango_calls_entry_id_unique"' } };
+    }
+    if (z.metod === "PATCH") return { body: vstavok === 0 ? [] : [{ id: 5 }] };
+    return { body: [] }; // чтение: строки ещё нет
+  });
+  const prilozhenie = await sobratPrilozhenie(t, { supabase: sGonkoy.klient });
+  const otvet = await vnutrenneePost(prilozhenie.app, "/internal/recording-id", JSON.stringify({ entry_id: "E", recording_id: "R" }));
+  assert.deepEqual([otvet.statusCode, otvet.json()], [200, { ok: true, inserted: false }]);
+  assert.deepEqual(sGonkoy.zaprosy.map((z) => z.metod), ["PATCH", "GET", "POST", "PATCH"]);
+  utverditBezOr(sGonkoy.zaprosy);
+});
+
+test("о) /internal/recording-id: строки нет — PATCH, чтение, затем та же заготовка, что у прокси (POST); ответ 200 inserted:true, не 404; без or=", async (t) => {
   const ENTRY = "ENTRY-NOVAYA";
-  const { klient, zaprosy } = klientSPodmenoyiSeti((z) => (z.metod === "PATCH" ? { body: [] } : { status: 201 }));
+  const { klient, zaprosy } = klientSPodmenoyiSeti((z) => (z.metod === "POST" ? { status: 201 } : { body: [] }));
   const { app } = await sobratPrilozhenie(t, { supabase: klient });
 
   const otvet = await vnutrenneePost(app, "/internal/recording-id", JSON.stringify({ entry_id: ENTRY, recording_id: "REC-2" }));
   assert.deepEqual([otvet.statusCode, otvet.json()], [200, { ok: true, inserted: true }]);
-  assert.deepEqual(zaprosy.map((z) => z.metod), ["PATCH", "POST"]);
-  utverditTotZhe(zaprosy[0].url, proksi.patch(ENTRY), { bez: ["select", "or"] });
-  utverditTotZhe(zaprosy[1].url, proksi.vstavka());
-  assert.deepEqual(zaprosy[1].telo, {
+  assert.deepEqual(zaprosy.map((z) => z.metod), ["PATCH", "GET", "POST"]);
+  utverditBezOr(zaprosy);
+  utverditTotZhe(zaprosy[0].url, proksi.patch(ENTRY), { bez: ["select", "recording_id"] });
+  utverditTotZhe(zaprosy[2].url, proksi.vstavka());
+  assert.deepEqual(zaprosy[2].telo, {
     entry_id: ENTRY,
     client_phone: "",
     client_phone_digits: "",
@@ -807,17 +853,17 @@ test("п) /internal/recording-id: нет entry_id, пустой или крив�
   const otvetZanyat = await vnutrenneePost(prilozhenieZanyat.app, "/internal/recording-id", JSON.stringify({ entry_id: "E", recording_id: "R" }));
   assert.deepEqual([otvetZanyat.statusCode, otvetZanyat.json()], [409, { ok: false, error: "recording_id_conflict" }]);
 
-  // в строке звонка уже стоит другой номер записи: update не подошёл, заготовка упёрлась в уникальный entry_id → тоже 409
-  const drugoy = klientSPodmenoyiSeti((z) =>
-    z.metod === "PATCH"
-      ? { body: [] }
-      : { status: 409, body: { code: "23505", message: 'duplicate key value violates unique constraint "mango_calls_entry_id_unique"' } },
+  // заготовка упёрлась в занятый другим звонком recording_id (уникальный recording_id) → тоже 409
+  const zanyatVstavka = klientSPodmenoyiSeti((z) =>
+    z.metod === "POST"
+      ? { status: 409, body: { code: "23505", message: 'duplicate key value violates unique constraint "mango_calls_recording_id_unique"' } }
+      : { body: [] },
   );
-  const prilozhenieDrugoy = await sobratPrilozhenie(t, { supabase: drugoy.klient });
-  const otvetDrugoy = await vnutrenneePost(prilozhenieDrugoy.app, "/internal/recording-id", JSON.stringify({ entry_id: "E", recording_id: "R-NOVYY" }));
-  assert.deepEqual([otvetDrugoy.statusCode, otvetDrugoy.json()], [409, { ok: false, error: "recording_id_conflict" }]);
-  assert.deepEqual(drugoy.zaprosy.map((z) => z.metod), ["PATCH", "POST"]);
-  assert.equal(prilozhenieZanyat.zhurnalLog.zapisi.length + prilozhenieDrugoy.zhurnalLog.zapisi.length, 0, "409 — не поломка, в лог не пишем");
+  const prilozhenieVstavka = await sobratPrilozhenie(t, { supabase: zanyatVstavka.klient });
+  const otvetVstavka = await vnutrenneePost(prilozhenieVstavka.app, "/internal/recording-id", JSON.stringify({ entry_id: "E", recording_id: "R" }));
+  assert.deepEqual([otvetVstavka.statusCode, otvetVstavka.json()], [409, { ok: false, error: "recording_id_conflict" }]);
+  assert.deepEqual(zanyatVstavka.zaprosy.map((z) => z.metod), ["PATCH", "GET", "POST"]);
+  assert.equal(prilozhenieZanyat.zhurnalLog.zapisi.length + prilozhenieVstavka.zhurnalLog.zapisi.length, 0, "409 — не поломка, в лог не пишем");
 });
 
 test("р) /internal/recording-queue: тот же запрос, что у воркера прокси (поля, фильтры, порядок, лимит 5), ответ — массив", async (t) => {
@@ -834,6 +880,7 @@ test("р) /internal/recording-queue: тот же запрос, что у вор�
   assert.equal(zaprosy.length, 1);
   assert.equal(zaprosy[0].metod, "GET");
   utverditTotZhe(zaprosy[0].url, proksi.ochered(NOW, 5));
+  utverditBezOr(zaprosy);
 
   // без limit — пачка прокси (5); мусор — тоже 5; потолок 50; нормальное число — как есть
   const limity = [[undefined, 5], ["abc", 5], ["0", 5], ["-3", 5], ["3", 3], ["999", 50]];
@@ -864,6 +911,7 @@ test("т) /internal/recording-attempt: pending и failed — одним PATCH с
     const { app } = await sobratPrilozhenie(t, { supabase: klient });
 
     const otvet = await vnutrenneePost(app, "/internal/recording-attempt", JSON.stringify({ entry_id: ENTRY, recording_status: status }));
+    utverditBezOr(zaprosy);
     assert.deepEqual([otvet.statusCode, otvet.json()], [200, { ok: true, updated: true, inserted: false, skipped: false }], status);
     assert.equal(zaprosy.length, 1, "один запрос: ни GET, ни второго PATCH");
     const [z] = zaprosy;
@@ -896,6 +944,7 @@ test("у) /internal/recording-attempt: файл уже есть (storage_path) �
   const otvet = await vnutrenneePost(prilozhenieNet.app, "/internal/recording-attempt", JSON.stringify({ entry_id: "E", recording_status: "failed" }));
   assert.deepEqual([otvet.statusCode, otvet.json()], [200, { ok: true, updated: false, inserted: true, skipped: false }]);
   assert.deepEqual(net.zaprosy.map((z) => z.metod), ["PATCH", "POST"]);
+  utverditBezOr([...net.zaprosy, ...zashchishchena.zaprosy]);
   assert.deepEqual(net.zaprosy[1].telo, { entry_id: "E", client_phone: "", client_phone_digits: "", recording_status: "failed" });
 });
 
@@ -1211,4 +1260,11 @@ test("п7б) ключ service_role: при старте одна строка «
   const molchit = podmenaLog();
   registerMarshrutyProksi(app, async () => {}, { supabase: podmenaSupabase(), log: molchit.log, now: () => NOW, chistka: false });
   assert.deepEqual(molchit.zapisi, []);
+});
+
+test("ч) в коде маршрутов прокси и журнала нет .or(: or-фильтр на update в бою не прошёл (42703)", () => {
+  for (const imya of ["marshrutyProksi.js", "zhurnalSobytiy.js"]) {
+    const kod = fs.readFileSync(path.join(__dirname, imya), "utf8").split("\n").filter((stroka) => !stroka.trim().startsWith("//")).join("\n");
+    assert.ok(!/\.or\(/.test(kod), `${imya}: появился .or(`);
+  }
 });
