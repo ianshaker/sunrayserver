@@ -1,6 +1,6 @@
 // ============================================================================
 // Назначение замера из погрузки — зеркало CRM useEventAssignment.
-// Топливо → eventsnew → ids → salary → TG; откат при fail TG.
+// Топливо → eventsnew → ids → TG; откат при fail TG.
 // ============================================================================
 
 const { supabase } = require("../lib/supabaseClient");
@@ -14,13 +14,6 @@ const { validateEventAddressForAssign } = require("./address");
 const { insertFuelRecord, deleteFuelRecordByAppeal } = require("./fuel");
 const { getTelegramMasterKey } = require("./masters");
 const { findLoadingEventByNumber } = require("./queries");
-
-const SALARY_TABLE = {
-  Настя: "salary_nastya",
-  Таня: "salary_tanya",
-  Света: "salary_sveta",
-  Гена: "salary_gena",
-};
 
 async function updateIdsMeasurement(appealNumber, master, date, startTime) {
   if (!appealNumber) return;
@@ -37,31 +30,6 @@ async function updateIdsMeasurement(appealNumber, master, date, startTime) {
 
   if (error) {
     console.error("[loading-deadlines/assign] ids:", error.message);
-  }
-}
-
-async function updateSalaryOnAssign(appealNumber, salemanager, measurementDate) {
-  if (!appealNumber || !salemanager) return;
-  const table = SALARY_TABLE[salemanager];
-  if (!table) return;
-
-  const updateData = {
-    status: "на замере",
-    comment: "Назначен замер",
-    updated_at: new Date().toISOString(),
-  };
-  if (measurementDate) updateData.measurement_date = measurementDate;
-
-  const { error } = await supabase
-    .from(table)
-    .update(updateData)
-    .eq("appeal_id", appealNumber)
-    .eq("status", "в погрузке");
-
-  if (error) {
-    console.error(`[loading-deadlines/assign] ${table}:`, error.message);
-  } else {
-    console.log(`[loading-deadlines/assign] salary ${table} → на замере ${appealNumber}`);
   }
 }
 
@@ -149,7 +117,7 @@ async function executeAssignZamer(draft) {
     const { data, error } = await supabase
       .from("eventsnew")
       .select(
-        "id, appeal_number, client_name, phone, city, detailed_address, address, place_id, dialog, note, deadline, salemanager, type",
+        "id, appeal_number, client_name, phone, city, detailed_address, address, place_id, dialog, note, deadline, type",
       )
       .eq("id", eventId)
       .eq("type", "Погрузка")
@@ -207,7 +175,6 @@ async function executeAssignZamer(draft) {
   }
 
   await updateIdsMeasurement(event.appeal_number || appealNumber, master, date, startTime);
-  await updateSalaryOnAssign(event.appeal_number || appealNumber, event.salemanager, date);
 
   try {
     await sendZamerTelegram(event, {

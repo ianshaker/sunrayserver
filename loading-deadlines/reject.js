@@ -32,7 +32,7 @@ function buildAppealsOtkazRow(event, reason, managerLabel) {
     coordinates: event.coordinates || null,
     dialog: event.dialog || "",
     source: "Система",
-    manager: String(managerLabel || event.salemanager || "Система").trim() || "Система",
+    manager: String(managerLabel || "Система").trim() || "Система",
     reason: trimmedReason,
     status: "Отказ",
     product_type: event.type || "Погрузка",

@@ -27,7 +27,6 @@ const {
 const { createDraft } = require("./draft");
 const { buildPreviewKeyboard } = require("./keyboards");
 const { resolveManagerLabel } = require("./managerLabel");
-const { resolveSalesManagerFromProfile } = require("./salesManager");
 const {
   hasAnyInfoUpdate,
   buildFieldPatch,
@@ -190,7 +189,6 @@ async function handle(ctx) {
       return;
     }
 
-    const { salemanager } = await resolveSalesManagerFromProfile(profileId);
     const loadingSnapshot = mergeAppealForLoading(appeal, infoUpdates, managerLabel);
     const previewChangeLines = infoUpdates && hasAnyInfoUpdate(infoUpdates)
       ? buildPreviewChangeLines(appeal, infoUpdates)
@@ -202,16 +200,13 @@ async function handle(ctx) {
       action,
       appealId: appeal.id,
       appealNumber: appeal.appeal_number || appealNumber,
-      salemanager,
       managerLabel,
       loadingSnapshot,
       previewChangeLines,
       productType: appeal.product_type,
     };
 
-    console.log(
-      `[appeals-deadlines/intent] превью ${draftData.appealNumber} → loading (salemanager=${salemanager})`,
-    );
+    console.log(`[appeals-deadlines/intent] превью ${draftData.appealNumber} → loading`);
     await sendPreview(ctx, draftData);
     return;
   }

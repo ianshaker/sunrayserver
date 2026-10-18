@@ -206,7 +206,6 @@ function buildPreviewDismissedMessage() {
  *   newDateHuman?: string | null,
  *   previewChangeLines?: string[] | null,
  *   loadingSnapshot?: object | null,
- *   salemanager?: string | null,
  *   managerLabel?: string | null,
  * }} draft
  */
@@ -261,8 +260,6 @@ function buildPreviewMessage(draft) {
       }
     }
 
-    lines.push("");
-    lines.push(`Менеджер вывода: <b>${escHtml(draft.salemanager || "—")}</b>`);
     lines.push("");
     lines.push("⚠️ <b>Заявка будет удалена из входящих</b> и появится в отделе «Погрузка».");
     lines.push("<i>Основной адрес (Google Maps) не меняем — только через CRM.</i>");

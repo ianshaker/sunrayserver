@@ -8,7 +8,6 @@ const {
   insertLoadingEvent,
   deleteAppealById,
 } = require("./queries");
-const { updateManagerRecords } = require("./loadingManager");
 const { yandexMapsLink } = require("../info-na-zamer/format");
 
 const LOADING_CHAT_ID = -1002669673493;
@@ -25,9 +24,8 @@ function cleanAddressForTelegram(address) {
 
 /**
  * @param {object} snapshot — merged appeal fields
- * @param {string|null} salemanager
  */
-function buildLoadingEventRow(snapshot, salemanager) {
+function buildLoadingEventRow(snapshot) {
   return {
     appeal_number: cleanAppealNumber(snapshot.appeal_number),
     type: "Погрузка",
@@ -42,7 +40,6 @@ function buildLoadingEventRow(snapshot, salemanager) {
     date: null,
     start_time: null,
     end_time: null,
-    salemanager: salemanager || null,
   };
 }
 
@@ -81,10 +78,9 @@ async function notifyLoadingTelegram(snapshot) {
  *
  * @param {object} appeal — строка appeals (с product_type)
  * @param {object} snapshot — итоговые поля для eventsnew
- * @param {string} salemanager
  * @returns {Promise<{ telegramSent: boolean }>}
  */
-async function executeAppealLoading(appeal, snapshot, salemanager) {
+async function executeAppealLoading(appeal, snapshot) {
   const appealNumber = cleanAppealNumber(snapshot.appeal_number || appeal.appeal_number);
 
   const existing = await findExistingLoadingEvent(appealNumber);
@@ -94,7 +90,7 @@ async function executeAppealLoading(appeal, snapshot, salemanager) {
     throw err;
   }
 
-  const eventRow = buildLoadingEventRow(snapshot, salemanager);
+  const eventRow = buildLoadingEventRow(snapshot);
   await insertLoadingEvent(eventRow);
 
   let telegramSent = false;
@@ -104,7 +100,6 @@ async function executeAppealLoading(appeal, snapshot, salemanager) {
     console.error("[appeals-deadlines/loading] TG ошибка:", err.message);
   }
 
-  await updateManagerRecords(salemanager, appealNumber, appeal);
   await deleteAppealById(appeal.id);
 
   console.log(`[appeals-deadlines/loading] ✅ ${appealNumber} → eventsnew, appeals удалена`);

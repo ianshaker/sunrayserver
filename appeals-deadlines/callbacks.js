@@ -196,7 +196,6 @@ function registerAppealDeadlineCallbacks() {
         const result = await executeAppealLoading(
           { ...appeal, product_type: confirmed.productType || appeal.product_type },
           confirmed.loadingSnapshot,
-          confirmed.salemanager,
         );
         await editMessage(
           ctx,
