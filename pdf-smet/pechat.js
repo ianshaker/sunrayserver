@@ -71,4 +71,4 @@ async function pechatatPdf(browser, html, { timeout = 30000, supabaseUrl = SUPAB
   }
 }
 
-module.exports = { pechatatPdf, razreshenAdres, PDF_OPTIONS };
+module.exports = { pechatatPdf, razreshenAdres };

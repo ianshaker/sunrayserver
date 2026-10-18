@@ -1,16 +1,16 @@
 "use strict";
 
-// Маршрут POST /api/pdf/smeta без Chrome (PLANS/SERVER/05-pdf-smet, буква Б): пропуск, 400, ответ и имя файла, 502, 503,
-// очередь печатника, защита страницы сметы. Настоящий Chrome здесь не запускается: печать и браузер подменены.
+// Маршрут POST /api/pdf/smeta без Chrome (PLANS/SERVER/05-pdf-smet, буква Б): пропуск, 400 (пусто, потолок, числа, сборка),
+// ответ и имя файла, 502, 503, клиент ушёл, тело больше 1 МБ. Настоящий Chrome здесь не запускается: печать подменена.
+// Очередь печатника — brauzer.test.js, страница сметы — pechat.test.js, шаблон — shablon.test.js.
 // Запуск: NODE_OPTIONS=--max-old-space-size=1024 node --test pdf-smet/route.test.js
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const http = require("node:http");
 const Fastify = require("fastify");
 const { registerPdfSmetRoute, zagolovokFayla } = require("./route");
 const { sozdatPechatnika, PechatZanyata } = require("./brauzer");
-const { pechatatPdf, razreshenAdres } = require("./pechat");
-const { SUPABASE_URL } = require("./shablon");
 
 const TOKEN = "Bearer test";
 const POZICIYA = { id: "p1", productType: "roller_mini", productLabel: "Рулонная штора MINI", materialName: "Ткань", quantity: 2, price: 10000 };
@@ -137,7 +137,7 @@ test("печать упала — 502 словами, а следующий за
   const upal = await otpravit(app, telo());
   assert.equal(upal.statusCode, 502);
   assert.equal(upal.json().error, "PDF generation failed");
-  assert.match(upal.json().details, /Не удалось напечатать PDF: Chrome упал на старте/);
+  assert.match(upal.json().details, /Не удалось напечатать PDF/);
   assert.equal((await otpravit(app, telo())).statusCode, 200);
 });
 
@@ -150,167 +150,235 @@ test("печать занята — 503 и Retry-After", async (t) => {
   assert.match(res.json().details, /Печать занята, повторите через минуту/);
 });
 
-// --- очередь печатника (brauzer.js): подставной запуск и печать, настоящего Chrome нет ---
 
-function podmenaChrome() {
-  const sostoyanie = { zakryto: 0, zapuskov: 0, aktivno: 0, maxAktivno: 0, poryadok: [], zhdut: [] };
-  sostoyanie.zapustit = async () => {
-    sostoyanie.zapuskov++;
-    return { close: async () => { sostoyanie.zakryto++; }, process: () => null };
-  };
-  // Печать стоит, пока тест не вызовет otpustit(); html возвращается как PDF
-  sostoyanie.pechatat = async (browser, html) => {
-    sostoyanie.aktivno++;
-    sostoyanie.maxAktivno = Math.max(sostoyanie.maxAktivno, sostoyanie.aktivno);
-    sostoyanie.poryadok.push(html);
-    await new Promise((resolve) => { sostoyanie.zhdut.push(resolve); });
-    sostoyanie.aktivno--;
-    return Buffer.from(html);
-  };
-  return sostoyanie;
-}
+test("потолок: больше 400 позиций или 100 групп — 400 словами, печать не зовут; ровно 400 и 100 проходят", async (t) => {
+  tishina(t);
+  const { app, vyzovy } = await sobrat(t);
+  const pozicii = (n) => Array.from({ length: n }, (_, i) => ({ ...POZICIYA, id: `p${i}` }));
+  const gruppy = (n) => Array.from({ length: n }, (_, i) => ({ id: `g${i}`, name: `Вариант ${i}` }));
+
+  const mnogoPozicij = await otpravit(app, telo({ items: pozicii(401) }));
+  assert.equal(mnogoPozicij.statusCode, 400);
+  assert.equal(mnogoPozicij.json().error, "Too many items");
+  assert.match(mnogoPozicij.json().details, /слишком много позиций или групп/);
+
+  const mnogoGrupp = await otpravit(app, telo({ groups: gruppy(101) }));
+  assert.equal(mnogoGrupp.statusCode, 400);
+  assert.equal(mnogoGrupp.json().error, "Too many items");
+
+  assert.equal(vyzovy.length, 0);
+  assert.equal((await otpravit(app, telo({ items: pozicii(400), groups: gruppy(100) }))).statusCode, 200);
+  assert.equal(vyzovy.length, 1);
+});
+
+test("числа: «<h1>» в quantity, «abc» в price, мусор в скидках и 1e999 — 400 «неверные числа в смете», печать не зовут", async (t) => {
+  tishina(t);
+  const { app, vyzovy } = await sobrat(t);
+  const { price, ...bezCeny } = POZICIYA;
+  const plohie = [
+    [telo({ items: [{ ...POZICIYA, quantity: "<h1>" }] }), "quantity <h1>"],
+    [telo({ items: [{ ...POZICIYA, price: "abc" }] }), "price abc"],
+    [telo({ items: [{ ...POZICIYA, discountPercent: "10%" }] }), "discountPercent 10%"],
+    [telo({ items: [{ ...POZICIYA, quantity: null }] }), "quantity null"],
+    [telo({ items: [bezCeny] }), "price нет"],
+    [telo({ items: [{ ...POZICIYA, price: true }] }), "price true"],
+    [telo({ items: [{ ...POZICIYA, quantity: [2] }] }), "quantity [2]"],
+    [telo({ items: [{ ...POZICIYA, price: "  " }] }), "price пробелы"],
+    [telo({ items: [{ ...POZICIYA, discountedPrice: "<u>x</u>" }] }), "discountedPrice <u>"],
+    [telo({ items: [{ ...POZICIYA, vatAmount: "abc" }] }), "vatAmount abc"],
+    [telo({ items: [{ ...POZICIYA, finalPriceWithVat: "<i>1</i>" }] }), "finalPriceWithVat <i>"],
+    [telo({ items: [{ ...POZICIYA, vatPercent: "22%" }] }), "vatPercent 22%"],
+    [telo({ promoDiscount: "<b>5</b>" }), "promoDiscount <b>"],
+    [telo({ promoDiscount: {} }), "promoDiscount {}"],
+  ];
+  for (const [payload, chto] of plohie) {
+    const res = await otpravit(app, payload);
+    assert.equal(res.statusCode, 400, chto);
+    assert.equal(res.json().error, "Invalid numbers", chto);
+    assert.match(res.json().details, /неверные числа в смете/i, chto);
+  }
+  // В тексте JSON 1e999 разбирается в Infinity: не конечное число
+  const beskonechnost = await app.inject({
+    method: "POST", url: "/api/pdf/smeta", headers: { authorization: TOKEN, "content-type": "application/json" },
+    payload: '{"clientData":{"appealId":"#1"},"items":[{"productLabel":"x","quantity":1e999,"price":1}]}',
+  });
+  assert.equal(beskonechnost.statusCode, 400);
+  assert.equal(beskonechnost.json().error, "Invalid numbers");
+  assert.equal(vyzovy.length, 0);
+});
+
+test("числа: строка-число приводится к числу и в страницу идёт числом; null и пропуск promoDiscount и discountPercent допустимы", async (t) => {
+  tishina(t);
+  const { app, vyzovy } = await sobrat(t);
+  const res = await otpravit(app, telo({ items: [{ ...POZICIYA, quantity: "3", price: " 12500 ", discountPercent: "10" }], promoDiscount: "15" }));
+  assert.equal(res.statusCode, 200);
+  assert.match(vyzovy[0], /<td class="col-qty">3<\/td>/);
+  assert.match(vyzovy[0], /<td class="col-price">12 500 ₽<\/td>/); // число с разделителем тысяч, а не строка " 12500 "
+  assert.match(vyzovy[0], /<td class="col-discount">10%<\/td>/);
+  assert.match(vyzovy[0], /в размере 15%/);
+
+  for (const dop of [{ promoDiscount: null }, {}, { items: [{ ...POZICIYA, discountPercent: null }] }, { items: [{ ...POZICIYA, discountPercent: 0 }] }]) {
+    assert.equal((await otpravit(app, telo(dop))).statusCode, 200, JSON.stringify(dop).slice(0, 60));
+  }
+  assert.equal(vyzovy.length, 5);
+});
+
+test("одиночный суррогат в номере обращения: 200 и заголовок цел (раньше URIError и 500 уже после печати)", async (t) => {
+  tishina(t);
+  const { app, vyzovy } = await sobrat(t);
+  const res = await otpravit(app, telo({ clientData: { appealId: "#5\ud800x", clientName: "Иванов" } }));
+  assert.equal(res.statusCode, 200);
+  assert.equal(vyzovy.length, 1);
+  assert.equal(res.headers["content-disposition"], `attachment; filename="#5_x.pdf"; filename*=UTF-8''%235%EF%BF%BDx.pdf`);
+  assert.deepEqual(res.rawPayload, PDF);
+  assert.doesNotThrow(() => zagolovokFayla("#5\ud800.pdf"));
+  assert.doesNotThrow(() => zagolovokFayla("\udfff#5.pdf"));
+});
+
+test("сбой: клиенту общая фраза без текста ошибки и путей, полный текст — в console.error", async (t) => {
+  const log = [];
+  t.mock.method(console, "log", () => {});
+  t.mock.method(console, "warn", () => {});
+  t.mock.method(console, "error", (...args) => { log.push(args); });
+  const TEKST = "spawn /tmp/chromium ENOENT\n    at ChildProcess._handle.onexit (node:internal/child_process:285:19)";
+  const { app } = await sobrat(t, { pechatat: async () => { throw new Error(TEKST); } });
+
+  const upal = await otpravit(app, telo());
+  assert.equal(upal.statusCode, 502);
+  assert.match(upal.json().details, /Не удалось напечатать PDF/);
+  assert.doesNotMatch(upal.payload, /tmp\/chromium|ENOENT|child_process/);
+  assert.ok(log.some((args) => args.some((a) => a instanceof Error && a.message === TEKST)), "полного текста ошибки нет в console.error");
+
+  const ploho = await otpravit(app, telo({ items: [null] }));
+  assert.equal(ploho.statusCode, 400);
+  assert.match(ploho.json().details, /Смета не собралась/);
+  assert.doesNotMatch(ploho.payload, /Cannot read|TypeError|properties/);
+  assert.ok(log.some((args) => args.some((a) => a instanceof TypeError)), "полного текста ошибки сборки нет в console.error");
+});
+
+test("день печати: printDay не прислан — одно значение по Москве и в смете, и в имени файла (22:30 UTC 17.10 — уже 18.10)", async (t) => {
+  tishina(t);
+  t.mock.timers.enable({ apis: ["Date"], now: Date.parse("2026-10-17T22:30:00Z") });
+  const { app, vyzovy } = await sobrat(t);
+  const res = await otpravit(app, telo({ printDay: undefined, clientData: { clientName: "Без номера" } }));
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.headers["content-disposition"], `attachment; filename="smeta-2026-10-18.pdf"; filename*=UTF-8''smeta-2026-10-18.pdf`);
+  assert.match(vyzovy[0], /Дата: <strong>18\.10\.2026<\/strong>/);
+});
+
+test("тело больше 1 МБ — 413, пропуск и печать не зовут; чуть меньше — проходит", async (t) => {
+  tishina(t);
+  // Как у сервера (server.js): общий предел 55 МБ; 1 МБ для этого маршрута задаёт сам маршрут
+  const app = Fastify({ bodyLimit: 55 * 1024 * 1024 });
+  const propuski = [];
+  const vyzovy = [];
+  registerPdfSmetRoute(app, {
+    propusk: async (request) => { propuski.push(request.url); return { id: "polzovatel" }; },
+    pechatat: async (html) => { vyzovy.push(html); return PDF; },
+  });
+  t.after(() => app.close());
+  const otpravit1 = (payload) => app.inject({ method: "POST", url: "/api/pdf/smeta", headers: { authorization: TOKEN }, payload });
+
+  const bolshoe = await otpravit1(telo({ zametka: "x".repeat(1024 * 1024) }));
+  assert.equal(bolshoe.statusCode, 413);
+  assert.equal(propuski.length, 0);
+  assert.equal(vyzovy.length, 0);
+
+  const pochti = await otpravit1(telo({ zametka: "x".repeat(1024 * 1024 - 2048) }));
+  assert.equal(pochti.statusCode, 200);
+  assert.equal(propuski.length, 1);
+  assert.equal(vyzovy.length, 1);
+});
+
+// --- клиент ушёл: настоящий http-сервер Fastify (порт 0), настоящая очередь печатника, подставные Chrome и печать ---
+
 const tik = () => new Promise((resolve) => setImmediate(resolve));
 const spat = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-test("очередь: печатает один, пять ждут по порядку, седьмой получает отказ; Chrome закрыт после каждой печати", async () => {
-  const s = podmenaChrome();
-  const pechatat = sozdatPechatnika({ zapustit: s.zapustit, pechatat: s.pechatat, maxZhdut: 5, srok: 5000 });
-  const zaprosy = [0, 1, 2, 3, 4, 5, 6].map((n) => pechatat(String(n)).then((pdf) => pdf.toString(), (e) => e));
-  await tik();
-  await tik();
-  // Седьмой (номер 6): одна печать идёт, пять ждут — места нет
-  assert.ok((await zaprosy[6]) instanceof PechatZanyata);
-  assert.equal((await zaprosy[6]).code, "PECHAT_ZANYATA");
-  assert.equal(s.aktivno, 1);
-  for (let i = 0; i < 6; i++) {
-    while (s.zhdut.length === 0) await tik();
-    s.zhdut.shift()();
-    await tik();
+async function dozhdatsya(uslovie, chto, ms = 3000) {
+  const konec = Date.now() + ms;
+  while (!uslovie()) {
+    if (Date.now() > konec) assert.fail(`не дождались: ${chto}`);
+    await spat(5);
   }
-  assert.deepEqual(await Promise.all(zaprosy.slice(0, 6)), ["0", "1", "2", "3", "4", "5"]);
-  assert.deepEqual(s.poryadok, ["0", "1", "2", "3", "4", "5"]);
-  assert.equal(s.maxAktivno, 1);
-  assert.equal(s.zapuskov, 6);
-  assert.equal(s.zakryto, 6);
-  // Очередь свободна: следующая печать идёт сразу
-  const eshche = pechatat("7");
-  while (s.zhdut.length === 0) await tik();
-  s.zhdut.shift()();
-  assert.equal((await eshche).toString(), "7");
-});
-
-test("очередь: печать не уложилась в срок — ошибка словами, Chrome закрыт, очередь свободна", async () => {
-  const s = podmenaChrome();
-  const pechatat = sozdatPechatnika({ zapustit: s.zapustit, pechatat: s.pechatat, srok: 60 });
-  await assert.rejects(pechatat("висит"), /печать не уложилась в 0\.06 с/);
-  assert.equal(s.zakryto, 1);
-  const sleduyushchaya = pechatat("следом");
-  while (s.zhdut.length < 2) await tik();
-  s.zhdut.pop()();
-  assert.equal((await sleduyushchaya).toString(), "следом");
-  s.zhdut.shift()();
-});
-
-test("очередь: Chrome запустился позже срока — его всё равно закрывают", async () => {
-  const s = podmenaChrome();
-  const pozdno = async () => { await spat(150); return s.zapustit(); };
-  const pechatat = sozdatPechatnika({ zapustit: pozdno, pechatat: s.pechatat, srok: 40 });
-  await assert.rejects(pechatat("поздно"), /печать не уложилась/);
-  await spat(250);
-  assert.equal(s.zapuskov, 1);
-  assert.equal(s.zakryto, 1);
-  assert.equal(s.poryadok.length, 0);
-});
-
-test("очередь: печать упала — Chrome закрыт, ошибка дошла, следующая печать идёт", async () => {
-  const s = podmenaChrome();
-  let vyzov = 0;
-  const pechatat = sozdatPechatnika({
-    zapustit: s.zapustit,
-    pechatat: async (browser, html) => { if (++vyzov === 1) throw new Error("страница упала"); return Buffer.from(html); },
-    srok: 5000,
-  });
-  await assert.rejects(pechatat("a"), /страница упала/);
-  assert.equal(s.zakryto, 1);
-  assert.equal((await pechatat("b")).toString(), "b");
-  assert.equal(s.zakryto, 2);
-});
-
-// --- защита страницы сметы (pechat.js, дыра 5): JS выключен, запросы только к своим адресам ---
-
-test("razreshenAdres: data:, шрифты Google и публичный Storage нашего Supabase — можно, остальное — нельзя", () => {
-  const mozhno = [
-    "data:image/png;base64,AAAA",
-    "https://fonts.googleapis.com/css2?family=Montserrat:wght@400;700&display=block",
-    "https://fonts.gstatic.com/s/montserrat/v26/x.woff2",
-    `${SUPABASE_URL}/storage/v1/object/public/estimate_products/MAIN-pics/stamp.webp`,
-  ];
-  const nelzya = [
-    "http://127.0.0.1:9/x.png",
-    "http://169.254.169.254/latest/meta-data/",
-    "https://evil.example/x.png",
-    "file:///etc/passwd",
-    "ftp://fonts.googleapis.com/x",
-    "http://fonts.googleapis.com/css2",
-    "https://fonts.googleapis.com.evil.example/css2",
-    "https://fonts.googleapis.com@evil.example/css2",
-    `${SUPABASE_URL}/rest/v1/estimates`,
-    `${SUPABASE_URL}/storage/v1/object/sign/x?token=1`,
-    `${SUPABASE_URL}.evil.example/storage/v1/object/public/x.png`,
-    "https://other-project.supabase.co/storage/v1/object/public/x.png",
-    "ne-adres",
-    "",
-  ];
-  for (const adres of mozhno) assert.equal(razreshenAdres(adres), true, adres);
-  for (const adres of nelzya) assert.equal(razreshenAdres(adres), false, adres);
-  assert.equal(razreshenAdres("https://own.supabase.co/storage/v1/object/public/a.png", "https://own.supabase.co"), true);
-  assert.equal(razreshenAdres(`${SUPABASE_URL}/storage/v1/object/public/a.png`, "https://own.supabase.co"), false);
-});
-
-// Подставная страница: пишет вызовы по порядку и отдаёт тесту обработчик запросов
-function podmenaStranicy({ pdfPadaet = false } = {}) {
-  const zhurnal = [];
-  const reshenie = [];
-  let obrabotchik = null;
-  const stranica = {
-    setJavaScriptEnabled: async (vkl) => { zhurnal.push(`js:${vkl}`); },
-    setRequestInterception: async (vkl) => { zhurnal.push(`perehvat:${vkl}`); },
-    on: (imya, f) => { if (imya === "request") obrabotchik = f; },
-    setContent: async () => { zhurnal.push("setContent"); },
-    evaluate: async () => { zhurnal.push("evaluate"); },
-    pdf: async () => { zhurnal.push("pdf"); if (pdfPadaet) throw new Error("pdf упал"); return new Uint8Array([37, 80, 68, 70]); },
-    close: async () => { zhurnal.push("close"); },
-  };
-  const zapros = (url) => obrabotchik({
-    url: () => url,
-    isInterceptResolutionHandled: () => false,
-    continue: async () => { reshenie.push(`continue ${url}`); },
-    abort: async (kod) => { reshenie.push(`abort ${kod} ${url}`); },
-  });
-  return { browser: { newPage: async () => stranica }, zhurnal, reshenie, zapros };
 }
 
-test("страница сметы: JS и перехват включаются до загрузки HTML, чужой адрес — abort, свой — continue", async (t) => {
-  tishina(t);
-  const p = podmenaStranicy();
-  const pdf = await pechatatPdf(p.browser, "<html></html>", { timeout: 1000 });
-  assert.deepEqual(pdf, Buffer.from("%PDF"));
-  assert.deepEqual(p.zhurnal.slice(0, 3), ["js:false", "perehvat:true", "setContent"]);
-  p.zapros("http://127.0.0.1:9/x.png");
-  p.zapros("https://fonts.googleapis.com/css2?family=Montserrat");
-  p.zapros(`${SUPABASE_URL}/storage/v1/object/public/estimate_products/MAIN-pics/stamp.webp`);
-  await tik();
-  assert.deepEqual(p.reshenie, [
-    "abort blockedbyclient http://127.0.0.1:9/x.png",
-    "continue https://fonts.googleapis.com/css2?family=Montserrat",
-    `continue ${SUPABASE_URL}/storage/v1/object/public/estimate_products/MAIN-pics/stamp.webp`,
-  ]);
-  assert.equal(p.zhurnal.at(-1), "close");
-});
+// POST смету по настоящему сокету; req.destroy() — клиент рвёт соединение. otvet — {status, body} или "oborvano"
+function prosba(port, payload) {
+  const tekst = JSON.stringify(payload);
+  let req;
+  const otvet = new Promise((resolve) => {
+    req = http.request({
+      host: "127.0.0.1", port, method: "POST", path: "/api/pdf/smeta", agent: false,
+      headers: { authorization: TOKEN, "content-type": "application/json", "content-length": Buffer.byteLength(tekst) },
+    }, (res) => {
+      const chasti = [];
+      res.on("data", (c) => chasti.push(c));
+      res.on("end", () => resolve({ status: res.statusCode, body: Buffer.concat(chasti) }));
+      res.on("error", () => resolve("oborvano"));
+    });
+    req.on("error", () => resolve("oborvano"));
+    req.end(tekst);
+  });
+  return { req, otvet };
+}
 
-test("страница сметы закрывается и когда печать упала", async (t) => {
-  tishina(t);
-  const p = podmenaStranicy({ pdfPadaet: true });
-  await assert.rejects(pechatatPdf(p.browser, "<html></html>", { timeout: 1000 }), /pdf упал/);
-  assert.equal(p.zhurnal.at(-1), "close");
+test("клиент ушёл, пока печать занята другим: вторую смету не печатают, Chrome не запускают, ответа нет, место свободно", async (t) => {
+  const zhurnal = [];
+  t.mock.method(console, "log", (...args) => { zhurnal.push(args.join(" ")); });
+  t.mock.method(console, "warn", () => {});
+  t.mock.method(console, "error", () => {});
+
+  // Подставной Chrome и печать: печать стоит, пока тест не отпустит её через otpustit()
+  const s = { zapuskov: 0, zakryto: 0, napechatano: [], zhdut: [] };
+  const pechatnik = sozdatPechatnika({
+    zapustit: async () => { s.zapuskov++; return { close: async () => { s.zakryto++; }, process: () => null }; },
+    pechatat: async (browser, html) => { s.napechatano.push(html); await new Promise((r) => { s.zhdut.push(r); }); return Buffer.from("%PDF-подмена"); },
+    srok: 5000,
+  });
+  const voshli = []; // html, с которыми маршрут позвал печатника (в том числе ждущие места)
+  const app = Fastify();
+  registerPdfSmetRoute(app, {
+    propusk: propuskPoZagolovku,
+    pechatat: (html, opts) => { voshli.push(html); return pechatnik(html, opts); },
+  });
+  t.after(() => app.close());
+  await app.listen({ port: 0, host: "127.0.0.1" });
+  const port = app.server.address().port;
+  const smeta = (appealId) => telo({ clientData: { appealId, clientName: `Клиент ${appealId}` } });
+
+  const pervyy = prosba(port, smeta("#1"));
+  await dozhdatsya(() => s.zhdut.length === 1, "первая печать стоит");
+  const vtoroy = prosba(port, smeta("#2"));
+  await dozhdatsya(() => voshli.length === 2, "вторая смета ждёт места");
+
+  // Клиент рвёт соединение, пока печать занята первой
+  vtoroy.req.destroy();
+  assert.equal(await vtoroy.otvet, "oborvano");
+  // Сервер заметил обрыв, когда от двух открытых соединений осталось одно (первое ждёт печать)
+  const konecOzhidaniya = Date.now() + 3000;
+  while ((await new Promise((r) => app.server.getConnections((e, n) => r(n)))) > 1) {
+    if (Date.now() > konecOzhidaniya) assert.fail("сервер не заметил обрыв соединения");
+    await spat(5);
+  }
+  await tik();
+
+  // Первая печать кончилась — место доходит до ушедшего клиента
+  s.zhdut.shift()();
+  const otvet1 = await pervyy.otvet;
+  assert.equal(otvet1.status, 200);
+  assert.equal(otvet1.body.toString(), "%PDF-подмена");
+  await dozhdatsya(() => zhurnal.some((l) => /клиент ушёл/.test(l)), "route.js увидел, что клиент ушёл");
+
+  assert.equal(s.napechatano.length, 1, "подставная печать вызвана не один раз");
+  assert.match(s.napechatano[0], /Клиент #1/);
+  assert.equal(s.zapuskov, 1, "Chrome запускали для ушедшего клиента");
+  assert.equal(s.zakryto, 1);
+
+  // Место свободно: следующая смета печатается
+  const tretiy = prosba(port, smeta("#3"));
+  await dozhdatsya(() => s.zhdut.length === 1, "третья печать стоит");
+  s.zhdut.shift()();
+  assert.equal((await tretiy.otvet).status, 200);
+  assert.equal(s.napechatano.length, 2);
+  assert.match(s.napechatano[1], /Клиент #3/);
 });

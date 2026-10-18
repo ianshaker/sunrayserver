@@ -1,11 +1,11 @@
 "use strict";
 
-// Шаблон сметы без Chrome (PLANS/SERVER/05-pdf-smet, буква Б): имя файла, рамка срока, экранирование.
+// Шаблон сметы без Chrome (PLANS/SERVER/05-pdf-smet, буква Б): имя файла, день печати по Москве, числа тела, рамка срока, экранирование.
 // Запуск: NODE_OPTIONS=--max-old-space-size=1024 node --test pdf-smet/shablon.test.js
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { buildHtml, dozapolnitPozicii, imyaFayla, SUPABASE_URL } = require("./shablon");
+const { buildHtml, dozapolnitPozicii, imyaFayla, denPechati, privestiChisla, SUPABASE_URL } = require("./shablon");
 
 const OBLOZHKA = `${SUPABASE_URL}/storage/v1/object/public/estimate_products/MAIN-pics/oblojkafull.jpg`;
 const POZICIYA = {
@@ -45,6 +45,39 @@ test("имя файла без printDay: день по Москве, а не п�
   // 22:30 UTC 16 октября — в Москве уже 01:30 17 октября
   t.mock.timers.enable({ apis: ["Date"], now: Date.parse("2026-10-16T22:30:00Z") });
   assert.equal(imyaFayla({ clientData: null }), "smeta-2026-10-17.pdf");
+});
+
+test("день печати без printDay: и в смете, и в имени файла — по Москве (22:30 UTC 17.10 — уже 18.10), а присланный день не трогаем", (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: Date.parse("2026-10-17T22:30:00Z") });
+  assert.equal(denPechati(undefined), "2026-10-18");
+  assert.equal(denPechati(""), "2026-10-18");
+  assert.equal(denPechati("2026-09-01"), "2026-09-01");
+  assert.equal(imyaFayla({ clientData: null }), "smeta-2026-10-18.pdf");
+  assert.match(smeta({ validUntil: null, printDay: null }), /Дата: <strong>18\.10\.2026<\/strong>/);
+  // Присланный CRM день остаётся как есть и в смете, и в имени
+  assert.match(smeta({ validUntil: null, printDay: "2026-10-17" }), /Дата: <strong>17\.10\.2026<\/strong>/);
+  assert.equal(imyaFayla({ clientData: null, printDay: "2026-10-17" }), "smeta-2026-10-17.pdf");
+});
+
+test("privestiChisla: строка-число — в число, неверное — null, позиция не объект не трогается, вход не меняется", () => {
+  const vhod = { items: [{ ...POZICIYA, quantity: "2", price: "10000.5", discountPercent: " 5 " }], promoDiscount: "25" };
+  const kopiya = JSON.parse(JSON.stringify(vhod));
+  const ok = privestiChisla(vhod);
+  assert.equal(ok.items[0].quantity, 2);
+  assert.equal(ok.items[0].price, 10000.5);
+  assert.equal(ok.items[0].discountPercent, 5);
+  assert.equal(ok.items[0].productLabel, POZICIYA.productLabel);
+  assert.equal(ok.promoDiscount, 25);
+  assert.deepEqual(vhod, kopiya);
+  assert.equal(privestiChisla({ items: [POZICIYA], promoDiscount: null }).promoDiscount, null);
+  assert.equal(privestiChisla({ items: [POZICIYA] }).promoDiscount, undefined);
+  assert.equal(privestiChisla({ items: [{ ...POZICIYA, discountPercent: undefined }] }).items[0].discountPercent, undefined);
+  for (const plohoe of ["<h1>", "abc", "", "  ", "0abc", NaN, Infinity, true, [], {}, null, undefined]) {
+    assert.equal(privestiChisla({ items: [{ ...POZICIYA, price: plohoe }] }), null, String(plohoe));
+  }
+  assert.equal(privestiChisla({ items: [{ ...POZICIYA, quantity: "x" }] }), null);
+  assert.equal(privestiChisla({ items: [POZICIYA], promoDiscount: "x" }), null);
+  assert.deepEqual(privestiChisla({ items: [null, "строка"] }).items, [null, "строка"]);
 });
 
 test("рамка срока: с validUntil — «до ДД.ММ.ГГГГ» и день составления, без — прежняя фраза про 14 дней", () => {

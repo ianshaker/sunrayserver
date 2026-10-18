@@ -6,8 +6,10 @@
  * До снятия старой функции (буква Е) шаблонов два: правишь вид сметы здесь — правь и в
  * sunray-crm-oasis/supabase/functions/generate-estimate-pdf/ (и наоборот).
  *
- * В server.js модуль пока не подключён.
+ * Подключён в server.js: маршрут POST /api/pdf/smeta регистрирует pdf-smet/route.js, он берёт отсюда buildHtml и имя файла.
  */
+
+const { mskDate } = require('../lib/mskTime');
 
 // ── styles.ts ────────────────────────────────────────────────────────────────
 function getStyles() {
@@ -348,18 +350,17 @@ function buildHtml(data) {
   //
   // Зеркало правил CRM — Deno-функция не видит исходников, поэтому копия. Правишь там — правь здесь:
   // днём ↔ formatDay, разницаДней ↔ daysBetween, запасной деньПечатиIso ↔ moscowDay — src/lib/moscowDate.ts
-  // (в CRM день считает date-fns-tz, здесь Intl — у Deno-функции нет этой библиотеки);
+  // (в CRM день считает date-fns-tz, здесь mskDate из lib/mskTime — у сервера своя московская дата, одна на все модули);
   // словоДней ↔ склонить — src/utils/formatters.ts (в CRM его зовёт daysWord);
   // дни от дня составления ↔ daysFromValidUntil, прежний текст про 14 дней ↔ LEGACY_PDF_VALIDITY_DAYS —
   // src/components/department/calculations/estimate/validity.ts
   // Всё, что днём() возвращает, идёт прямо в HTML, поэтому экранируем здесь (дыра 5): для настоящих дат
   // «2026-09-29» результат тот же, а подставное тело запроса не вставит в страницу разметку
   const днём = (day) => escapeHtml(day.split('-').reverse().join('.'));
-  // Запасной путь для старых вкладок CRM, которые не шлют день: считаем его по Москве сами
-  const деньПечатиIso = printDay || new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Europe/Moscow', year: 'numeric', month: '2-digit', day: '2-digit',
-  }).format(new Date());
-  const деньПечати = днём(деньПечатиIso);
+  // Запасной путь для старых вкладок CRM, которые не шлют день: считаем его по Москве сами (denPechati).
+  // деньПечатиIso — «ГГГГ-ММ-ДД», деньПечатиНаЛисте — он же для показа в смете, «ДД.ММ.ГГГГ»
+  const деньПечатиIso = denPechati(printDay);
+  const деньПечатиНаЛисте = днём(деньПечатиIso);
   const разницаДней = (a, b) => Math.round((Date.parse(`${a}T00:00:00Z`) - Date.parse(`${b}T00:00:00Z`)) / 86400000);
   const словоДней = (n) => {
     const десятки = Math.abs(n) % 100;
@@ -385,7 +386,7 @@ function buildHtml(data) {
     : `Настоящее коммерческое предложение<br>
           действительно в течение 14 дней<br>
           с момента формирования.<br>
-          <span style="margin-top:6px;display:inline-block;">Дата: <strong>${деньПечати}</strong></span>`;
+          <span style="margin-top:6px;display:inline-block;">Дата: <strong>${деньПечатиНаЛисте}</strong></span>`;
 
   // Зеркало montage.ts из CRM: к итогу прибавляется только своя сумма и только
   // больше нуля, «включён» и «бесплатно» показываются словами и итог не двигают
@@ -704,24 +705,80 @@ function dozapolnitPozicii(items) {
   });
 }
 
+/**
+ * День печати «ГГГГ-ММ-ДД»: тот, что прислала CRM; нет его (старая вкладка) — сегодня по Москве. Одно значение для даты
+ * в смете (buildHtml показывает его как «ДД.ММ.ГГГГ») и для имени файла (imyaFayla): route.js считает его один раз.
+ */
+function denPechati(printDay) {
+  return printDay || mskDate();
+}
+
 // Имя файла: «#номер.pdf», а без номера обращения «smeta-день.pdf» (index.ts:88-94).
 function imyaFayla(body) {
   const appealId = body.clientData?.appealId?.replace('#', '').trim();
   // День в имени — по Москве, как дата внутри файла; CRM сохраняет файл под своим именем,
   // но заголовок должен говорить то же самое для любого, кто зовёт службу напрямую
-  const деньПечати = body.printDay || new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Europe/Moscow', year: 'numeric', month: '2-digit', day: '2-digit',
-  }).format(new Date());
-  const filename = appealId ? `#${appealId}.pdf` : `smeta-${деньПечати}.pdf`;
+  const деньПечатиIso = denPechati(body.printDay);
+  const filename = appealId ? `#${appealId}.pdf` : `smeta-${деньПечатиIso}.pdf`;
   return filename;
+}
+
+// ── числа тела запроса ───────────────────────────────────────────────────────
+// В страницу числа идут как есть: «<h1>» в quantity попал бы туда сырой разметкой, а «abc» в price дал бы «0abc ₽» в сумме.
+// Поэтому тело проходит privestiChisla: число (конечное) или строка-число — приводим Number(), всё остальное — отказ.
+function chislo(znachenie) {
+  if (typeof znachenie === 'number') return Number.isFinite(znachenie) ? znachenie : null;
+  if (typeof znachenie === 'string' && znachenie.trim() !== '') {
+    const n = Number(znachenie);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+// Числовые поля позиции; необязательное (null/нет) оставляем как есть: dozapolnitPozicii поставит 0
+const CHISLA_POZICII = [
+  { pole: 'quantity', obyazatelno: true },
+  { pole: 'price', obyazatelno: true },
+  { pole: 'discountPercent', obyazatelno: false },
+  // Расчётные поля CRM шлёт сама; пришли — идут в страницу как есть, поэтому тоже только числами (нет — их посчитает dozapolnitPozicii)
+  { pole: 'discountedPrice', obyazatelno: false },
+  { pole: 'vatAmount', obyazatelno: false },
+  { pole: 'finalPriceWithVat', obyazatelno: false },
+  { pole: 'vatPercent', obyazatelno: false },
+];
+
+/**
+ * Приводит числа тела к числам: quantity, price, discountPercent каждой позиции и promoDiscount тела
+ * (promoDiscount может быть null/не прислан). Позицию, которая не объект, не трогает: её отвергнет dozapolnitPozicii.
+ * @param {{ items: any[], promoDiscount?: any }} body
+ * @returns {{ items: any[], promoDiscount: number|null|undefined } | null} — null, если какое-то число неверное
+ */
+function privestiChisla({ items, promoDiscount }) {
+  const privedennye = [];
+  for (const item of items) {
+    if (!item || typeof item !== 'object') { privedennye.push(item); continue; }
+    const kopiya = { ...item };
+    for (const { pole, obyazatelno } of CHISLA_POZICII) {
+      if (!obyazatelno && (item[pole] === undefined || item[pole] === null)) continue;
+      const n = chislo(item[pole]);
+      if (n === null) return null;
+      kopiya[pole] = n;
+    }
+    privedennye.push(kopiya);
+  }
+  let promo = promoDiscount;
+  if (promoDiscount !== undefined && promoDiscount !== null) {
+    promo = chislo(promoDiscount);
+    if (promo === null) return null;
+  }
+  return { items: privedennye, promoDiscount: promo };
 }
 
 module.exports = {
   SUPABASE_URL,
-  storagePublic,
-  getStyles,
   buildHtml,
-  escapeHtml,
   dozapolnitPozicii,
   imyaFayla,
+  denPechati,
+  privestiChisla,
 };
