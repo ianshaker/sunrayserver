@@ -2,17 +2,23 @@
  * HTML → PDF для смет (PLANS/SERVER/05-pdf-smet, буква А).
  *
  * Браузер приходит параметром, здесь его не запускают и не подключают: в пробе на Mac это установленный Google
- * Chrome, на сервере (буква Б) — Chrome сервера. Опции печати те же, что у Api2Pdf в старой функции
- * (generate-estimate-pdf/index.ts:52-62): A4, фон печатается, поля нулевые.
+ * Chrome, на сервере (буква Б) — Chrome сервера.
+ *
+ * Опции печати (19.10.2026, новый вид сметы — лист A5): размер листа, поля и подвал «Лист k из M» задаёт сам шаблон через
+ * @page (`size: 420pt 595pt`, поля, margin-боксы), поэтому preferCSSPageSize: true и без format — со своим format Chrome печатал
+ * бы A4 поверх @page. margin: 0 из puppeteer поля @page не перебивает (проверено печатью на Chrome 155); фон печатается.
+ * Раньше, как у Api2Pdf в старой функции (generate-estimate-pdf/index.ts:52-62), было format: 'A4'.
  *
  * Защита (буква Б, дыра 5): тело запроса подставляется в HTML, а печатает его Chrome на нашем сервере. Поэтому в странице
  * выключен JS, а запросы пускаются только к data:, шрифтам Google и публичному Storage нашего Supabase — остальное abort.
+ * Сама смета сейчас грузит только шрифт Google и логотип data: (печати компании из Storage в ней нет); Storage остался в списке на случай картинок из хранилища.
  */
 
 const { SUPABASE_URL } = require('./shablon');
 
+// Размер листа (420 × 595 pt, A5), поля и подвал берутся из @page шаблона; format здесь задавать нельзя (см. шапку файла)
 const PDF_OPTIONS = {
-  format: 'A4',
+  preferCSSPageSize: true,
   printBackground: true,
   margin: { top: 0, right: 0, bottom: 0, left: 0 },
 };
@@ -60,7 +66,7 @@ async function pechatatPdf(browser, html, { timeout = 30000, supabaseUrl = SUPAB
         Promise.resolve(request.abort('blockedbyclient')).catch(() => {});
       }
     });
-    // Ждём сеть (шрифт, обложка, печать) и шрифты: иначе смета выйдет другим шрифтом
+    // Ждём сеть (шрифт Google; логотип — data:) и шрифты: иначе смета выйдет другим шрифтом
     await page.setContent(html, { waitUntil: 'networkidle0', timeout });
     await page.evaluate(async () => { await document.fonts.ready; });
     const pdf = await page.pdf({ ...PDF_OPTIONS, timeout });

@@ -107,6 +107,37 @@ test("ответ — application/pdf и имя файла как в index.ts; в
   assert.equal(vyzovy.length, 1);
   assert.match(vyzovy[0], /Тест Тестов/);
   assert.match(vyzovy[0], /Рулонная штора MINI/);
+  // В печать уходит страница нового вида: лист A5 задаёт её @page (pechat.js берёт размер оттуда), подвал «Лист k из M» — в ней же
+  assert.match(vyzovy[0], /@page \{\s*size: 420pt 595pt;/);
+  assert.ok(vyzovy[0].includes('content: "Лист " counter(page) " из " counter(pages);'));
+});
+
+test("тело целиком доходит до страницы: группы, монтаж, срок КП, акция, НДС 5% и НДС 22%; headerImageUrl на смету не влияет", async (t) => {
+  tishina(t);
+  const { app, vyzovy } = await sobrat(t);
+  const res = await otpravit(app, telo({
+    headerImageUrl: "https://evil.example/oblozhka.png",
+    groups: [{ id: "g1", name: "Ткань" }],
+    items: [
+      { ...POZICIYA, id: "a", productLabel: "Без группы" },
+      { ...POZICIYA, id: "b", productLabel: "Вариант А", groupId: "g1", price: 8000, vatEnabled: true },
+      { ...POZICIYA, id: "c", productLabel: "Вариант Б", groupId: "g1", price: 12000, vatEnabled: true },
+    ],
+    montage: { mode: "included" },
+    validUntil: "2026-10-22",
+    promoDiscount: 15,
+    vatIncluded5: true,
+  }));
+  assert.equal(res.statusCode, 200);
+  const html = vyzovy[0];
+  assert.ok(html.includes('<span class="cd-gr">Гр.\u00a01</span>'));
+  assert.match(html, /включён в стоимость/);
+  assert.match(html, /<div class="tb-vmain">Предложение действительно 40 дней — до <b>22\.10\.2026<\/b><\/div>/);
+  assert.match(html, /в размере 15%/);
+  assert.match(html, /включают НДС 5%/);
+  assert.match(html, /НДС 22%/);
+  assert.match(html, /<span class="tb-w">от<\/span>/); // варианты группы разной цены — диапазон в итоге
+  assert.ok(!html.includes("evil.example"), "адрес из headerImageUrl попал в страницу");
 });
 
 test("без номера обращения файл «smeta-день.pdf»", async (t) => {
@@ -212,9 +243,9 @@ test("числа: строка-число приводится к числу и 
   const { app, vyzovy } = await sobrat(t);
   const res = await otpravit(app, telo({ items: [{ ...POZICIYA, quantity: "3", price: " 12500 ", discountPercent: "10" }], promoDiscount: "15" }));
   assert.equal(res.statusCode, 200);
-  assert.match(vyzovy[0], /<td class="col-qty">3<\/td>/);
-  assert.match(vyzovy[0], /<td class="col-price">12 500 ₽<\/td>/); // число с разделителем тысяч, а не строка " 12500 "
-  assert.match(vyzovy[0], /<td class="col-discount">10%<\/td>/);
+  // Строки стали числами: количество «3», цена с разделителем тысяч «12 500» (а не строка " 12500 "), скидка «−10%» чипом, акция «15%»
+  assert.ok(vyzovy[0].includes('<span class="cd-qty">3\u00a0шт.</span>'));
+  assert.ok(vyzovy[0].includes('<s class="cd-old">12\u00a0500 ₽</s><span class="cd-off">\u221210%</span>'));
   assert.match(vyzovy[0], /в размере 15%/);
 
   for (const dop of [{ promoDiscount: null }, {}, { items: [{ ...POZICIYA, discountPercent: null }] }, { items: [{ ...POZICIYA, discountPercent: 0 }] }]) {
@@ -263,7 +294,7 @@ test("день печати: printDay не прислан — одно знач�
   const res = await otpravit(app, telo({ printDay: undefined, clientData: { clientName: "Без номера" } }));
   assert.equal(res.statusCode, 200);
   assert.equal(res.headers["content-disposition"], `attachment; filename="smeta-2026-10-18.pdf"; filename*=UTF-8''smeta-2026-10-18.pdf`);
-  assert.match(vyzovy[0], /Дата: <strong>18\.10\.2026<\/strong>/);
+  assert.match(vyzovy[0], /Дата: <b>18\.10\.2026<\/b>/);
 });
 
 test("тело больше 1 МБ — 413, пропуск и печать не зовут; чуть меньше — проходит", async (t) => {

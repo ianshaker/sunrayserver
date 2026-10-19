@@ -1,347 +1,225 @@
 /**
- * Шаблон сметы для PDF — перенос Deno-функции Supabase `generate-estimate-pdf` на наш сервер
- * (PLANS/SERVER/05-pdf-smet, буква А, 17.10.2026): `template.ts`, `styles.ts`, дозаполнение позиций
- * и имя файла из `index.ts`. Разметка и стили перенесены без изменений; `Deno.env` заменён на `process.env`.
- *
- * До снятия старой функции (буква Е) шаблонов два: правишь вид сметы здесь — правь и в
- * sunray-crm-oasis/supabase/functions/generate-estimate-pdf/ (и наоборот).
+ * Шаблон сметы для PDF (PLANS/SERVER/05-pdf-smet). Буква А (17.10.2026) — перенос Deno-функции Supabase `generate-estimate-pdf`
+ * на наш сервер: расчёты, дозаполнение позиций и имя файла (index.ts), разбор чисел. Буква З (19.10.2026) — новый вид, принят
+ * Яном: лист A5, позиции карточками вместо таблицы.
  *
  * Подключён в server.js: маршрут POST /api/pdf/smeta регистрирует pdf-smet/route.js, он берёт отсюда buildHtml и имя файла.
+ * Старая Deno-функция в CRM (generate-estimate-pdf, лист A4) до буквы Е живёт со старым видом: правишь расчёты — правь и там.
+ *
+ * Вид: лист A5. Сверху плитка-«восход» (заголовок документа, № и дата, логотип), дальше клиент, карточки позиций, «Расчёт стоимости»
+ * и плашки акции и НДС 5 %; внизу срок КП обычным текстом и плитка-«закат» («Итого к оплате» и реквизиты компании).
+ * Шрифт Montserrat — Google Fonts. Логотип — PNG с прозрачностью data:-адресом (logo-data.js: SVG-логотип на растре PDF теряет градиенты).
+ * Фото-обложки и печати компании нет: headerImageUrl шаблон не читает (тело запроса может его прислать, как и прежде, — на смету не влияет).
+ *
+ * Лист и печать:
+ *   - A5: `@page { size: 420pt 595pt }` — A5 в точках, как страница PDF у Chrome (при «148mm 210mm» страница PDF шире области
+ *     содержимого на 0,47 pt, и плитка не дошла бы до края). pechat.js печатает с preferCSSPageSize: true и без format:
+ *     размер листа, поля и подвал берутся отсюда.
+ *   - Поля через @page: сверху 12 мм (на первом листе 0 — плитка у самого верха), снизу 16 мм, по бокам 0. Боковые 10 мм даёт отступ
+ *     .sheet: Chrome не рисует содержимое в полях @page, поэтому плитки стоят вне .sheet. В нижнем поле — margin-боксы @page:
+ *     слева «SUNRAY · КП №…» (только если есть номер обращения), справа «Лист k из M» (counter(page), counter(pages); нужен Chrome ≥ 131:
+ *     на Render — @sparticuz/chromium 153).
+ *   - Последний лист — именованная страница `final` (@page final): нижнего поля и подвала нет — «Лист k из M», «SUNRAY · КП №…» и линия
+ *     над ними там не печатаются, нижняя плитка стоит вплотную к низу листа.
+ *   - Внешних адресов страница не просит, кроме Google Fonts: pechat.js пускает data:, шрифты Google и публичный Storage Supabase.
+ *
+ * Правила листов («никогда в жизни какая-то позиция не налегала сверху или снизу», Ян 19.10.2026):
+ *   1. Каждый блок тела — обычный div класса .blk с break-inside: avoid: плитка клиента, карточка позиции, плашки акции и НДС 5 %,
+ *      «Расчёт стоимости». Позиция между листами не режется.
+ *   2. Верхняя плитка (.bleed) и плитка клиента держатся со следующим блоком (break-after: avoid): на листе не остаются одни в конце.
+ *   3. Последняя карточка, «Расчёт стоимости», плашки, срок КП и нижняя плитка — одна неразрывная связка <div class="tail"> на странице
+ *      `final` (при одной позиции карточка остаётся с шапкой). Связка высотой в поле содержимого последнего листа на первом листе
+ *      не помещается и начинается не раньше второго.
+ *   4. Визуал — три сменных модуля с точной сигнатурой: CSS_PLASHKA + plashkaHtml (верхняя плитка), CSS_CARD + cardHtml (карточка позиции),
+ *      CSS_TILE + tileHtml (срок КП и нижняя плитка). Ширину колонки (148 − 2×10 = 128 мм = 484 px) даёт .sheet.
+ *
+ * Защита: весь пользовательский текст идёт через escapeHtml; числа — только через privestiChisla (его зовёт route.js); значение в
+ * CSS-строке подвала («SUNRAY · КП №…», номер обращения из тела запроса) проходит cssString: кавычки, обратная косая, < > & и
+ * управляющие знаки превращаются в CSS-коды, поэтому ни строка, ни <style> не закрываются изнутри.
  */
 
 const { mskDate } = require('../lib/mskTime');
+const { LOGO_WHITE } = require('./logo-data'); // настоящий логотип с сайта: PNG с прозрачностью, data:-адрес (белая надпись — для тёмной плитки)
+
+// Ширина листа в CSS-пикселях (420 pt = 560 px)
+const BLEED_WIDTH_PX = 560;
+// Верхняя (.pl) и нижняя (.tb) плитки уже листа на PLATE_SIDE_MM с каждой стороны — белые «ушки», видно, как скругление доходит до самого низа / верха.
+// Скруглены только углы, не касающиеся края листа (у верхней плитки — нижние, у нижней — верхние), к краю листа (верх / низ) плитки вплотную. Тексты плиток стоят там же,
+// где поле листа (10 мм от края листа), поэтому внутренний отступ плитки = 10 мм − PLATE_SIDE_MM. Менять боковой отступ — только этой цифрой.
+const PLATE_SIDE_MM = 5; // боковой отступ плитки от края листа, мм
+const PLATE_PAD_MM = Math.max(0, 10 - PLATE_SIDE_MM); // внутренний отступ плитки до текста / логотипа, мм
+const PLATE_W_CSS = `calc(100% - ${2 * PLATE_SIDE_MM}mm)`; // ширина плитки: лист минус два отступа
+// Арт плиток (artSunrise, artSunset) рисуется 1:1 на реальную ширину плитки: лист 560 px минус два боковых отступа (5 мм = 18,9 px) = 522,2 px; viewBox равен размеру плитки, подгонки нет
+const PLATE_W_PX = +(BLEED_WIDTH_PX - 2 * PLATE_SIDE_MM * 96 / 25.4).toFixed(2);
+// Высота связки .tail = поле содержимого ПОСЛЕДНЕГО листа (страница `final`: A5 595 pt = 793,33 px; поле сверху 12 мм = 45,35 px, снизу 0 → 747,98 px; у остальных листов
+// было бы 687,5 px: нижнее поле 16 мм отдаёт подвалу) с запасом на округление, чтобы связка не уходила на следующий лист; плитка внутри связки прижата к низу этой высоты:
+// текст срока КП (.tb-note) имеет margin-top: auto, плитка стоит сразу за ним
+const TAIL_MIN_PX = 747; // 747,98 минус ≈ 1 px на округление Chrome (на Chrome 155 хватало и 747,9, но другой Chrome может округлить страницу иначе); у самого низа вылет арта на 3 px (.tb-bg, H+3) закрывает белую полоску, но по растру 400 % ≈ 0,24 pt (0,09 мм) белого всё же остаётся
 
 // ── styles.ts ────────────────────────────────────────────────────────────────
-function getStyles() {
+
+/**
+ * Строка для CSS «content: "…"» внутри <style>: номер обращения приходит из тела запроса, поэтому экранируем всё, что может
+ * закрыть строку или сам <style> (кавычки, обратная косая, < > &, управляющие знаки) — в виде «\3c » (код символа и пробел).
+ */
+function cssString(value) {
+  return String(value).replace(/[\u0000-\u001f\u007f"'\\<>&]/g, (ch) => `\\${ch.codePointAt(0).toString(16)} `);
+}
+
+// Поля @page: сверху 12 мм (на первом листе 0), снизу 16 мм, по бокам 0 — боковые 10 мм даёт .sheet (см. шапку файла: Chrome не
+// рисует в полях @page, поэтому плитка во весь лист стоит вне .sheet, а не вылетает в поля).
+// Подвал — margin-боксы: каждый 50 % ширины минус 10 мм отступа от края листа; линия сверху (border-top) стоит в 5 мм под полем
+// содержимого, текст — под линией. @page :first меняет только верхнее поле, боксы подвала остаются на первом листе.
+function pageCss(footerLeft) {
+  const footer = `
+    font-family: 'Montserrat', 'Segoe UI', Arial, sans-serif;
+    font-size: 12px; font-weight: 600; line-height: 1;
+    color: #57534e;
+    vertical-align: top;
+    margin-top: 5mm;
+    padding-top: 2.4mm;
+    border-top: 1px solid #e6dfcd;
+    width: calc(50% - 10mm);
+  `;
   return `
   @page {
-    size: A4;
-    margin: 0;
+    size: 420pt 595pt;
+    margin: 12mm 0 16mm 0;
+    @bottom-left {
+      content: "${footerLeft ? cssString(footerLeft) : ''}";
+      margin-left: 10mm;
+      text-align: left;
+      ${footer}
+    }
+    @bottom-right {
+      content: "Лист " counter(page) " из " counter(pages);
+      margin-right: 10mm;
+      text-align: right;
+      ${footer}
+      font-weight: 700;
+      color: #145c45;
+    }
+  }
+  @page :first { margin-top: 0; }
+  /* последний лист — связка .tail (page: final): нижнего поля нет (плитка идёт до самого низа листа) и подвала нет (ни «SUNRAY · КП №…», ни «Лист k из M», ни линии над ними).
+     Связка высотой в поле содержимого листа на листе 1 (там плитка) не помещается и всегда начинается с листа 2 */
+  @page final {
+    margin-bottom: 0;
+    @bottom-left { content: none; margin: 0; padding: 0; border: 0; }
+    @bottom-right { content: none; margin: 0; padding: 0; border: 0; }
+  }`;
+}
+
+function getStyles({ footerLeft = '' } = {}) {
+  return `${pageCss(footerLeft)}
+  :root {
+    --fs-m: 15.5px;
+    --r-block: 22px;
+    --hair: #ece6d8;
+    --paper: radial-gradient(ellipse 110% 170% at 100% 0%, #fbf0da 0%, #fdf8ee 36%, #ffffff 78%);
+    --disc: radial-gradient(circle at 32% 26%, #1c6b50 0%, #145c45 50%, #0f3a2c 100%);
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body {
     font-family: 'Montserrat', 'Segoe UI', Arial, sans-serif;
-    font-size: 13px;
-    color: #2d2d2d;
+    font-size: var(--fs-m);
+    line-height: 1.35;
+    color: #1c1917;
     background: #ffffff;
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
   }
 
-  /* ── Обложка — отлипшая, скруглённая, с тенью ── */
-  .header-wrap {
-    padding: 20px 24px 0;
-  }
-  .header-image {
-    width: 100%;
-    display: block;
-    border-radius: 18px;
-    box-shadow: 0 8px 32px rgba(0,0,0,0.18), 0 2px 8px rgba(0,0,0,0.10);
-  }
+  /* ── Правила листов ──
+     .bleed — контейнер верхней плитки: вне .sheet, ширина 100 % = весь лист (560 px), без боковых полей; плитка внутри уже его на PLATE_SIDE_MM с каждой стороны; на первом листе
+              поле сверху 0 (@page :first), поэтому плитка прилегает к верху листа. Содержимое плитки рисует модуль plashkaHtml.
+     .sheet — остальное тело: боковые поля 10 мм (у @page боковых полей нет).
+     .blk — любой блок тела: неразрывный, воздух под ним — margin (на границе листа Chrome его отбрасывает).
+     .keep-next — блок держится со следующим (плитка клиента не остаётся одна в конце листа).
+     .tail — последняя карточка + «Расчёт стоимости» + плашки + текст срока КП + НИЖНЯЯ ПЛИТКА одной связкой: flex-колонка высотой в поле содержимого последнего листа
+             (страница final без нижнего поля и без подвала), текст срока (.tb-note, margin-top: auto) и плитка (.tb) за ним стоят у самого низа листа; связка неразрывна и
+             начинается с верха листа. */
+  .bleed { width: 100%; margin: 0 0 12px; break-inside: avoid; page-break-inside: avoid; break-after: avoid; page-break-after: avoid; }
+  .sheet { padding: 0 10mm; }
+  .blk { break-inside: avoid; page-break-inside: avoid; margin: 0 0 8px; }
+  .blk.gap-m { margin-bottom: 12px; }
+  .blk.keep-next { break-after: avoid; page-break-after: avoid; }
+  .tail { page: final; display: flex; flex-direction: column; min-height: ${TAIL_MIN_PX}px; break-inside: avoid; page-break-inside: avoid; }
+  /* если связка всё же выше листа (оценка в buildHtml ошиблась), рвётся только между карточкой и расчётом: расчёт, плашки и плитка склеены */
+  .tail > .sheet { break-after: avoid; page-break-after: avoid; }
+  .tail .blk-totals { break-after: avoid; page-break-after: avoid; }
+  .tail .blk-promo, .tail .blk-vat5 { break-before: avoid; page-break-before: avoid; break-after: avoid; page-break-after: avoid; }
 
-  /* ── Основной контент ── */
-  .content {
-    padding: 28px 40px 44px;
-    background: #ffffff;
-  }
+  /* ── Карточка клиента ── */
+  /* «бумага» (--paper: тёплый свет из правого верхнего угла), контур 1 px --hair, радиус --r-block (22); аватар — «диск» (--disc) с белой буквой; чип «Обращение #…» — тёплая пилюля
+     без контура, не сжимается, но не шире половины карточки: длинный номер обращения (CRM кладёт туда и заметку) сокращается многоточием. Подписи ТЕЛЕФОН/ГОРОД/АДРЕС — изумрудным #145c45 (на кремовом #fbf0da ≈ 6,9:1). Вес не выше 700. */
+  .client { display: flex; align-items: flex-start; gap: 10px; padding: 10px 16px 11px; background: var(--paper); border: 1px solid var(--hair); border-radius: var(--r-block); }
+  .cl-ava { flex: none; width: 36px; height: 36px; margin-top: 1px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--disc); font-size: 16px; font-weight: 700; line-height: 1; color: #ffffff; }
+  .cl-body { flex: 1 1 auto; min-width: 0; }
+  .cl-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+  .cl-name { min-width: 0; font-size: 17px; font-weight: 700; color: #0f3a2c; line-height: 1.25; overflow-wrap: anywhere; }
+  .cl-id { flex: none; max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: -1px; padding: 3px 10px 4px; background: #efe8d6; border-radius: 999px; font-size: 12.5px; font-weight: 700; line-height: 1.2; color: #0f3a2c; }
+  .cl-det { display: flex; flex-wrap: wrap; gap: 2px 20px; margin-top: 4px; font-size: var(--fs-m); color: #1c1917; overflow-wrap: anywhere; }
+  .cl-det i { font-style: normal; font-size: 12px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase; color: #145c45; margin-right: 6px; white-space: nowrap; }
 
-  /* ── Заголовок документа ── */
-  .title-block {
-    text-align: center;
-    margin-bottom: 24px;
-    padding-top: 4px;
-  }
-  .title-main {
-    font-size: 18px;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: #1a1a1a;
-    white-space: nowrap;
-  }
+  /* ── Плашки: акция и НДС 5% ── */
+  /* радиус --r-block (22), контур 1 px тоном плашки, градиент 120° с непрозрачными остановками; значок — белый на цветном «диске» (оранжевый / изумрудный), как аватар клиента.
+     Контраст текста: #7a3608 на #ffe8cf ≈ 7,5:1, #0f3a2c на #dff0e7 ≈ 11:1 */
+  .promo-banner, .vat-included-banner { display: flex; align-items: center; gap: 12px; padding: 8px 16px 8px 10px; border: 1px solid; border-radius: var(--r-block); font-size: 15px; font-weight: 600; line-height: 1.35; }
+  .promo-banner { background: linear-gradient(120deg, #fff7ec 0%, #ffe8cf 100%); border-color: #f6dcc0; color: #7a3608; }
+  .vat-included-banner { background: linear-gradient(120deg, #f5faf7 0%, #dff0e7 100%); border-color: #d6e9de; color: #0f3a2c; }
+  .bn-ico { flex: none; width: 30px; height: 30px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: radial-gradient(circle at 32% 26%, #ee9a52 0%, #cf6a22 56%, #a94e14 100%); }
+  .vat-included-banner .bn-ico { background: var(--disc); }
+  .bn-ico svg { display: block; width: 17px; height: 17px; }
+  .bn-txt { flex: 1 1 auto; min-width: 0; }
 
-  /* ── Клиентская плитка (в левой колонке итогов) ── */
-  .client-card {
-    margin-top: 10px;
-    background: #fff;
-    border-radius: 12px;
-    overflow: hidden;
-    border: 1.5px solid #d8e8e2;
-  }
-  .client-card-left {
-    padding: 10px 14px;
-    background: #fff;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    border-bottom: 1px solid #f0ece4;
-  }
-  .client-name {
-    font-size: 12px;
-    font-weight: 700;
-    color: #1e5a46;
-    line-height: 1.3;
-  }
-  .client-appeal-id {
-    font-size: 10px;
-    font-weight: 700;
-    color: #e07b30;
-    letter-spacing: 0.04em;
-  }
-  .client-card-right {
-    padding: 10px 14px;
-    background: #fff;
-  }
-  .client-detail {
-    display: flex;
-    align-items: baseline;
-    gap: 6px;
-    font-size: 10.5px;
-    padding: 2px 0;
-  }
-  .client-detail-label {
-    font-weight: 700;
-    color: #1e5a46;
-    min-width: 48px;
-    font-size: 9px;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    flex-shrink: 0;
-  }
-  .client-detail-value {
-    color: #2d2d2d;
-  }
-
-  /* ── Таблица ── */
-  .table-wrapper {
-    border-radius: 16px;
-    overflow: hidden;
-    box-shadow: 0 6px 28px rgba(0,0,0,0.08), 0 1px 4px rgba(0,0,0,0.05);
-    margin-bottom: 0;
-    background: #fff;
-  }
-
-  table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 11px;
-    background: #fff;
-  }
-
-  thead { display: table-header-group; }
-  thead tr {
-    background: linear-gradient(135deg, #1a4a38 0%, #1e5a46 60%, #2a7a5e 100%);
-  }
-  thead th {
-    color: #fff;
-    font-weight: 600;
-    font-size: 9.5px;
-    padding: 13px 10px;
-    text-align: left;
-    border: none;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    white-space: nowrap;
-  }
-  thead th:first-child { border-radius: 16px 0 0 0; }
-  thead th:last-child  { border-radius: 0 16px 0 0; }
-
-  tbody tr { page-break-inside: avoid; }
-  tbody tr:last-child td { border-bottom: none; }
-
-  tbody td {
-    padding: 11px 10px;
-    border-bottom: 1px solid #edf2f0;
-    vertical-align: middle;
-    color: #2d2d2d;
-  }
-
-  .col-num  { text-align: center; width: 32px; font-weight: 500; color: #2d2d2d; }
-  .col-product { width: 24%; font-weight: 500; }
-  .col-material { width: auto; }
-  .col-qty  { text-align: center; width: 36px; white-space: nowrap; }
-  .col-price { text-align: right; width: 72px; white-space: nowrap; }
-  .col-discount { text-align: center; width: 52px; white-space: nowrap; }
-  tbody .col-discount { color: #e07b30; font-weight: 600; }
-  .col-after-discount { text-align: right; width: 60px; white-space: nowrap; }
-  .col-vat  { text-align: center; width: 70px; white-space: nowrap; }
-  tbody .col-vat { color: #1e5a46; font-weight: 600; font-size: 10px; }
-  .col-vat .vat-amount { font-weight: 400; font-size: 9px; color: #4aaa80; display: block; }
-  .col-final { text-align: right; width: 90px; font-weight: 700; white-space: nowrap; color: #1a4a38; }
-
-  /* все заголовки белые — перебиваем цвета колонок для thead */
-  thead th { color: #fff !important; }
-
-  .f-value-range { font-size: 11px; color: #6d28d9; font-weight: 700; }
-
-  /* ── Промо-баннер ── */
-  .promo-banner {
-    margin: 14px 0 0;
-    padding: 10px 18px;
-    background: linear-gradient(90deg, #fff7ed 0%, #fef3c7 100%);
-    border-left: 4px solid #f59e0b;
-    border-radius: 8px;
-    font-size: 11.5px;
-    font-weight: 600;
-    color: #92400e;
-    letter-spacing: 0.01em;
-  }
-
-  .vat-included-banner {
-    margin: 10px 0 0;
-    padding: 10px 18px;
-    background: linear-gradient(90deg, #eff6ff 0%, #e0f2fe 100%);
-    border-left: 4px solid #0ea5e9;
-    border-radius: 8px;
-    font-size: 11.5px;
-    font-weight: 600;
-    color: #0c4a6e;
-    letter-spacing: 0.01em;
-  }
-
-  /* ── Блок итогов — двухколоночный ── */
-  .totals-section {
-    margin-top: 20px;
-    display: flex;
-    gap: 16px;
-    align-items: flex-start;
-    page-break-inside: avoid;
-    break-inside: avoid;
-  }
-  .totals-left {
-    flex: 1;
-    min-width: 0;
-  }
-  .totals-note {
-    font-size: 10px;
-    color: #aaa;
-    line-height: 1.7;
-    padding: 14px 16px;
-    background: #fff;
-    border-radius: 12px;
-    border: 1px dashed #ddd;
-  }
-  .validity-main {
-    font-size: 11px;
-    color: #777;
-    line-height: 1.5;
-  }
-  .validity-main b {
-    font-size: 13px;
-    font-weight: 700;
-    color: #1a4a38;
-    white-space: nowrap;
-  }
-  .validity-sub {
-    margin-top: 8px;
-    padding-top: 7px;
-    border-top: 1px solid #f0f0f0;
-    font-size: 9px;
-    color: #bbb;
-  }
-
-  .totals-right {
-    flex: 0 0 280px;
-    background: #fff;
-    border-radius: 16px;
-    overflow: hidden;
-    border: 1.5px solid #d8e8e2;
-  }
-  .totals-header {
-    background: linear-gradient(135deg, #1a4a38 0%, #1e5a46 100%);
-    padding: 10px 18px;
-  }
-  .totals-header-text {
-    font-size: 9.5px;
-    font-weight: 600;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    color: rgba(255,255,255,0.85);
-  }
-  .totals-body {
-    padding: 12px 18px;
-  }
-  .totals-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 5px 0;
-    font-size: 11.5px;
-    color: #555;
-    border-bottom: 1px solid #f0ece4;
-  }
-  .totals-row:last-of-type { border-bottom: none; }
+  /* ── Расчёт стоимости ── */
+  /* блок — та же «бумага» (вертикальный тёплый градиент, контур 1 px --hair, радиус 22); шапка — градиент изумруд → слива (как верх плиток) с сдержанным отблеском справа (TH_ART, 6 колец) и жалюзи;
+     заголовок обычным регистром 15 / 600; строки с воздухом (4 px) и тонким разделителем 1 px #eee8d9; чип «включён в стоимость» — мягкий мятный градиент без контура. Строки скидки, НДС и монтажа — ниже. */
+  .totals-right { background: linear-gradient(180deg, #ffffff 0%, #faf6ec 100%); border: 1px solid var(--hair); border-radius: var(--r-block); overflow: hidden; }
+  .totals-header { position: relative; display: flex; align-items: center; padding: 9px 16px; background: linear-gradient(98deg, #0e3a30 0%, #0e3a30 22%, #2b1b3e 92%); }
+  .th-art { position: absolute; left: 0; top: 0; width: 100%; height: 100%; display: block; }
+  .totals-header-text { position: relative; font-size: 15px; font-weight: 600; line-height: 1.2; color: #f3ede2; }
+  .totals-body { padding: 3px 16px 8px; }
+  .totals-row { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 4px 0; font-size: 15px; line-height: 1.3; color: #625d56; border-bottom: 1px solid #eee8d9; }
+  .totals-row:last-child { border-bottom: 0; }
   .totals-row .t-label { font-weight: 400; }
-  .totals-row .t-value { font-weight: 600; color: #2d2d2d; }
-  .totals-row.discount-row .t-label,
-  .totals-row.discount-row .t-value { color: #e07b30; }
-  .totals-row.vat-row .t-label,
-  .totals-row.vat-row .t-value { color: #1e5a46; }
-  .totals-row.montage-row .t-label,
-  .totals-row.montage-row .t-value { color: #1e5a46; }
-  .totals-divider {
-    height: 1.5px;
-    background: linear-gradient(90deg, transparent, #1e5a46, transparent);
-    margin: 8px 0;
-  }
-  .totals-final {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 10px 0 4px;
-  }
-  .totals-final .f-label {
-    font-size: 12px;
-    font-weight: 600;
-    color: #1a4a38;
-    letter-spacing: 0.02em;
-  }
-  .totals-final .f-value {
-    font-size: 18px;
-    font-weight: 700;
-    color: #1a4a38;
-    letter-spacing: -0.01em;
-  }
+  .totals-row .t-value { font-weight: 700; color: #0f3a2c; text-align: right; }
+  .t-chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 11px 2px 8px; background: linear-gradient(135deg, #f1f8f4 0%, #dcefe5 100%); border-radius: 999px; font-size: 13.5px; font-weight: 600; line-height: 1.3; color: #145c45; white-space: nowrap; }
+  .t-chip svg { display: block; width: 13px; height: 13px; flex: none; }
+  .totals-row.discount-row .t-label, .totals-row.discount-row .t-value { color: #a34a0b; }
+  .totals-row.vat-row .t-label, .totals-row.vat-row .t-value,
+  .totals-row.montage-row .t-label, .totals-row.montage-row .t-value { color: #145c45; }
+  /* строки «Итого к оплате» в расчёте нет: итог стоит в нижней плитке (.tb-strip), см. CSS_TILE */
 
-  /* ── Компания ── */
-  .company-section {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-top: 24px;
-    padding: 18px 22px;
-    background: #fff;
-    border-radius: 14px;
-    border: 1.5px solid #e8e8e8;
-    page-break-inside: avoid;
-    break-inside: avoid;
-  }
-  .company-info {
-    font-size: 10px;
-    line-height: 1.9;
-    color: #3a3a3a;
-  }
-  .company-info a {
-    color: #1e5a46;
-    text-decoration: none;
-  }
-  .company-stamp img {
-    width: 130px;
-    height: auto;
-    display: block;
-  }
+  /* ── Сменные модули визуала ── */
+  ${CSS_PLASHKA}
+  ${CSS_CARD}
+  ${CSS_TILE}
 `;
 }
 
 // ── template.ts ──────────────────────────────────────────────────────────────
-// Хвостовой «/» отрезаем: на Render адрес могут записать с ним, и в пути обложки и печати вышло бы «//» (дыра 11).
+// Хвостовой «/» отрезаем: на Render адрес могут записать с ним, и в путях файлов хранилища вышло бы «//» (дыра 11).
 // «||», а не «??»: пустая переменная тоже даёт запасной адрес (как lib/supabaseClient.js).
+// В самой смете картинок из хранилища нет; адрес нужен pechat.js: белый список адресов страницы пускает публичный Storage этого проекта.
 const SUPABASE_URL = (process.env.SUPABASE_URL || 'https://xyzkneqhggpxstxqbqhs.supabase.co').replace(/\/+$/, '');
-const storagePublic = (path) => `${SUPABASE_URL}/storage/v1/object/public/${path}`;
+
+// Значки плашек (процент, чек) и галочка чипа — inline-SVG, обводка со скруглёнными концами, печатаются вектором
+const svgIco = (color, inner) => `<svg viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${inner}</svg>`;
+const ICO_PERCENT = svgIco('#ffffff', '<path d="M18.5 5.5l-13 13"/><circle cx="7.5" cy="7.5" r="2.5"/><circle cx="16.5" cy="16.5" r="2.5"/>');
+const ICO_RECEIPT = svgIco('#ffffff', '<path d="M6 3.5h12v17l-3-2-3 2-3-2-3 2z"/><path d="M9.5 8.5h5M9.5 12h5"/>');
+const ICO_CHECK = '<svg viewBox="0 0 24 24" fill="none" stroke="#145c45" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
+// Отблеск в шапке «Расчёта стоимости» — 6 колец, каждое разбито на 8 (48 кругов с постоянной прозрачностью α/8, как AR_HALO у арта плиток, только мельче: на растре 400 % у 6 колец были видны ступеньки); viewBox 482 × 36 = реальный размер шапки, preserveAspectRatio none; два ряда жалюзи
+const TH_GLOW = [[84, .03], [70, .035], [57, .04], [45, .045], [34, .05], [24, .055]]
+  .flatMap(([r, a], i, all) => { const up = i ? all[i - 1][0] : r + 14; return Array.from({ length: 8 }, (_, j) => [r + (up - r) * (7 - j) / 8, a / 8]); })
+  .map(([r, a]) => `<circle cx="440" cy="42" r="${r.toFixed(1)}" fill-opacity="${a.toFixed(4)}"/>`).join('');
+const TH_ART = `<svg class="th-art" viewBox="0 0 482 36" preserveAspectRatio="none" aria-hidden="true" focusable="false"><g fill="#ffd9a8">${TH_GLOW}</g><g fill="none" stroke="#ffe8d8" stroke-width="1" stroke-linecap="round"><path stroke-opacity=".26" d="M300 8h46M316 16h40M334 24h34M350 31h28"/><path stroke-opacity=".15" d="M354 8h22M364 16h18M376 24h14M386 31h10"/></g></svg>`;
 
 function buildHtml(data) {
+  // headerImageUrl шаблон не читает: плитка рисуется кодом, фото-обложки нет (решение Яна 19.10.2026)
   const {
-    clientData, items, headerImageUrl, promoDiscount = null, vatIncluded5 = false,
+    clientData, items, promoDiscount = null, vatIncluded5 = false,
     groups = [], montage = null, validUntil = null, createdDay = null, printDay = null,
   } = data;
 
@@ -380,30 +258,31 @@ function buildHtml(data) {
   const деньСоставления = createdDay || деньПечатиIso;
   const срокДней = validUntil ? разницаДней(validUntil, деньСоставления) : 0;
   const сколькоДействует = срокДней >= 1 ? `${срокДней} ${словоДней(срокДней)}` : '';
-  const validityNote = validUntil
-    ? `<div class="validity-main">Предложение действительно${сколькоДействует ? ` ${сколькоДействует}` : ''}<br><b>до ${днём(validUntil)}</b></div>
-          <div class="validity-sub">Смета составлена ${днём(деньСоставления)}</div>`
-    : `Настоящее коммерческое предложение<br>
-          действительно в течение 14 дней<br>
-          с момента формирования.<br>
-          <span style="margin-top:6px;display:inline-block;">Дата: <strong>${деньПечатиНаЛисте}</strong></span>`;
+  // Срок КП — на белом поле листа сразу НАД нижней плиткой (.tb-note, не в ней): один ЛЕВЫЙ блок без правой колонки — линия 1 px →
+  // метка «СРОК ПРЕДЛОЖЕНИЯ» → основная строка (13 px, дата полужирная) → мелкая строка (только в виде «до»):
+  //   вид со сроком «до»: «Предложение действительно 14 дней — до 26.10.2026» и под ней мелко «Смета составлена 12.10.2026»
+  //     (число дней не посчитать — меньше суток — «Предложение действительно до 26.10.2026», без числа);
+  //   вид без срока: «Настоящее коммерческое предложение действительно в течение 14 дней с момента формирования. Дата: 19.10.2026» в одну-две строки, мелкой строки нет
+  const validityMain = validUntil
+    ? `Предложение действительно${сколькоДействует ? ` ${сколькоДействует} —` : ''} до <b>${днём(validUntil)}</b>`
+    : `Настоящее коммерческое предложение действительно в течение 14 дней с момента формирования. Дата: <b>${деньПечатиНаЛисте}</b>`;
+  const validitySub = validUntil ? `Смета составлена ${днём(деньСоставления)}` : '';
+  const validityNote = `<div class="tb-vlab">Срок предложения</div><div class="tb-vmain">${validityMain}</div>${validitySub ? `<div class="tb-vsub">${validitySub}</div>` : ''}`;
 
   // Зеркало montage.ts из CRM: к итогу прибавляется только своя сумма и только
   // больше нуля, «включён» и «бесплатно» показываются словами и итог не двигают
   const montageAmount = montage && montage.mode === 'sum' && Number.isFinite(Number(montage.amount))
     ? Math.max(0, Math.round(Number(montage.amount)))
     : 0;
+  // «включён в стоимость» и «бесплатно» — статус, а не сумма: чип с галочкой (мятный фон, изумрудный текст); сумма — числом, как раньше
   const montageLine = !montage || montage.mode === 'none'
     ? null
     : montage.mode === 'included'
-      ? 'включён в стоимость'
+      ? `<span class="t-chip">${ICO_CHECK}включён в стоимость</span>`
       : montage.mode === 'free'
-        ? 'бесплатно'
+        ? `<span class="t-chip">${ICO_CHECK}бесплатно</span>`
         : `${montageAmount.toLocaleString('ru-RU')} ₽`;
-  const defaultHeaderUrl = storagePublic('estimate_products/MAIN-pics/oblojkafull.jpg');
-  const imgUrl = headerImageUrl || defaultHeaderUrl;
 
-  const totalQty = items.reduce((sum, item) => sum + item.quantity, 0);
   const totalBasePrice = items.reduce((sum, item) => sum + item.price, 0);
   const totalAfterDiscount = items.reduce((sum, item) => sum + item.discountedPrice, 0);
   const totalDiscountAmount = totalBasePrice - totalAfterDiscount;
@@ -484,80 +363,78 @@ function buildHtml(data) {
     ? `от ${displayQtyMin} до ${displayQtyMax}`
     : String(displayQtyMin);
 
-  // Цвета групп для PDF (фон строки и цвет метки)
+  // Цвета групп для PDF (фон карточки, цвет номера-кружка и точки «Гр. N»). Не цвета CRM (синий / фиолетовый / розовый), а
+  // приглушённая «ювелирная» палитра в тон листа, все заливки непрозрачные: тил, слива, янтарь, роза, шалфей
   const GROUP_COLORS_PDF = [
-    { bg: '#eff6ff', label: '#1d4ed8' },  // синий
-    { bg: '#f5f3ff', label: '#6d28d9' },  // фиолетовый
-    { bg: '#fff7ed', label: '#c2410c' },  // оранжевый
-    { bg: '#fdf2f8', label: '#9d174d' },  // розовый
-    { bg: '#f0fdf4', label: '#166534' },  // зелёный
+    { bg: '#f0faf8', label: '#0f766e' },  // тил
+    { bg: '#f9f1f6', label: '#7a3b69' },  // слива
+    { bg: '#fff8ea', label: '#a45f0a' },  // янтарь
+    { bg: '#fdf1f3', label: '#b04458' },  // роза
+    { bg: '#f4f9ec', label: '#4f7a28' },  // шалфей
   ];
 
-  // Строим строки таблицы — цветной фон и метка группы
-  const tableRows = items.map((item, idx) => {
+  // Число и сумма: тысячи делит неразрывный пробел (toLocaleString), перед «₽» — обычный пробел; знак рубля от суммы не отрывается за счёт white-space: nowrap у ценника и итога
+  const num = (n) => n.toLocaleString('ru-RU');
+  const rub = (n) => `${num(n)} ₽`;
+
+  // Карточки позиций: разметку каждой даёт модуль cardHtml, обёртку (неразрывный блок) — buildHtml.
+  // Цена — за позицию целиком, на количество не умножается.
+  const cardBlocks = items.map((item, idx) => {
     const groupIdx = item.groupId ? groups.findIndex(g => g.id === item.groupId) : -1;
     const groupColor = groupIdx >= 0 ? GROUP_COLORS_PDF[groupIdx % GROUP_COLORS_PDF.length] : null;
     const groupNum = groupIdx >= 0 ? groupIdx + 1 : null;
-    const rowBg = groupColor ? `background:${groupColor.bg};` : (idx % 2 === 0 ? '' : 'background:#f9f9f7;');
-    const groupLabel = groupNum
-      ? `<span style="font-size:8px;font-weight:700;color:${groupColor.label};background:${groupColor.bg};border:1px solid ${groupColor.label}33;border-radius:4px;padding:1px 5px;margin-right:4px;white-space:nowrap;">Гр. ${groupNum}</span>`
-      : '';
-    return `
-    <tr style="${rowBg}">
-      <td class="col-num">${idx + 1}</td>
-      <td class="col-product">${groupLabel}${escapeHtml(item.productLabel)}</td>
-      <td class="col-material">${escapeHtml(item.materialName)}</td>
-      <td class="col-qty">${item.quantity}</td>
-      <td class="col-price">${item.price.toLocaleString('ru-RU')} ₽</td>
-      ${hasAnyDiscount ? `<td class="col-discount">${item.discountPercent > 0 ? item.discountPercent + '%' : '—'}</td><td class="col-after-discount">${item.discountedPrice.toLocaleString('ru-RU')} ₽</td>` : ''}
-      ${hasAnyVat ? `<td class="col-vat">${item.vatEnabled
-        ? `22%<span class="vat-amount">${(item.vatAmount ?? 0).toLocaleString('ru-RU')} ₽</span>`
-        : '—'}</td>` : ''}
-      <td class="col-final">${(item.finalPriceWithVat ?? item.discountedPrice).toLocaleString('ru-RU')} ₽</td>
-    </tr>
-  `;
-  }).join('');
+    const html = cardHtml(item, idx, { hasAnyDiscount, hasAnyVat, groupColor, groupNum, rub, num, escapeHtml });
+    return `<div class="blk blk-card">${html}</div>`;
+  });
+  // Последняя карточка уходит в связку «хвост» с расчётом (расчёт не остаётся на листе без позиции). Исключение — одна позиция:
+  // шапка + карточка + расчёт бывают выше листа, и тогда шапка важнее — карточка остаётся с шапкой, расчёт может уйти на
+  // следующий лист (Chrome сам режет связку, а не оставляет лист с одной шапкой)
+  const lastCardBlock = cardBlocks.length > 1 ? cardBlocks.pop() : '';
 
+  // буква в аватар-кружке — первая буква имени клиента (нет имени — «К»)
+  const clientInitial = (clientData && Array.from(String(clientData.clientName || '').trim())[0] || 'К').toUpperCase();
   const clientBlock = clientData ? `
-    <div class="client-card">
-      <div class="client-card-left">
-        <div class="client-name">${escapeHtml(clientData.clientName || '—')}</div>
-        ${clientData.appealId ? `<div class="client-appeal-id">${escapeHtml(clientData.appealId)}</div>` : ''}
-      </div>
-      <div class="client-card-right">
-        <div class="client-detail">
-          <span class="client-detail-label">Телефон</span>
-          <span class="client-detail-value">${escapeHtml(clientData.phone || '—')}</span>
+      <div class="blk blk-client gap-m keep-next">
+        <div class="client">
+          <span class="cl-ava" aria-hidden="true">${escapeHtml(clientInitial)}</span>
+          <div class="cl-body">
+            <div class="cl-top">
+              <div class="cl-name">${escapeHtml(clientData.clientName || '—')}</div>
+              ${clientData.appealId ? `<div class="cl-id">Обращение #${escapeHtml(String(clientData.appealId).replace(/^#/, ''))}</div>` : ''}
+            </div>
+            <div class="cl-det">
+              <span><i>Телефон</i>${escapeHtml(clientData.phone || '—')}</span>
+              <span><i>Город</i>${escapeHtml(clientData.city || '—')}</span>
+              ${clientData.address ? `<span><i>Адрес</i>${escapeHtml(clientData.address)}</span>` : ''}
+            </div>
+          </div>
         </div>
-        <div class="client-detail">
-          <span class="client-detail-label">Город</span>
-          <span class="client-detail-value">${escapeHtml(clientData.city || '—')}</span>
-        </div>
-        ${clientData.address ? `
-        <div class="client-detail">
-          <span class="client-detail-label">Адрес</span>
-          <span class="client-detail-value">${escapeHtml(clientData.address)}</span>
-        </div>` : ''}
       </div>
-    </div>
   ` : '';
 
   const promoBlock = promoDiscount ? `
-    <div class="promo-banner">
-      При заказе от 2 изделий действует скидка на весь заказ в размере ${promoDiscount}%
-    </div>
+      <div class="blk blk-promo">
+        <div class="promo-banner">
+          <span class="bn-ico">${ICO_PERCENT}</span>
+          <span class="bn-txt">При заказе от 2 изделий действует скидка на весь заказ в размере ${promoDiscount}%</span>
+        </div>
+      </div>
   ` : '';
 
   const vatIncludedBlock = vatIncluded5 ? `
-    <div class="vat-included-banner">
-      Указанные цены уже включают НДС 5% (налог включён в стоимость).
-    </div>
+      <div class="blk blk-vat5">
+        <div class="vat-included-banner">
+          <span class="bn-ico">${ICO_RECEIPT}</span>
+          <span class="bn-txt">Указанные цены уже включают НДС 5% (налог включён в стоимость).</span>
+        </div>
+      </div>
   ` : '';
 
-  const fmtRange = (min, max) =>
+  // знак скидки («−») и НДС («+») стоит у каждого числа диапазона («от −2 800 до −3 200 ₽»), а не перед «от» («−от 2 800 до 3 200 ₽»)
+  const fmtRange = (min, max, sign = '') =>
     min === max
-      ? `${min.toLocaleString('ru-RU')} ₽`
-      : `от ${min.toLocaleString('ru-RU')} до ${max.toLocaleString('ru-RU')} ₽`;
+      ? `${sign}${rub(min)}`
+      : `от ${sign}${num(min)} до ${sign}${rub(max)}`;
 
   const totalsRows = `
     <div class="totals-row">
@@ -567,26 +444,26 @@ function buildHtml(data) {
     ${hasAnyDiscount ? `
     <div class="totals-row">
       <span class="t-label">Сумма без скидки</span>
-      <span class="t-value">${hasGroups ? fmtRange(displayPriceMin, displayPriceMax) : totalBasePrice.toLocaleString('ru-RU') + ' ₽'}</span>
+      <span class="t-value">${hasGroups ? fmtRange(displayPriceMin, displayPriceMax) : rub(totalBasePrice)}</span>
     </div>
     <div class="totals-row discount-row">
       <span class="t-label">Скидка</span>
-      <span class="t-value">${hasGroups ? '−' + fmtRange(displayDiscMin, displayDiscMax) : '−' + totalDiscountAmount.toLocaleString('ru-RU') + ' ₽'}</span>
+      <span class="t-value">${hasGroups ? fmtRange(displayDiscMin, displayDiscMax, '−') : '−' + rub(totalDiscountAmount)}</span>
     </div>
     <div class="totals-row">
       <span class="t-label">После скидки</span>
-      <span class="t-value">${hasGroups ? fmtRange(displayAfterDiscMin, displayAfterDiscMax) : totalAfterDiscount.toLocaleString('ru-RU') + ' ₽'}</span>
+      <span class="t-value">${hasGroups ? fmtRange(displayAfterDiscMin, displayAfterDiscMax) : rub(totalAfterDiscount)}</span>
     </div>
     ` : `
     <div class="totals-row">
       <span class="t-label">Сумма</span>
-      <span class="t-value">${hasGroups ? fmtRange(displayPriceMin, displayPriceMax) : totalBasePrice.toLocaleString('ru-RU') + ' ₽'}</span>
+      <span class="t-value">${hasGroups ? fmtRange(displayPriceMin, displayPriceMax) : rub(totalBasePrice)}</span>
     </div>
     `}
     ${hasAnyVat ? `
     <div class="totals-row vat-row">
       <span class="t-label">НДС 22%</span>
-      <span class="t-value">${hasGroups ? '+' + fmtRange(displayVatMin, displayVatMax) : '+' + totalVatAmount.toLocaleString('ru-RU') + ' ₽'}</span>
+      <span class="t-value">${hasGroups ? fmtRange(displayVatMin, displayVatMax, '+') : '+' + rub(totalVatAmount)}</span>
     </div>
     ` : ''}
     ${montageLine ? `
@@ -597,86 +474,108 @@ function buildHtml(data) {
     ` : ''}
   `;
 
+  // «Итого к оплате» (в нижней плитке, .tb-strip): диапазон — одной строкой «от … до … ₽», числа крупно; равные варианты — одно число (а, б)
+  const finalRange = hasGroups && finalMin !== finalMax;
+  const finalSingle = hasGroups ? finalMin : totalFinalItems + montageAmount;
+  const finalValue = finalRange
+    ? `<span class="tb-w">от</span> <b>${num(finalMin)}</b> <span class="tb-w">до</span> <b>${num(finalMax)}</b> <span class="tb-w">₽</span>`
+    : `<b>${num(finalSingle)}</b> <span class="tb-w">₽</span>`;
+  // очень длинная сумма (от миллиона и больше) — числа мельче, чтобы подпись и сумма остались в одной строке
+  const finalLong = (finalRange ? num(finalMin).length + num(finalMax).length : num(finalSingle).length) > 14;
+
+  // Связка .tail — поле содержимого последнего листа, плитка внизу. В связку входят «Расчёт стоимости», плашки, срок КП и плитка, а последняя карточка — только если вся
+  // связка помещается в лист (иначе Chrome порвал бы её, а плитка осталась бы без расчёта): оценка высоты по правилам вёрстки этого файла
+  // (строка расчёта 28,5 px, плашка 66,5 px с отступом, блок срока КП над плиткой — ряд TB_NOTE_H0 + строки пояснения (TB_NOTE_SUB_LH), плитка TB_TILE_H = 204 px, карточка — по числу строк
+  // названия и материала; запас 6 px).
+  const estLines = (text, perLine) => {
+    let lines = 1, cur = 0;
+    for (const w of String(text || '').split(/\s+/).filter(Boolean)) {
+      if (cur === 0) cur = w.length;
+      else if (cur + 1 + w.length <= perLine) cur += 1 + w.length;
+      else { lines++; cur = w.length; }
+      while (cur > perLine) { lines++; cur -= perLine; }
+    }
+    return lines;
+  };
+  const estCard = (item) => {
+    const showDisc = hasAnyDiscount && item.discountPercent > 0;
+    const showVat = hasAnyVat && item.vatEnabled;
+    const left = estLines(item.productLabel, 22) * 20.1 + (item.materialName ? 2 + estLines(item.materialName, 30) * 18.9 : 0) + 6 + 21.5; // 22 и 30 знаков в строке — по замерам печати (катал. образец: 4 строки названия, 4 материала)
+    const right = (showDisc ? 19 : 0) + (!showDisc && showVat ? 19.5 : 0) + (showDisc && showVat ? 19.5 : 0) + (showVat ? 17.6 : 0) + (showDisc || showVat ? 4 : 0) + 25.3;
+    return 22 + Math.max(left, right);
+  };
+  const estRows = 1 + (hasAnyDiscount ? 3 : 1) + (hasAnyVat ? 1 : 0) + (montageLine ? 1 : 0);
+  const estTotals = 48 + 28.5 * estRows + (montageLine && montageLine.includes('t-chip') ? 2.5 : 0) + 12; // замер печати: рамка 2 + шапка 36 + подол 11 + строки по 27,5 + разделители 1 = 48 + 28,5 × строк; чип в строке монтажа +2,5; 12 — отступ .gap-m
+  const estBanners = (promoDiscount ? 66.5 : 0) + (vatIncluded5 ? 66.5 : 0); // замер печати: плашка в две строки 58,5 + 8 отступа
+  // срок КП над плиткой — один левый блок: TB_NOTE_H0 (линия, отступ, метка, отступ) + основная строка (≈ 62 знака в строке 484 px при 13 px) + мелкая (если есть) + отступ до плитки
+  const estMainLines = estLines(validityMain.replace(/<[^>]+>/g, ''), 62);
+  const estNote = TB_NOTE_H0 + estMainLines * TB_NOTE_MAIN_LH + (validitySub ? TB_NOTE_SUB_GAP + TB_NOTE_SUB_LH + TB_NOTE_GAP : TB_NOTE_GAP_MAIN);
+  const estTile = TB_TILE_H + 1 + estNote;
+  const estNeed = lastCardBlock !== '' ? estCard(items[items.length - 1]) + 8 + estTotals + estBanners + 8 + estTile : 0;
+  const lastInTail = lastCardBlock !== '' && estNeed <= TAIL_MIN_PX - 6;
+
+  const totalsBlock = `
+      <div class="blk blk-totals gap-m">
+        <div class="totals-right">
+          <div class="totals-header">${TH_ART}<div class="totals-header-text">Расчёт стоимости</div></div>
+          <div class="totals-body">
+            ${totalsRows}
+          </div>
+        </div>
+      </div>
+  `;
+
+  const appealId = clientData?.appealId ? String(clientData.appealId) : '';
+  // Левый край подвала: «SUNRAY · КП №010251» (решётку номера обращения «#» не пишем); без номера обращения — пусто
+  // не длиннее 18 знаков: левый бокс подвала — половина колонки (242 px), длинный номер перенёсся бы на вторую строку
+  const appealNum = appealId.replace(/^#/, '').trim().slice(0, 18);
+  const footerLeft = appealNum ? `SUNRAY · КП №${appealNum}` : '';
+  // Заголовок страницы (Chrome кладёт его в PDF как Title): «Коммерческое предложение № 09784»; номер — как в подвале, без номера обращения — без номера
+  const docTitle = appealNum ? `Коммерческое предложение № ${appealNum}` : 'Коммерческое предложение';
+
+  const plashka = plashkaHtml({
+    appealId,
+    createdDay: createdDay ? днём(createdDay) : '',
+    escapeHtml,
+    logoWhite: LOGO_WHITE, // PNG с прозрачностью, белая надпись — на тёмную плитку
+  });
+  const bottomTile = tileHtml({
+    finalValue,
+    finalLong,
+    validityNote,
+    validityLastMain: !validitySub, // последняя строка блока срока — основная (форма А): зазор до плитки другой, см. TB_NOTE_GAP_MAIN
+  });
+
   return `<!DOCTYPE html>
 <html lang="ru">
 <head>
 <meta charset="UTF-8">
+<title>${escapeHtml(docTitle)}</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=block" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&display=block" rel="stylesheet">
 <style>
-${getStyles()}
+${getStyles({ footerLeft })}
 </style>
 </head>
 <body>
-  <div class="header-wrap">
-    <img src="${escapeHtml(imgUrl)}" class="header-image" />
+  <div class="bleed">${plashka}</div>
+
+  <div class="sheet">
+  ${clientBlock}
+
+  ${cardBlocks.join('\n  ')}
+  ${lastInTail ? '' : lastCardBlock}
   </div>
-  <div class="content">
 
-    <div class="title-block">
-      <div class="title-main">Коммерческое предложение</div>
-    </div>
-
-    <div class="table-wrapper">
-      <table>
-        <thead>
-          <tr>
-            <th class="col-num">№</th>
-            <th class="col-product">Тип продукта</th>
-            <th class="col-material">Материал</th>
-            <th class="col-qty">К-ВО</th>
-            <th class="col-price">ЦЕНА</th>
-            ${hasAnyDiscount ? `<th class="col-discount">Скидка</th><th class="col-after-discount">% → ₽</th>` : ''}
-            ${hasAnyVat ? `<th class="col-vat">НДС</th>` : ''}
-            <th class="col-final">${hasAnyVat ? 'ИТОГО с НДС' : 'ИТОГО'}</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${tableRows}
-        </tbody>
-      </table>
-    </div>
-
+  <div class="tail">
+    <div class="sheet">
+    ${lastInTail ? lastCardBlock : ''}
+    ${totalsBlock}
     ${promoBlock}
     ${vatIncludedBlock}
-
-    <div class="totals-section">
-      <div class="totals-left">
-        <div class="totals-note">
-          ${validityNote}
-        </div>
-        ${clientBlock}
-      </div>
-      <div class="totals-right">
-        <div class="totals-header">
-          <div class="totals-header-text">Расчёт стоимости</div>
-        </div>
-        <div class="totals-body">
-          ${totalsRows}
-          <div class="totals-divider"></div>
-          <div class="totals-final">
-            <span class="f-label">Итого к оплате</span>
-            ${hasGroups
-              ? `<span class="f-value f-value-range">от ${finalMin.toLocaleString('ru-RU')} до ${finalMax.toLocaleString('ru-RU')} ₽</span>`
-              : `<span class="f-value">${(totalFinalItems + montageAmount).toLocaleString('ru-RU')} ₽</span>`}
-          </div>
-        </div>
-      </div>
     </div>
-
-    <div class="company-section">
-      <div class="company-info">
-        Индивидуальный предприниматель Журович-Миронова Дарья Васильевна<br>
-        ИНН 910502074977 · ОГРНИП 321911200058121<br>
-        Тел. +7(999) 810-77-17 · sunray-zhalyuzi@yandex.ru<br>
-        <a href="https://zhalyuzi-sunray.ru/">zhalyuzi-sunray.ru</a>
-      </div>
-      <div class="company-stamp">
-        <img src="${storagePublic('estimate_products/MAIN-pics/stamp.webp')}" />
-      </div>
-    </div>
-
+    ${bottomTile}
   </div>
 </body>
 </html>`;
@@ -689,6 +588,335 @@ function escapeHtml(str) {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Сменные модули визуала: у каждого модуля своя строка CSS и функция, возвращающая готовую HTML-строку; ширину колонки (484 px)
+// и неразрывность даёт buildHtml, модуль в свою ширину не лезет. Только непрозрачные заливки. Исключение — плитки (верхняя и нижняя):
+// они шире колонки — лист (560 px) минус боковые отступы PLATE_SIDE_MM, без теней.
+// ═════════════════════════════════════════════════════════════════════════════
+
+// ── 1. Верхняя плитка с заголовком документа ──
+// «Восход»: вся плитка — один тёмный изумруд, солнце на горизонте справа: его лучи идут в ламели сверху и растекаются тёплым сиянием по нижней (заголовочной) части.
+// Зелёный не «казённый», а глубокий, и его оживляет тёплый свет. Золото — только тонкие линии арта (горизонт, обводка кольца солнца) и цвет № КП; вертикальных чёрточек
+// у заголовка и у № нет. Слоган «Работаем с 2013 года» — просто белый текст под логотипом, без пилюли: на спокойном тёмном небе слева он читается без подложки;
+// логотип — настоящий белый (LOGO_WHITE).
+// Печать: только непрозрачное (сплошные цвета, линейные и радиальные градиенты с непрозрачными остановками, inline-SVG с clipPath), ни blur, ни теней, ни mask/filter,
+// ни repeating-градиентов.
+const PL_HA = 118; // верхняя часть: логотип, слоган, ламели и солнце
+const PL_HB = 74; // нижняя часть: заголовок, № и дата
+const PL_H = PL_HA + PL_HB; // высота плитки, px
+const PL_GROUND = '#0f3a2c'; // нижняя часть слева (тёмный изумруд)
+const PL_LOGO_W = 170; // ширина логотипа, px
+const PL_ART_X = 264; // левее этой линии (от левого края плитки) небо ровное — на нём логотип (кончается на 188 px) и слоган «Работаем с 2013 года» (кончается на 241 px, зазор 23 px); сияние, линии и кольца только правее
+
+const CSS_PLASHKA = `
+  .pl, .pl * { box-sizing: border-box; margin: 0; padding: 0; }
+  /* плитка уже листа на PLATE_SIDE_MM с каждой стороны (по центру, белые «ушки»), скруглены только нижние углы, верх вплотную к краю листа; overflow: hidden обрезает арт по ширине плитки */
+  .pl {
+    position: relative; width: ${PLATE_W_CSS}; margin: 0 ${PLATE_SIDE_MM}mm; height: ${PL_H}px;
+    border-radius: 0 0 28px 28px; overflow: hidden; background: ${PL_GROUND};
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  .pl-bg { position: absolute; left: 0; top: 0; width: 100%; height: 100%; display: block; }
+  .pl-art { position: relative; height: ${PL_HA}px; }
+  .pl-brand { position: absolute; left: ${PLATE_PAD_MM}mm; top: 0; bottom: 0; width: max-content; display: flex; flex-direction: column; justify-content: center; gap: 7px; }
+  .pl-logo { display: block; width: ${PL_LOGO_W}px; height: auto; }
+  .pl-tag {
+    display: flex; align-items: center; height: 22px;
+    font-size: 12.5px; font-weight: 800; line-height: 1; letter-spacing: 0.25em; text-transform: uppercase; color: #ffffff; white-space: nowrap;
+  }
+  .pl-tag span { margin-right: -0.25em; }
+  .pl-band { position: relative; height: ${PL_HB}px; display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 0 ${PLATE_PAD_MM}mm; }
+  /* вертикальных черт нет ни у заголовка, ни у № / даты — заголовок и правый блок разделяет только свободное место; заголовок — одна строка обычным регистром 22 px / 600,
+     левый край на поле 10 мм от края листа; № и дата справа, оба по центру зелёной зоны. Заголовок не сжимается и не переносится, а правый блок при нехватке места сокращается
+     многоточием (min-width: 0 + overflow: hidden у строк) — наползти друг на друга они не могут */
+  .pl-h { flex: none; font-size: 22px; font-weight: 600; line-height: 1.2; letter-spacing: 0.01em; color: #f6f1e6; white-space: nowrap; }
+  .pl-meta { flex: 0 1 auto; min-width: 0; align-self: center; text-align: right; white-space: nowrap; }
+  .pl-no { overflow: hidden; text-overflow: ellipsis; font-size: 15px; font-weight: 600; line-height: 1.2; letter-spacing: 0.04em; margin-right: -0.04em; color: #f6e2ae; }
+  .pl-dt { overflow: hidden; text-overflow: ellipsis; margin-top: 2px; font-size: 12px; font-weight: 500; line-height: 1.2; color: #f0dba8; }
+`;
+
+// ── Общий язык арта обеих плиток: «восход» (верх) и «закат» (низ) ──
+// Небо — плавный радиальный градиент вокруг солнца (вверху тёплый золотой / персиковый свет на холодном тиловом небе, внизу коралл / малина / слива); диск мягкий (радиальный градиент от светлой
+// сердцевины, две тонкие кромки), над ним ореол — заливные кольца с малой прозрачностью (AR_HALO), они сливаются в сияние без чёткой кромки; «жалюзи» — три рассыпанных штриха на ряд, шаг 9 px,
+// линии 1,3 px: светлые на тёмном небе и тёплые (lineD) на светлом — цвет по яркости неба в середине штриха (arLum), диск штрихи не пересекают.
+// Восход (верх): золотая линия горизонта выходит из-под диска и гаснет; под горизонтом — земля и РЯБЬ (4 ряда волнистых штрихов, симметрично оси солнца, как волны логотипа).
+// Закат (низ): встаёт из самого нижнего края блока (hor = H = TB_DUSK_H): диск срезан краем листа; ни земли, ни линии горизонта, ни ряби, ни полос под солнцем и под «Итого»;
+// небо идёт до низа плюс 3 px вылета.
+// Арт рисуется 1:1 на реальную ширину плитки PLATE_W_PX (лист 560 px минус два боковых отступа): viewBox равен размеру плитки, ничего не растягивается и не обрезается.
+// Левее x0 у обеих плиток ровный фон: на нём текст (логотип и слоган; реквизиты); сияние, штрихи и кольца начинаются правее самого длинного текста с зазором ≥ 16 px.
+// Печать: только непрозрачные градиенты; прозрачность — один fill-opacity / stroke-opacity на элемент (кольца ореола, штрихи, рябь); opacity на <g>, <svg> и в CSS нет (серых квадратов PDFKit нет);
+// clipPath — простой rect; ни blur, ни теней, ни mask/filter, ни repeating-градиентов.
+const arF = (v) => (+v).toFixed(2);
+const arSt = (a) => a.map(([o, k]) => `<stop offset="${o}" stop-color="${k}"/>`).join('');
+const arRgb = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+const arMix = (a, b, k) => { const x = arRgb(a), y = arRgb(b); return '#' + x.map((v, i) => Math.round(v + (y[i] - v) * k).toString(16).padStart(2, '0')).join(''); };
+const arLum = (h) => { const [r, g, b] = arRgb(h); return (0.299 * r + 0.587 * g + 0.114 * b) / 255; };
+// ореол: [добавка к радиусу солнца, px; fill-opacity], от внешнего кольца к внутреннему: 12 заливных кругов, ступени .013 → .032 сливаются в сияние
+const AR_HALO12 = [[62, 0.013], [54, 0.014], [47, 0.016], [40, 0.018], [34, 0.02], [28.5, 0.022], [23.5, 0.024], [19, 0.026], [15, 0.028], [11.5, 0.03], [8.2, 0.031], [5, 0.032]];
+// Каждое из 12 колец делится надвое: рядом добавлено промежуточное (по радиусу — посередине до внешнего соседа, у внешнего кольца +4 px), у обоих половина прозрачности — полная яркость сияния та же,
+// а ступенька вдвое тоньше (по растру PDF в 400 % 12 колец давали ступеньки яркости 2–3 уровня, видные полосами в тиле и в фиолете); кольца по-прежнему от внешнего к внутреннему
+const AR_HALO = AR_HALO12.flatMap(([d, a], i) => [[d + (AR_HALO12[i ? i - 1 : 0][0] - AR_HALO12[i ? i : 1][0]) / 2, a / 2], [d, a / 2]]);
+function arScene(c) {
+  // W,H — плитка; hor — линия, по которой режется солнце (восход: горизонт; закат: H, низ листа); sx,r — центр и радиус; up — на сколько радиусов центр выше hor;
+  // x0 — левее ровный фон; ry — высота сияния; ground — земля под горизонтом (только восход; нет — небо идёт до низа плитки); ripple — рябь (только восход)
+  const { W, H, hor, sx, r, up, x0, ry, id, cls } = c, f = arF, st = arSt;
+  const cy = hor - up * r, rx = sx - x0, rg = r + 22, xL = x0, gold = '#f1d58e';
+  const yb = c.ground ? hor : H + 3; // низ неба и сияния; у заката — край листа и 3 px вылета (против белой полоски при округлении Chrome)
+  const o = (x) => ((x - xL) / (W - xL)).toFixed(3), cc = (q) => `cx="${f(sx)}" cy="${f(cy)}" r="${f(q)}"`;
+  const skyAt = (t) => { let i = 1; while (i < c.sky.length - 1 && +c.sky[i][0] < t) i++; const [t0, c0] = c.sky[i - 1], [t1, c1] = c.sky[i]; return arMix(c0, c1, Math.max(0, Math.min(1, (t - t0) / (t1 - t0)))); };
+  let hd = '', hl = ''; // золотая линия горизонта (только восход): у диска золото, к краям переходит в цвет неба
+  if (c.ground) {
+    const tg = r / rx, side = (sg, tMax) => {
+      const pts = [[tg, gold], [tg + 0.12, arMix(skyAt(tg + 0.12), gold, 0.45)]];
+      if (tg + 0.3 < tMax) pts.push([tg + 0.3, skyAt(tg + 0.3)]);
+      for (const [q] of c.sky) if (+q > tg + 0.3 && +q < tMax) pts.push([+q, skyAt(+q)]);
+      pts.push([tMax, skyAt(tMax)]);
+      return pts.map(([q, col]) => [sx + sg * q * rx, col]);
+    };
+    const hz = [...side(-1, 1).reverse(), ...side(1, (W - sx) / rx)].map(([x, col]) => [o(x), col]);
+    hd = `<linearGradient id="${id}-h" gradientUnits="userSpaceOnUse" x1="${f(xL)}" y1="0" x2="${W}" y2="0">${st(hz)}</linearGradient>`;
+    hl = `<rect x="${f(xL)}" y="${f(hor - 1.4)}" width="${f(W - xL)}" height="1.4" fill="url(#${id}-h)"/>`;
+  }
+  const L = [[], [], []], D = [[], [], []]; // жалюзи: штрихи по трём «рассыпанным» группам; светлые (L) и тёплые (D) — по яркости неба в середине штриха
+  const dash = (g, x1, x2, y) => { const t = Math.min(1, Math.hypot(((x1 + x2) / 2 - sx) / rx, (y - cy) / ry)); (arLum(skyAt(t)) > 0.7 ? D : L)[g].push(`M${f(x1)} ${f(y)}H${f(x2)}`); };
+  for (let k = 0; hor - 8 - 9 * k > cy - rg + 2; k++) {
+    const y = hor - 8 - 9 * k, dy = y - cy, gh = Math.sqrt(Math.max(0, rg * rg - dy * dy)), xe = sx - gh;
+    const len = (xe - (x0 + 12)) * (1 - 0.045 * k);
+    [[0, 0.46], [0.53, 0.22], [0.84, 0.1]].forEach(([a, b], g) => dash(g, xe - len * (a + b), xe - len * a, y));
+    dash(0, sx + gh, W + 2, y);
+  }
+  const pl = (a, col, op) => a.length ? `<path d="${a.join('')}" fill="none" stroke="${col}" stroke-width="1.3" stroke-linecap="round" stroke-opacity="${op}"/>` : '';
+  const blinds = L.map((a, g) => pl(a, c.line, [0.34, 0.26, 0.18][g])).join('') + D.map((a, g) => pl(a, c.lineD, [0.34, 0.27, 0.2][g])).join('');
+  const halo = AR_HALO.map(([d, a]) => `<circle ${cc(r + d)} fill="${c.bloom}" fill-opacity="${a}"/>`).join('');
+  const edge = [[2.6, 0.12], [1.2, 0.22]].map(([d, a]) => `<circle ${cc(r + d)} fill="${c.rim}" fill-opacity="${a}"/>`).join('');
+  // рябь под горизонтом: ряд = [опуск от горизонта, полуширина в r, число полуволн (нечётное), размах, цвет, прозрачность]; симметрично оси солнца
+  const rip = (c.ripple || []).map(([dy, w, n, A, col, op], i) => {
+    const hw = w * r, h2 = 2 * hw / n, s = i % 2 ? -1 : 1;
+    return `<path d="M${f(sx - hw)} ${f(hor + dy)}q${f(h2 / 2)} ${f(-s * 2 * A)} ${f(h2)} 0${('t' + f(h2) + ' 0').repeat(n - 1)}" fill="none" stroke="${col}" stroke-width="1.15" stroke-linecap="round" stroke-opacity="${op}"/>`;
+  }).join('');
+  return `<svg class="${cls}" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true" focusable="false"><defs>` +
+    `<linearGradient id="${id}-b" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="${W}" y2="0">${st(c.base)}</linearGradient>` +
+    `<radialGradient id="${id}-s" gradientUnits="userSpaceOnUse" cx="0" cy="0" r="1" gradientTransform="translate(${f(sx)} ${f(cy)}) scale(${f(rx)} ${f(ry)})">${st(c.sky)}</radialGradient>` +
+    (c.ground ? `<radialGradient id="${id}-g" gradientUnits="userSpaceOnUse" cx="0" cy="0" r="1" gradientTransform="translate(${f(sx)} ${f(hor)}) scale(${c.gx} ${c.gy})">${st(c.ground)}</radialGradient>` : '') +
+    `<radialGradient id="${id}-d" gradientUnits="userSpaceOnUse" cx="0" cy="0" r="1" gradientTransform="translate(${f(sx)} ${f(cy - 0.75 * r)}) scale(${f(2.4 * r)} ${f(1.9 * r)})">${st(c.disc)}</radialGradient>` +
+    hd + `<clipPath id="${id}-c"><rect width="${W}" height="${f(yb)}"/></clipPath></defs>` +
+    (c.ground ? `<rect y="${f(hor)}" width="${W}" height="${f(H - hor + 3)}" fill="url(#${id}-g)"/>` : '') +
+    `<rect width="${W}" height="${f(yb)}" fill="url(#${id}-b)"/>` +
+    `<rect x="${f(x0)}" width="${f(W - x0)}" height="${f(yb)}" fill="url(#${id}-s)"/>` + hl +
+    `<g clip-path="url(#${id}-c)">${halo}${blinds}${edge}<circle ${cc(r + 15)} fill="none" stroke="#c9aa6e" stroke-width=".8" stroke-opacity=".6"/><circle ${cc(r)} fill="url(#${id}-d)"/></g>${rip}</svg>`;
+}
+// Восход: левее x0 небо ровное; земля — приглушённый зелёный; под горизонтом рябь
+function artSunrise(W, H, o = {}) {
+  const hor = o.hor ?? H * 0.6146; // 118 из 192
+  return arScene({ W, H, hor, id: 'artsr', cls: o.cls || 'pl-bg', sx: W * 0.8071, r: W * 0.1037, up: 0.2, x0: o.x0 ?? W * 0.48, ry: hor, gx: 300, gy: 56,
+    base: [[0, '#0a3337'], [1, '#0a3337']],
+    sky: [[0, '#ffe9b0'], [0.34, '#fdc283'], [0.46, '#f8b78f'], [0.58, '#f4d0a8'], [0.68, '#b7d6c4'], [0.76, '#66aea9'], [0.85, '#24787f'], [0.93, '#124a5f'], [1, '#0a3337']],
+    disc: [[0, '#fff4c8'], [0.14, '#ffeaa9'], [0.3, '#ffd986'], [0.45, '#ffc474'], [0.58, '#ffb065'], [0.7, '#ffa25c']],
+    rim: '#ffcf86', bloom: '#fff1c9', line: '#fffaf0', lineD: '#c27a4a',
+    ground: [[0, '#33704d'], [0.1, '#2b6a4a'], [0.22, '#236548'], [0.4, '#1c5f46'], [0.55, '#145c45'], [0.7, '#0f3a2c']],
+    ripple: [[3.6, 1.12, 9, 1.7, '#ffe3a3', 0.44], [7.5, 0.9, 7, 1.4, '#f9cf92', 0.34], [11.6, 0.68, 5, 1.1, '#cfd09b', 0.24], [16, 0.46, 3, 0.9, '#8fc6a4', 0.16]] });
+}
+// Закат: встаёт из самого низа блока. Низ арта = нижний край (H = TB_DUSK_H); o.hor игнорируется, земли, горизонта и ряби нет
+function artSunset(W, H, o = {}) {
+  const x0 = o.x0 ?? W * 0.5357, r = W * 0.125, up = 0.14, hor = H, cy = hor - up * r; // up 0,14 → виден верх диска ≈57 %
+  return arScene({ W, H, hor, id: 'artss', cls: o.cls || 'tb-bg', sx: W * 0.839, r, up, x0, ry: cy,
+    base: [[0, '#0e3a30'], [0.11, '#0e3a30'], [(x0 / W).toFixed(4), '#2b1b3e'], [1, '#2b1b3e']],
+    sky: [[0, '#ffd08a'], [0.4, '#ffc27c'], [0.52, '#fa9d68'], [0.64, '#ec6a76'], [0.74, '#bb4a80'], [0.84, '#7a3d82'], [0.92, '#43306f'], [0.97, '#33275f'], [1, '#2b1b3e']],
+    disc: [[0, '#ffc27a'], [0.13, '#ffb36b'], [0.3, '#fb9a64'], [0.45, '#f4805f'], [0.55, '#ec6866'], [0.65, '#e0526f'], [0.8, '#c8447a']],
+    rim: '#fb9a6e', bloom: '#ffd9a8', line: '#ffe8d8', lineD: '#b8534a' });
+}
+
+function plashkaHtml(ctx) {
+  const { appealId, createdDay, escapeHtml, logoWhite } = ctx;
+  const no = appealId ? `№ ${escapeHtml(String(appealId).replace(/^#/, ''))}` : '';
+  const dt = createdDay ? `от ${createdDay}` : '';
+  return `
+    <div class="pl">
+      ${artSunrise(PLATE_W_PX, PL_H, { hor: PL_HA, cls: 'pl-bg', x0: PL_ART_X })}
+      <div class="pl-art">
+        <div class="pl-brand">
+          ${logoWhite ? `<img class="pl-logo" src="${escapeHtml(logoWhite)}" alt="SUNRAY">` : ''}
+          <div class="pl-tag"><span>РАБОТАЕМ С 2013 ГОДА</span></div>
+        </div>
+      </div>
+      <div class="pl-band">
+        <h1 class="pl-h">Коммерческое предложение</h1>
+        ${no || dt ? `<div class="pl-meta">${no ? `<div class="pl-no">${no}</div>` : ''}${dt ? `<div class="pl-dt">${dt}</div>` : ''}</div>` : ''}
+      </div>
+    </div>`;
+}
+
+// ── 2. Карточка позиции ──────────────────────────────────────────────────────
+// ctx = { hasAnyDiscount, hasAnyVat, groupColor, groupNum, rub, num, escapeHtml }.
+// Слева «что»: № в круге, название, материал, «2 шт.», «Гр. N». Справа ОДНА колонка «сколько» («ценник») шириной 155 px, все строки по правому краю, состояния A–D (см. CSS_CARD).
+// Цена — за позицию целиком, на количество не умножается, «×» нет. Правила показа: скидка при hasAnyDiscount && discountPercent > 0, НДС при hasAnyVat && vatEnabled; итог — finalPriceWithVat ?? discountedPrice.
+// Нет скидки — нет чипа и зачёркнутой цены; нет НДС — нет строки НДС (итог и есть цена со скидкой, отдельной строки для неё нет). НДС без скидки: первой строкой идёт цена до НДС (без неё цена до налога из карточки пропала бы).
+// Вид: карточка — «бумага» (--paper: мягкий свет из правого верхнего угла), один контур 1 px --hair, радиус 22; № — «диск» (цвет группы → её тёмный тон cdDeep, белая цифра); «N шт.» — тёплая пилюля без контура.
+// «Ценник» — без плашки-подложки и без золота: итог 23 px / 700 — главный, зачёркнутая цена (1 px) и чип «−N%» — тихо, НДС — изумрудным; линии над итогом нет.
+// Группа вариантов: свет карточки — тон группы (--cd-bg2 → --cd-bg), кант — тон группы с белым (--cd-line, cdMix 0,22), диск номера — цвет группы → её глубокий тон (--cd-lo, cdDeep), «Гр. N» — белый чип с точкой цвета группы.
+// Ни теней, ни rgba.
+const CSS_CARD = `
+  .cd, .cd * { box-sizing: border-box; margin: 0; padding: 0; }
+  .cd { --cd-main: #1c6b50; --cd-lo: #0f3a2c; display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px 12px; padding: 10px 16px; background: var(--paper); border: 1px solid var(--hair); border-radius: var(--r-block); -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .cd-g { background: radial-gradient(ellipse 110% 170% at 100% 0%, var(--cd-bg2) 0%, var(--cd-bg) 70%); border-color: var(--cd-line); }
+  .cd-what { flex: 1 1 150px; min-width: 0; display: flex; align-items: flex-start; gap: 9px; }
+  .cd-num { flex: none; width: 28px; height: 28px; border-radius: 50%; background: radial-gradient(circle at 32% 26%, var(--cd-main) 0%, var(--cd-lo) 100%); color: #ffffff; font-size: 13.5px; font-weight: 700; line-height: 28px; text-align: center; }
+  .cd-txt { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+  .cd-name { font-size: 16.5px; font-weight: 700; line-height: 1.22; color: #0f3a2c; }
+  .cd-mat { margin-top: 2px; font-size: 14.5px; font-weight: 400; line-height: 1.3; color: #625d56; }
+  .cd-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; }
+  .cd-qty, .cd-gr { font-size: 13px; font-weight: 700; line-height: 1.2; white-space: nowrap; color: #0f3a2c; background: #f1ebdc; border-radius: 999px; padding: 3px 10px; }
+  .cd-g .cd-qty, .cd-g .cd-gr { background: #ffffff; }
+  .cd-gr { display: inline-flex; align-items: center; gap: 6px; padding-left: 8px; }
+  .cd-gr::before { content: ''; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--cd-main); }
+  /* A — только итог; B (скидка) — старая цена + чип «−N%», итог; C (НДС) — «Цена …», «+ НДС …», итог; D (скидка и НДС) — старая цена + чип, цена со скидкой, «+ НДС …», итог. Подписи «ИТОГО» нет. */
+  .cd-sum { flex: 0 0 155px; width: 155px; margin-left: auto; display: flex; flex-direction: column; align-items: flex-end; gap: 2px; white-space: nowrap; text-align: right; }
+  .cd-r1 { display: flex; align-items: center; justify-content: flex-end; gap: 8px; line-height: 1.2; }
+  .cd-old { font-size: 12.5px; font-weight: 500; line-height: 1.2; color: #665f57; text-decoration: line-through; text-decoration-thickness: 1px; }
+  .cd-off { font-size: 12.5px; font-weight: 700; line-height: 1.2; color: #a34a0b; background: #fff1e0; border-radius: 999px; padding: 1px 8px; }
+  .cd-r2, .cd-pre { font-size: 14px; font-weight: 600; line-height: 1.25; color: #57534e; }
+  .cd-vat { font-size: 12.5px; font-weight: 600; line-height: 1.25; color: #145c45; }
+  .cd-fin { align-self: stretch; text-align: right; font-size: 23px; font-weight: 700; line-height: 1.1; letter-spacing: -0.01em; color: #0f3a2c; }
+  .cd-fin:not(:first-child) { margin-top: 4px; }
+`;
+
+// Непрозрачный «посветлее»: доля k цвета hex, остальное — белое (вместо hex+«55» с прозрачностью)
+function cdMix(hex, k) {
+  const n = parseInt(String(hex).slice(1), 16);
+  return '#' + [n >> 16, (n >> 8) & 255, n & 255].map((v) => Math.round(255 - (255 - v) * k).toString(16).padStart(2, '0')).join('');
+}
+// Непрозрачный «глубже»: цвет hex, умноженный на k (< 1) — тёмный тон группы для диска номера
+function cdDeep(hex, k) { const n = parseInt(String(hex).slice(1), 16); return '#' + [n >> 16, (n >> 8) & 255, n & 255].map((v) => Math.round(v * k).toString(16).padStart(2, '0')).join(''); }
+
+function cardHtml(item, idx, ctx) {
+  const { hasAnyDiscount, hasAnyVat, groupColor, groupNum, rub, num, escapeHtml } = ctx;
+  const showDisc = hasAnyDiscount && item.discountPercent > 0;
+  const showVat = hasAnyVat && item.vatEnabled;
+  const fin = item.finalPriceWithVat ?? item.discountedPrice;
+  // Строки ценника по состояниям A–D (см. CSS_CARD); показ: скидка при hasAnyDiscount && discountPercent > 0,
+  // НДС при hasAnyVat && vatEnabled, итог — finalPriceWithVat ?? discountedPrice. Без НДС итог и есть цена со скидкой — отдельной строки нет.
+  const rows = [];
+  if (showDisc) rows.push(`<div class="cd-r1"><s class="cd-old">${rub(item.price)}</s><span class="cd-off">−${num(item.discountPercent)}%</span></div>`);
+  if (showDisc && showVat) rows.push(`<div class="cd-r2">${rub(item.discountedPrice)}</div>`);
+  if (!showDisc && showVat) rows.push(`<div class="cd-pre">Цена ${rub(item.price)}</div>`);
+  if (showVat) rows.push(`<div class="cd-vat">+ НДС ${num(item.vatPercent || 22)}% · ${rub(item.vatAmount ?? 0)}</div>`);
+  const style = groupColor ? ` style="--cd-main:${groupColor.label};--cd-bg:${groupColor.bg};--cd-line:${cdMix(groupColor.label, 0.22)};--cd-bg2:${cdMix(groupColor.label, 0.16)};--cd-lo:${cdDeep(groupColor.label, 0.72)}"` : '';
+  return `<div class="cd${groupColor ? ' cd-g' : ''}"${style}>
+      <div class="cd-what">
+        <span class="cd-num">${idx + 1}</span>
+        <div class="cd-txt">
+          <div class="cd-name">${escapeHtml(item.productLabel)}</div>
+          ${item.materialName ? `<div class="cd-mat">${escapeHtml(item.materialName)}</div>` : ''}
+          <div class="cd-meta"><span class="cd-qty">${num(item.quantity)} шт.</span>${groupNum != null ? `<span class="cd-gr">Гр. ${groupNum}</span>` : ''}</div>
+        </div>
+      </div>
+      <div class="cd-sum">${rows.join('')}<div class="cd-fin">${rub(fin)}</div></div>
+    </div>`;
+}
+
+// ── 3. Нижняя плитка: итог и реквизиты (срок КП — обычным текстом над ней) ────────────────────────
+// «Закат»: зеркало верхней плитки — та же ширина (лист минус боковые отступы PLATE_SIDE_MM), те же 28 px скругления, но только СВЕРХУ; нижний край плоский и вплотную к низу листа (страница `final`, см. pageCss).
+// Сверху вниз: (1) полоса «Итого к оплате» со скруглением сверху 28 px и суммой — своего фона нет, она лежит на фоне плитки TB_TOP_BG (изумруд → слива слева направо), который в точности повторяет верх неба заката,
+// шов не виден; линии снизу нет; (2) «небо заката»: СЛЕВА гладкий непрозрачный фон (тёмный изумруд → слива, БЕЗ полос — реквизиты лежат на нём, как логотип на гладком небе верхней плитки), жалюзи и солнце — ТОЛЬКО в правой
+// части (от x = TB_ART_X): закатная палитра (слива → фиолет → малина → коралл → персик), тот же шаг жалюзи, что у верхнего неба; солнце встаёт из самого нижнего края плитки: диск срезан краем листа, вокруг мягкий ореол из колец
+// и тонкая золотая дуга; земли, линии горизонта и полос под солнцем нет.
+// Реквизиты компании — мелко и вторично (10,5 / 11 px), слева на гладком фоне зоны заката; главное в плитке — «Итого к оплате». Подписи и печати компании в плитке нет.
+// Шрифт Montserrat нигде не тяжелее 700: «Итого к оплате» 600, сумма 700, «от/до/₽» 500, строка срока 500 (дата 700), реквизиты 500–600.
+// Печать: только непрозрачное (сплошные цвета, градиенты с непрозрачными остановками, inline-SVG с клипом), ни blur, ни теней, ни mask/filter,
+// ни repeating-градиентов.
+const TB_STRIP_H = 60; // полоса «Итого к оплате» (сумма 28 px, строка 31 px; сверху — скругление плитки 28 px), px
+const TB_AIR = 4; // воздух над первой ламелью неба заката, px
+const TB_DUSK_H = TB_AIR + 140; // зона заката, px: небо до самого нижнего края плитки (земли и горизонта нет, диск срезан нижним краем)
+const TB_TILE_H = TB_STRIP_H + TB_DUSK_H; // вся плитка, px (оценка высоты связки .tail — estTile)
+// срок КП над плиткой — один левый блок: линия 1 px → TB_NOTE_PAD → метка (10 px) → TB_NOTE_LAB_GAP → основная строка (13 px) → TB_NOTE_SUB_GAP → мелкая (12 px, только в виде «до») → TB_NOTE_GAP → плитка;
+// отступы кратны 2–4 px; по этим же числам считается высота связки .tail (estTile)
+const TB_NOTE_PAD = 8; // от линии-разделителя до метки «СРОК ПРЕДЛОЖЕНИЯ», px
+const TB_NOTE_LAB_H = 12; // метка 10 px, строка 12 px
+const TB_NOTE_LAB_GAP = 4; // от метки до основной строки, px
+const TB_NOTE_MAIN_LH = 16; // основная строка 13 px, межстрочный ход 16 px (форма без срока «до» — обычно две строки)
+const TB_NOTE_SUB_GAP = 2; // от основной строки до мелкой, px
+const TB_NOTE_SUB_LH = 16; // мелкая строка 12 px, ход 16 px
+const TB_NOTE_GAP = 18; // от мелкой строки («Смета составлена …», без выносных букв) до плитки, px (CSS); по растру от нижнего края текста до верха плитки ≈ 21,7 px
+const TB_NOTE_GAP_MAIN = 20; // то же, когда последняя строка — основная (форма А: «формирования», «Дата» — выносные «ф», «р», «д» уходят ниже строки), px; по растру ≈ 20,3 px
+const TB_NOTE_H0 = 1 + TB_NOTE_PAD + TB_NOTE_LAB_H + TB_NOTE_LAB_GAP; // линия + отступ + метка + отступ до основной строки, px
+const TB_ART_X = 292; // сияние, линии и кольца — только правее этой линии (от левого края плитки); левее — ровный фон, на нём реквизиты. Самая длинная строка («ИНН … · ОГРНИП …») кончается на 274 px, зазор 18 px
+// фон всей плитки = верх неба заката (шов с полосой «Итого»): слева изумруд #0e3a30, с 11 % ширины к x = TB_ART_X переходит в сливу #2b1b3e, дальше слива — та же шкала, что base у artSunset.
+// Полоса «Итого» своего фона не имеет: она лежит на этом фоне, небо заката начинается с тех же цветов, шов не виден (светлой / тёмной полоски и золота нет);
+// даже при дробной высоте в растре под швом тот же цвет, а не белое
+const TB_TOP_BG = `linear-gradient(90deg, #0e3a30 0%, #0e3a30 11%, #2b1b3e ${(100 * TB_ART_X / PLATE_W_PX).toFixed(2)}%, #2b1b3e 100%)`;
+const TB_REQ_TOP = 25; // верх блока реквизитов от верха зоны заката, px (блок ≈ 73 px, до горизонта ≈ 24 px)
+const TB_REQ_W = 274; // ширина блока реквизитов, px (строки не переносятся; левее начала арта TB_ART_X)
+
+const CSS_TILE = `
+  .tb, .tb * { box-sizing: border-box; margin: 0; padding: 0; }
+  /* плитка уже листа на PLATE_SIDE_MM с каждой стороны (по центру, белые «ушки»), скруглены только верхние углы, низ плоский и вплотную к низу листа */
+  .tb {
+    flex: none; width: ${PLATE_W_CSS}; margin: 0 ${PLATE_SIDE_MM}mm;
+    border-radius: 28px 28px 0 0; background: ${TB_TOP_BG};
+    break-inside: avoid; page-break-inside: avoid;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  /* срок КП — типографика на белом поле листа сразу над плиткой, без иконок, рамок и заливок и БЕЗ правой колонки: тонкая линия 1 px (цвет рамок листа) во всю ширину поля 10 мм →
+     метка «СРОК ПРЕДЛОЖЕНИЯ» → основная строка (дата полужирная) → мелкая строка «Смета составлена …» (только в виде «до»). Связка .tail — flex-колонка высотой в поле содержимого
+     последнего листа: margin-top:auto прижимает блок (и плитку за ним) к низу, плитка идёт сразу за блоком, между ними TB_NOTE_GAP; держится с плиткой */
+  .tb-note {
+    margin: auto 10mm ${TB_NOTE_GAP}px; padding-top: ${TB_NOTE_PAD}px; border-top: 1px solid #e8e2d3;
+    break-after: avoid; page-break-after: avoid; break-inside: avoid; page-break-inside: avoid;
+  }
+  .tb-note.tb-note-main { margin-bottom: ${TB_NOTE_GAP_MAIN}px; }
+  .tb-vlab { font-size: 10px; font-weight: 600; line-height: ${TB_NOTE_LAB_H}px; letter-spacing: 0.12em; text-transform: uppercase; color: #145c45; }
+  .tb-vmain { margin-top: ${TB_NOTE_LAB_GAP}px; font-size: 13px; font-weight: 500; line-height: ${TB_NOTE_MAIN_LH}px; color: #57534e; }
+  .tb-vmain b { font-weight: 700; color: #0f3a2c; }
+  .tb-vsub { margin-top: ${TB_NOTE_SUB_GAP}px; font-size: 12px; font-weight: 500; line-height: ${TB_NOTE_SUB_LH}px; color: #57534e; }
+  /* полоса «Итого к оплате»: своего фона нет — лежит на фоне плитки TB_TOP_BG (изумруд → слива слева направо), который в точности повторяет верх неба заката; линии снизу нет,
+     шов с зоной заката не виден; скругление сверху даёт .tb; текст — на поле 10 мм от края листа */
+  .tb-strip {
+    position: relative; min-height: ${TB_STRIP_H}px; display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 0 ${PLATE_PAD_MM}mm;
+  }
+  .tb-label { position: relative; font-size: 15px; font-weight: 600; line-height: 1.2; color: #f3ede2; white-space: nowrap; }
+  .tb-amount { position: relative; margin-left: auto; text-align: right; white-space: nowrap; color: #ffffff; }
+  .tb-amount b { font-size: 28px; font-weight: 700; letter-spacing: -0.01em; line-height: 1.1; }
+  .tb-amount .tb-w { font-size: 15px; font-weight: 500; color: #d9d0c0; }
+  .tb-amount.tb-long b { font-size: 24px; }
+  /* арт (SVG ровно по ширине плитки) не растягивается; clip-path режет только то, что вылезло бы по бокам (линии выходят за край на 2 px), а вниз оставляет запас 4 px — небо продолжено под рамку SVG, см. ниже */
+  .tb-dusk { position: relative; height: ${TB_DUSK_H}px; clip-path: inset(0 0 -4px 0); }
+  /* overflow: visible — небо арта продолжено на 3 px ниже рамки SVG (только краска, раскладку не меняет): Chrome привязывает нижний край плитки к целому пикселю (793 из 793,28
+     у страницы A5), и без запаса у самого низа последнего листа остаётся белая полоска ≈ 0,3 px. Скругление сверху плитки даёт сама .tb и её полоса (.tb-strip), overflow: hidden не нужен */
+  .tb-bg { position: absolute; left: 0; top: 0; width: 100%; height: 100%; display: block; overflow: visible; }
+  /* реквизиты — вторичный текст: ИП, ИНН, контакты 10,5 px, ФИО 11 px;
+     главное в плитке — «Итого к оплате». Лежат на ровном фоне левее x = TB_ART_X (сияния, линий и колец там нет); контраст ≥ 4,5:1 */
+  .tb-req { position: absolute; left: ${PLATE_PAD_MM}mm; top: ${TB_REQ_TOP}px; width: ${TB_REQ_W}px; }
+  .tb-ip { font-size: 10.5px; font-weight: 500; line-height: 1.25; color: #c4bdb0; }
+  .tb-fio { margin-top: 1px; font-size: 11px; font-weight: 600; line-height: 1.25; color: #f3ede2; white-space: nowrap; }
+  .tb-ln { display: flex; flex-wrap: nowrap; gap: 0 5px; margin-top: 2px; font-size: 10.5px; font-weight: 500; line-height: 1.25; color: #e4ddd0; white-space: nowrap; }
+  .tb-ln i { font-style: normal; font-weight: 600; letter-spacing: 0.04em; color: #b8ad98; }
+  .tb-ln a { color: inherit; text-decoration: none; }
+  .tb-dot { color: #bfa468; }
+`;
+
+// ctx = { finalValue, finalLong, validityNote, validityLastMain }. Разметка — два соседа в связке .tail: текст срока КП (.tb-note) и плитка (.tb)
+function tileHtml(ctx) {
+  const { finalValue, finalLong, validityNote, validityLastMain } = ctx;
+  return `
+    <div class="tb-note${validityLastMain ? ' tb-note-main' : ''}">${validityNote}</div>
+    <div class="tb">
+      <div class="tb-strip">
+        <span class="tb-label">Итого к оплате</span>
+        <span class="tb-amount${finalLong ? ' tb-long' : ''}">${finalValue}</span>
+      </div>
+      <div class="tb-dusk">
+        ${artSunset(PLATE_W_PX, TB_DUSK_H, { cls: 'tb-bg', x0: TB_ART_X })}
+        <div class="tb-req">
+          <div class="tb-ip">Индивидуальный предприниматель</div>
+          <div class="tb-fio">Журович-Миронова Дарья Васильевна</div>
+          <div class="tb-ln"><span><i>ИНН</i> 910502074977</span><span class="tb-dot">·</span><span><i>ОГРНИП</i> 321911200058121</span></div>
+          <div class="tb-ln"><a href="tel:+79998107717">+7 (999) 810-77-17</a><span class="tb-dot">·</span><a href="mailto:sunray-zhalyuzi@yandex.ru">sunray-zhalyuzi@yandex.ru</a></div>
+          <div class="tb-ln"><a href="https://zhalyuzi-sunray.ru/">zhalyuzi-sunray.ru</a></div>
+        </div>
+      </div>
+    </div>`;
 }
 
 // ── index.ts ─────────────────────────────────────────────────────────────────
