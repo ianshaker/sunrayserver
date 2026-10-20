@@ -1191,8 +1191,8 @@ const CP_TAIL_SAFE_PER_CARD = 18; // и ещё по 18 px на каждую ка
 const PC_PLATE_W_PX = +(793.33 - 2 * PLATE_SIDE_MM * 96 / 25.4).toFixed(2); // плитка на листе A4: 595 pt = 793,33 px (793,7 — это 210 мм, а страница у нас в точках) минус два боковых отступа
 const CP_ONE_SAFE = 40; // запас при проверке «вся смета на одном листе», px (две занижённые на строку карточки — 2 × 16 px — не должны вытолкнуть смету на второй лист)
 // числа формата: A5 (компакт) и A4 (ПК): сколько места под карточки, сколько знаков в строке, сколько колонок у расчёта
-const CP_A5 = { PC: false, FIN_H: 22, AIR_TOT: 0, AIR_ROOM: 0, FIRST_FIELD: 733, NEXT_FREE: 687 - 4, TAIL: TAIL_MIN_PX, ONE: 0, NAME_CHARS: 30, SUB_CHARS: 40, TOT_COLS: 2, BANNER_H: 51, ADDR_CHARS: 24, NAME_CLIENT_CHARS: 22 };
-const CP_PC = { PC: true, FIN_H: 24, AIR_TOT: 8, AIR_ROOM: 8, FIRST_FIELD: 1062, NEXT_FREE: 1016 - 4, TAIL: 1076, ONE: 1121, NAME_CHARS: 40, SUB_CHARS: 62, TOT_COLS: 3, BANNER_H: 38, ADDR_CHARS: 34, NAME_CLIENT_CHARS: 30 };
+const CP_A5 = { PC: false, NAME_CHARS_NARROW: 27, SUB_CHARS_NARROW: 36, FIN_H: 22, AIR_TOT: 0, AIR_ROOM: 0, FIRST_FIELD: 733, NEXT_FREE: 687 - 4, TAIL: TAIL_MIN_PX, ONE: 0, NAME_CHARS: 30, SUB_CHARS: 40, TOT_COLS: 2, BANNER_H: 51, ADDR_CHARS: 24, NAME_CLIENT_CHARS: 22 };
+const CP_PC = { PC: true, NAME_CHARS_NARROW: 32, SUB_CHARS_NARROW: 46, FIN_H: 24, AIR_TOT: 8, AIR_ROOM: 8, FIRST_FIELD: 1062, NEXT_FREE: 1016 - 4, TAIL: 1076, ONE: 1121, NAME_CHARS: 40, SUB_CHARS: 62, TOT_COLS: 3, BANNER_H: 38, ADDR_CHARS: 34, NAME_CLIENT_CHARS: 30 };
 const CP_NAME_LH = 17.7; // строка названия, px
 const CP_SUB_LH = 16.3; // строка «материал · размеры», px
 const CP_R1_H = 15; // «старая цена −N %»
@@ -1357,7 +1357,12 @@ function estCardCompact(item, { hasAnyDiscount, hasAnyVat, num, rub, G = CP_A5 }
   const showDisc = hasAnyDiscount && item.discountPercent > 0;
   const showVat = hasAnyVat && item.vatEnabled;
   const sub = [item.materialName, razmeryTekst(item, num), item.priceMode === 'unit' ? `${num(item.quantity)} × ${rub(item.price)}` : ''].filter(Boolean).join(' · ');
-  const left = estLinesM(`${item.productLabel} ${num(item.quantity)} шт.${item.groupId ? ' Гр. 1' : ''}`, G.NAME_CHARS) * CP_NAME_LH + (sub ? 1 + estLinesM(sub, G.SUB_CHARS) * CP_SUB_LH : 0);
+  // Ряд «цена + НДС …» (nowrap) расширяет колонку цен на ≈ 50 px и сужает колонку названия: A5 ≈ 277 против 326 px; у ПК цены стоят в одну линию с названием, и сужает её и ряд «старая цена −N %»
+  // (≈ 408 против 515 px). Строки считаем по узким ёмкостям NAME_CHARS_NARROW / SUB_CHARS_NARROW (подобраны по замеру Chrome на 860 и 1600 карточках проверяющих 20.10.2026: недооценка на строку 0)
+  const narrow = G.PC ? showDisc || showVat : showVat;
+  const nameChars = narrow ? G.NAME_CHARS_NARROW : G.NAME_CHARS;
+  const subChars = narrow ? G.SUB_CHARS_NARROW : G.SUB_CHARS;
+  const left = estLinesM(`${item.productLabel} ${num(item.quantity)} шт.${item.groupId ? ' Гр. 1' : ''}`, nameChars) * CP_NAME_LH + (sub ? 1 + estLinesM(sub, subChars) * CP_SUB_LH : 0);
   const rows = (showDisc ? 1 : 0) + (showVat ? 1 : 0) + 1;
   const right = G.PC ? Math.max((showDisc ? CP_R1_H : 0) + (showVat ? CP_R2_H : 0) + (showDisc && showVat ? 1 : 0), G.FIN_H) : (showDisc ? CP_R1_H : 0) + (showVat ? CP_R2_H : 0) + G.FIN_H + (rows - 1);
   return CP_CARD_PAD + Math.max(left, right);

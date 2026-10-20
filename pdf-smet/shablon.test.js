@@ -1232,3 +1232,25 @@ test("город объекта: обрезка снимает висячие т
   }
   assert.equal(imya("\u200bИстра\u200b"), "\u200bИстра\u200b", "видимые знаки среди невидимых — имя остаётся как есть");
 });
+
+test("оценка карточки compact/pc: ряд «цена + НДС» (у ПК и «старая цена −N %») сужает колонку названия — материал, влезавший в строку, считается в две (разбор проверяющих 20.10.2026)", () => {
+  const num = (n) => String(n);
+  const rub = (n) => `${n} ₽`;
+  const h = (item, G) => estCardCompact(item, { hasAnyDiscount: true, hasAnyVat: true, num, rub, G });
+  const bez = { productLabel: "Зебра", quantity: 2, price: 50000, discountPercent: 0, priceMode: "total", vatEnabled: false };
+  // ПК: материал в 49 знаков — одна строка без цен справа и две, когда рядом стоит ряд скидки или НДС
+  const pk = { ...bez, materialName: "Алюминий 25 мм, белый матовый RAL 9003, цвет 7016" };
+  assert.equal(h(pk, CP_PC), 53);
+  assert.equal(h({ ...pk, discountPercent: 33 }, CP_PC), 69.3);
+  assert.equal(h({ ...pk, vatEnabled: true }, CP_PC), 69.3);
+  // A5: материал в 75 знаков — только ряд НДС сужает колонку (скидка одна — нет)
+  const a5 = { ...bez, materialName: "Блэкаут Скай, графитово-серый 4417, короб белый матовый, направляющие белые" };
+  assert.equal(h(a5, CP_A5), 69.3);
+  assert.equal(h({ ...a5, discountPercent: 33 }, CP_A5), 69.3);
+  assert.ok(Math.abs(h({ ...a5, vatEnabled: true }, CP_A5) - 85.6) < 1e-9);
+  // узкие ёмкости строки — часть калибровки: уже обычных
+  for (const G of [CP_A5, CP_PC]) {
+    assert.ok(G.NAME_CHARS_NARROW < G.NAME_CHARS && G.SUB_CHARS_NARROW < G.SUB_CHARS);
+  }
+  assert.deepEqual([CP_A5.NAME_CHARS_NARROW, CP_A5.SUB_CHARS_NARROW, CP_PC.NAME_CHARS_NARROW, CP_PC.SUB_CHARS_NARROW], [27, 36, 32, 46]);
+});
