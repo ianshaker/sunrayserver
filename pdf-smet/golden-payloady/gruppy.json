@@ -1,0 +1,108 @@
+{
+  "clientData": {
+    "appealId": "#00000",
+    "isCustomMemo": false,
+    "clientName": "Тест Тестов",
+    "phone": "8(900)000-00-00",
+    "city": "Химки",
+    "address": "ул. Тестовая, 1"
+  },
+  "headerImageUrl": "https://xyzkneqhggpxstxqbqhs.supabase.co/storage/v1/object/public/estimate_products/MAIN-pics/oblojkafull.jpg",
+  "promoDiscount": null,
+  "vatIncluded5": false,
+  "groups": [
+    {
+      "id": "g1",
+      "label": "Группа 1",
+      "color": "0"
+    },
+    {
+      "id": "g2",
+      "label": "Группа 2",
+      "color": "1"
+    }
+  ],
+  "montage": {
+    "mode": "none",
+    "amount": 0
+  },
+  "validUntil": null,
+  "createdDay": "2026-10-16",
+  "printDay": "2026-10-19",
+  "items": [
+    {
+      "id": "p1",
+      "productType": "roller_mini",
+      "productLabel": "Рулонная штора MINI",
+      "materialName": "Ткань Лён 01",
+      "quantity": 2,
+      "price": 10000,
+      "discountPercent": 0,
+      "discountedPrice": 10000,
+      "vatEnabled": false,
+      "vatPercent": 22,
+      "vatAmount": 0,
+      "finalPriceWithVat": 10000
+    },
+    {
+      "id": "p2",
+      "productType": "zebra",
+      "productLabel": "Зебра",
+      "materialName": "Вариант А: Ткань 05",
+      "quantity": 1,
+      "price": 25000,
+      "discountPercent": 0,
+      "discountedPrice": 25000,
+      "vatEnabled": false,
+      "vatPercent": 22,
+      "vatAmount": 0,
+      "finalPriceWithVat": 25000,
+      "groupId": "g1"
+    },
+    {
+      "id": "p3",
+      "productType": "zebra",
+      "productLabel": "Зебра",
+      "materialName": "Вариант Б: Ткань 07",
+      "quantity": 1,
+      "price": 31000,
+      "discountPercent": 0,
+      "discountedPrice": 31000,
+      "vatEnabled": false,
+      "vatPercent": 22,
+      "vatAmount": 0,
+      "finalPriceWithVat": 31000,
+      "groupId": "g1"
+    },
+    {
+      "id": "p4",
+      "productType": "mosquito",
+      "productLabel": "Москитная сетка",
+      "materialName": "Вариант А: Стандарт",
+      "quantity": 2,
+      "price": 12000,
+      "discountPercent": 0,
+      "discountedPrice": 12000,
+      "vatEnabled": false,
+      "vatPercent": 22,
+      "vatAmount": 0,
+      "finalPriceWithVat": 12000,
+      "groupId": "g2"
+    },
+    {
+      "id": "p5",
+      "productType": "mosquito",
+      "productLabel": "Москитная сетка",
+      "materialName": "Вариант Б: Антикошка",
+      "quantity": 2,
+      "price": 15000,
+      "discountPercent": 0,
+      "discountedPrice": 15000,
+      "vatEnabled": false,
+      "vatPercent": 22,
+      "vatAmount": 0,
+      "finalPriceWithVat": 15000,
+      "groupId": "g2"
+    }
+  ]
+}

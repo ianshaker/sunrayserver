@@ -1,0 +1,145 @@
+{
+ "clientData": {
+  "appealId": "#000001",
+  "clientName": "Образцова Анна Петровна",
+  "phone": "8 (900) 000-00-00",
+  "city": "Москва",
+  "address": "ул. Образцовая, д. 1, кв. 1"
+ },
+ "items": [
+  {
+   "id": "p1",
+   "productType": "roller_mini",
+   "productLabel": "Рулонная штора MINI",
+   "materialName": "Лён, серый 0501",
+   "quantity": 1,
+   "price": 12000,
+   "discountPercent": 0,
+   "discountedPrice": 12000,
+   "vatEnabled": false,
+   "vatPercent": 22,
+   "vatAmount": 0,
+   "finalPriceWithVat": 12000
+  },
+  {
+   "id": "p2",
+   "productType": "roller_mini",
+   "productLabel": "Штора плиссе",
+   "materialName": "Блэкаут, графит 2877",
+   "quantity": 1,
+   "price": 18000,
+   "discountPercent": 10,
+   "discountedPrice": 16200,
+   "vatEnabled": false,
+   "vatPercent": 22,
+   "vatAmount": 0,
+   "finalPriceWithVat": 16200
+  },
+  {
+   "id": "p3",
+   "productType": "roller_mini",
+   "productLabel": "Зебра (день-ночь)",
+   "materialName": "Мулине, бежевый 2260",
+   "quantity": 3,
+   "price": 30000,
+   "discountPercent": 25,
+   "discountedPrice": 22500,
+   "vatEnabled": false,
+   "vatPercent": 22,
+   "vatAmount": 0,
+   "finalPriceWithVat": 22500
+  },
+  {
+   "id": "p4",
+   "productType": "roller_mini",
+   "productLabel": "Горизонтальные жалюзи",
+   "materialName": "Алюминий, белый 25 мм",
+   "quantity": 2,
+   "price": 10000,
+   "discountPercent": 0,
+   "discountedPrice": 10000,
+   "vatEnabled": true,
+   "vatPercent": 22,
+   "vatAmount": 2200,
+   "finalPriceWithVat": 12200
+  },
+  {
+   "id": "p5",
+   "productType": "roller_mini",
+   "productLabel": "Римская штора",
+   "materialName": "Канвас, молочный 1001",
+   "quantity": 1,
+   "price": 20000,
+   "discountPercent": 10,
+   "discountedPrice": 18000,
+   "vatEnabled": true,
+   "vatPercent": 22,
+   "vatAmount": 3960,
+   "finalPriceWithVat": 21960
+  },
+  {
+   "id": "p6",
+   "productType": "roller_mini",
+   "productLabel": "Рулонная штора UNI",
+   "materialName": "Блэкаут Лён, серый 0501",
+   "quantity": 1,
+   "price": 10000,
+   "discountPercent": 10,
+   "discountedPrice": 9000,
+   "vatEnabled": true,
+   "vatPercent": 22,
+   "vatAmount": 1980,
+   "finalPriceWithVat": 10980,
+   "groupId": "g1"
+  },
+  {
+   "id": "p7",
+   "productType": "roller_mini",
+   "productLabel": "Рулонная штора UNI",
+   "materialName": "Блэкаут Лён, бежевый 0502",
+   "quantity": 1,
+   "price": 14000,
+   "discountPercent": 10,
+   "discountedPrice": 12600,
+   "vatEnabled": true,
+   "vatPercent": 22,
+   "vatAmount": 2772,
+   "finalPriceWithVat": 15372,
+   "groupId": "g2"
+  },
+  {
+   "id": "p8",
+   "productType": "roller_mini",
+   "productLabel": "Рулонная штора «день-ночь» с коробом и боковыми направляющими для окна",
+   "materialName": "Блэкаут Скай, графитово-серый 4417, короб белый матовый, направляющие белые, цепочка слева",
+   "quantity": 2,
+   "price": 36000,
+   "discountPercent": 10,
+   "discountedPrice": 32400,
+   "vatEnabled": true,
+   "vatPercent": 22,
+   "vatAmount": 7128,
+   "finalPriceWithVat": 39528
+  }
+ ],
+ "promoDiscount": null,
+ "vatIncluded5": false,
+ "groups": [
+  {
+   "id": "g1",
+   "label": "Группа 1",
+   "color": "0"
+  },
+  {
+   "id": "g2",
+   "label": "Группа 2",
+   "color": "1"
+  }
+ ],
+ "montage": {
+  "mode": "none"
+ },
+ "validUntil": "2026-10-26",
+ "createdDay": "2026-10-12",
+ "printDay": "2026-10-19"
+}

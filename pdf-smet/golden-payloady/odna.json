@@ -1,0 +1,32 @@
+{
+  "clientData": {
+    "appealId": "#010243",
+    "clientName": "Иванова Мария Сергеевна",
+    "phone": "8 (900) 000-00-00",
+    "city": "Химки",
+    "address": ""
+  },
+  "items": [
+    {
+      "id": "p1",
+      "productType": "roller_uni",
+      "productLabel": "Рулонная штора UNI",
+      "materialName": "Блэкаут Лён, серый 0501",
+      "quantity": 2,
+      "price": 24000,
+      "discountPercent": 20,
+      "discountedPrice": 19200,
+      "vatEnabled": true,
+      "vatPercent": 22,
+      "vatAmount": 4224,
+      "finalPriceWithVat": 23424
+    }
+  ],
+  "promoDiscount": null,
+  "vatIncluded5": false,
+  "groups": [],
+  "montage": null,
+  "validUntil": null,
+  "createdDay": "2026-10-12",
+  "printDay": "2026-10-19"
+}

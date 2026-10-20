@@ -508,3 +508,191 @@ test("чип «Обращение #…» не растягивается дли�
   assert.match(html, /\.cl-id \{ flex: none; max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;/); // flex: none — чип не сжимается, пока короче половины
   assert.match(BEZ_STILEI(html), /<div class="cl-id">Обращение #09784<\/div>/);
 });
+
+// --- буква Б (20.10.2026): цена за штуку (priceMode 'unit') и акция «от N изделий» ---
+
+const ZA_SHTUKU = { ...POZICIYA, id: "u1", priceMode: "unit", quantity: 2, price: 1000 }; // 2 шт. по 1 000 ₽: база 2 000 ₽
+// Текст плашки акции вместе с её разметкой (содержимое .bn-txt)
+const plashkaAkcii = (html) => (BEZ_STILEI(html).match(/<div class="promo-banner">\s*<span class="bn-ico">[\s\S]*?<\/span>\s*<span class="bn-txt">([\s\S]*?)<\/span>/) || [])[1] ?? null;
+
+test("цена за штуку: база = цена × количество; 2 шт. по 1 000 ₽ → 2 000, скидка 10 % → 1 800, НДС 22 % → 2 196; за всю позицию (и без priceMode) 1 000 → 1 000; готовые цифры CRM не затираются", () => {
+  const [u] = dozapolnitPozicii([{ ...ZA_SHTUKU, discountPercent: 10, vatEnabled: true }]);
+  assert.deepEqual([u.discountedPrice, u.vatAmount, u.finalPriceWithVat], [1800, 396, 2196]);
+  const [bezSkidki] = dozapolnitPozicii([ZA_SHTUKU]);
+  assert.deepEqual([bezSkidki.discountedPrice, bezSkidki.finalPriceWithVat], [2000, 2000]);
+  for (const priceMode of ["total", undefined]) {
+    const [z] = dozapolnitPozicii([{ ...ZA_SHTUKU, priceMode }]);
+    assert.deepEqual([z.discountedPrice, z.finalPriceWithVat], [1000, 1000], String(priceMode)); // количество на цену не умножается
+  }
+  // Акцию CRM считает сама и шлёт эффективные цифры: 15 % от базы 2 000 = 1 700, НДС 374, итог 2 074 — сервер их оставляет как есть
+  const [gotovye] = dozapolnitPozicii([{ ...ZA_SHTUKU, discountPercent: 15, discountedPrice: 1700, vatEnabled: true, vatAmount: 374, finalPriceWithVat: 2074 }]);
+  assert.deepEqual([gotovye.discountedPrice, gotovye.vatAmount, gotovye.finalPriceWithVat], [1700, 374, 2074]);
+});
+
+test("цена за штуку на листе: над ценником строка «2 × 1 000 ₽», зачёркнута база 2 000, итог 2 196; «Расчёт» и «Итого к оплате» считаются от базы; у позиции «за всю позицию» строки нет", () => {
+  const html = smeta({ items: [{ ...ZA_SHTUKU, discountPercent: 10, vatEnabled: true }, { ...DRUGAYA, quantity: 2 }] });
+  const [u, z] = kartochki(html);
+  assert.ok(u.includes(`<div class="cd-unit">2${NB}×${NB}1${NB}000 ₽</div>`));
+  assert.ok(u.includes(`<s class="cd-old">2${NB}000 ₽</s><span class="cd-off">${MINUS}10%</span>`));
+  assert.ok(u.includes(`<div class="cd-r2">1${NB}800 ₽</div>`));
+  assert.ok(u.includes(`<div class="cd-vat">+ НДС 22% · 396 ₽</div>`));
+  assert.ok(u.includes(`<div class="cd-fin">2${NB}196 ₽</div>`));
+  assert.ok(u.indexOf("cd-unit") < u.indexOf("cd-old") && u.indexOf("cd-old") < u.indexOf("cd-fin"), "строка «2 × 1 000 ₽» стоит над ценником");
+  assert.doesNotMatch(z, /cd-unit/);
+  assert.ok(z.includes(`<div class="cd-fin">5${NB}500 ₽</div>`));
+  // База 2 000 + 5 500 = 7 500; скидка 200; после скидки 7 300; НДС 396; итог 2 196 + 5 500 = 7 696
+  assert.equal(stroka(html, "Сумма без скидки"), `7${NB}500 ₽`);
+  assert.equal(stroka(html, "Скидка"), `${MINUS}200 ₽`);
+  assert.equal(stroka(html, "После скидки"), `7${NB}300 ₽`);
+  assert.equal(stroka(html, "НДС 22%"), "+396 ₽");
+  assert.equal(itogo(html), `7${NB}696 ₽`);
+  // НДС без скидки: «Цена …» — тоже база
+  const [c] = kartochki(smeta({ items: [{ ...ZA_SHTUKU, vatEnabled: true }] }));
+  assert.ok(c.includes(`<div class="cd-pre">Цена 2${NB}000 ₽</div>`));
+  assert.ok(c.includes(`<div class="cd-fin">2${NB}440 ₽</div>`));
+  // Строка и её правило CSS есть только там, где есть позиция «за штуку»
+  assert.ok(smeta({ items: [ZA_SHTUKU] }).includes(".cd-unit {"));
+  for (const bez of [smeta({}), smeta({ items: [{ ...ZA_SHTUKU, priceMode: "total" }] })]) assert.ok(!bez.includes("cd-unit"), "у «за всю позицию» строки и правила CSS нет");
+});
+
+test("цена за штуку в группах вариантов: «Сумма без скидки», «Скидка», «После скидки» и итог — диапазоны от баз вариантов", () => {
+  const html = smeta({
+    groups: [{ id: "g1", name: "Ткань" }],
+    items: [
+      { ...ZA_SHTUKU, id: "a" }, // вне групп: база 2 000
+      { ...POZICIYA, id: "b", groupId: "g1", priceMode: "unit", quantity: 2, price: 5000, discountPercent: 10 }, // вариант 1: база 10 000 → 9 000
+      { ...POZICIYA, id: "c", groupId: "g1", quantity: 1, price: 12000, discountPercent: 5, discountedPrice: 11400 }, // вариант 2: за всю позицию 12 000 → 11 400
+    ],
+  });
+  assert.equal(stroka(html, "Сумма без скидки"), `от 12${NB}000 до 14${NB}000 ₽`);
+  assert.equal(stroka(html, "Скидка"), `от ${MINUS}600 до ${MINUS}1${NB}000 ₽`);
+  assert.equal(stroka(html, "После скидки"), `от 11${NB}000 до 13${NB}400 ₽`);
+  assert.equal(itogo(html), `от 11${NB}000 до 13${NB}400 ₽`);
+});
+
+test("плашка акции: «от N изделий» берётся из promoFromQty и стоит жирным цветом акцента; без promoFromQty и при N = 2 слова те же дословно; акции нет — нет и правила CSS", () => {
+  const STARYJ = "При заказе от 2 изделий действует скидка на весь заказ в размере 15%";
+  // тело без promoFromQty (старая смета): разметка и CSS прежние, без акцента
+  const staraya = smeta({ promoDiscount: 15 });
+  assert.equal(plashkaAkcii(staraya), STARYJ);
+  assert.ok(!staraya.includes("promo-cond"));
+  // N = 2 в новом теле: слова те же, условие выделено
+  const dva = smeta({ promoDiscount: 15, promoFromQty: 2 });
+  assert.equal(plashkaAkcii(dva), 'При заказе <b class="promo-cond">от 2 изделий</b> действует скидка на весь заказ в размере 15%');
+  assert.equal(tekst(plashkaAkcii(dva)), STARYJ);
+  // N = 5, X = 15
+  const pyat = smeta({ promoDiscount: 15, promoFromQty: 5 });
+  assert.equal(plashkaAkcii(pyat), 'При заказе <b class="promo-cond">от 5 изделий</b> действует скидка на весь заказ в размере 15%');
+  assert.match(pyat, /\.promo-banner \.promo-cond \{ font-weight: 700; color: #a34a0b;/);
+  // акции нет — плашки и правила нет, даже если promoFromQty прислан
+  for (const promoDiscount of [null, 0]) assert.ok(!smeta({ promoDiscount, promoFromQty: 5 }).includes("promo-cond"));
+});
+
+test("связка .tail: оценка высоты карточки «за штуку» выше на строку «N × цена» — на грани листа такая последняя карточка уходит из связки, а «за всю позицию» остаётся в ней", () => {
+  // Последняя карточка — только скидка, короткое название; вокруг — НДС у первой позиции, обе плашки и монтаж-чип: связка у самой границы листа
+  const smetaSPoslednej = (priceMode) => smeta({
+    items: [{ ...POZICIYA, id: "a", vatEnabled: true }, { id: "z", productLabel: "Штора", quantity: 2, price: 1000, priceMode, discountPercent: 10, discountedPrice: priceMode === "unit" ? 1800 : 900 }],
+    promoDiscount: 15, vatIncluded5: true, montage: { mode: "included" },
+  });
+  const vSvyazke = (html) => { const v = BEZ_STILEI(html); return v.lastIndexOf('<div class="cd"') > v.indexOf('<div class="tail">'); };
+  assert.equal(vSvyazke(smetaSPoslednej("total")), true);
+  assert.equal(vSvyazke(smetaSPoslednej("unit")), false);
+});
+
+// --- буква В (20.10.2026): помещения (секции с итогом) и размеры позиций ---
+
+// Позиция без скидки и НДС: итог = цена. room === undefined — поля нет совсем
+const poz = (id, room, price, dop = {}) => ({ id, productLabel: `Штора ${id}`, quantity: 1, price, ...(room === undefined ? {} : { room }), ...dop });
+// Заголовки помещений текстом по порядку на листе: «Кухня — 4 000 ₽»
+const zagolovkiKomnat = (html) => [...BEZ_STILEI(html).matchAll(/<div class="rm">([\s\S]*?)<\/span><\/div>/g)].map((m) => tekst(m[1]));
+// Названия позиций в порядке показа и номера в кружках
+const poryadok = (html) => [...BEZ_STILEI(html).matchAll(/<div class="cd-name">(.*?)<\/div>/g)].map((m) => m[1]);
+const nomera = (html) => [...BEZ_STILEI(html).matchAll(/<span class="cd-num">(\d+)<\/span>/g)].map((m) => m[1]);
+
+test("помещения: секции идут в порядке ПЕРВОГО появления помещения, позиции внутри — в порядке тела, номера карточек подряд; заголовок «Кухня — сумма» стоит над первой карточкой секции", () => {
+  const html = smeta({ items: [poz("a", "Кухня", 1000), poz("b", "Спальня", 2000), poz("c", "Кухня", 3000), poz("d", "Спальня", 4000), poz("e", "Гостиная", 5000)] });
+  assert.deepEqual(zagolovkiKomnat(html), [`Кухня — 4${NB}000 ₽`, `Спальня — 6${NB}000 ₽`, `Гостиная — 5${NB}000 ₽`]);
+  assert.deepEqual(poryadok(html), ["Штора a", "Штора c", "Штора b", "Штора d", "Штора e"]);
+  assert.deepEqual(nomera(html), ["1", "2", "3", "4", "5"]);
+  // заголовок и первая карточка — один неразрывный блок: заголовок не остаётся один внизу листа
+  const bloki = BEZ_STILEI(html).split('<div class="blk blk-card blk-rhead">').slice(1);
+  assert.equal(bloki.length, 3);
+  for (const b of bloki) assert.ok(b.indexOf('<div class="rm">') < b.indexOf('<div class="cd"') && b.indexOf('<div class="cd"') < b.indexOf('<div class="blk'), "заголовок, затем первая карточка секции — в одном блоке");
+  assert.match(html, /\.blk \{ break-inside: avoid;/);
+  assert.match(html, /\.blk-card \+ \.blk-rhead \{ margin-top: 8px; \}/);
+});
+
+test("помещения: «кухня», «Кухня», «Кухня  », «КУХНЯ» и «Зелёная  комната» / «зеленая комната» — одна секция каждое, показ как введено первым (пробелы по краям убраны, повторные — в один)", () => {
+  const html = smeta({ items: [poz("a", "Кухня ", 1000), poz("b", "Зелёная  комната", 100), poz("c", "кухня", 2000), poz("d", " КУХНЯ", 3000), poz("e", "зеленая комната", 200), poz("f", "Кухня  ", 4000)] });
+  assert.deepEqual(zagolovkiKomnat(html), [`Кухня — 10${NB}000 ₽`, `Зелёная комната — 300 ₽`]);
+  assert.deepEqual(poryadok(html), ["Штора a", "Штора c", "Штора d", "Штора f", "Штора b", "Штора e"]);
+});
+
+test("помещения: позиции без помещения (нет поля, null, пусто, одни пробелы, «без помещения» руками) — последней секцией «Без помещения»; помещения нет ни у одной — секций нет, разметка как без поля", () => {
+  const html = smeta({ items: [poz("a", undefined, 1000), poz("b", "Кухня", 2000), poz("c", "   ", 3000), poz("d", null, 4000), poz("e", "Без  помещения", 5000)] });
+  assert.deepEqual(zagolovkiKomnat(html), [`Кухня — 2${NB}000 ₽`, `Без помещения — 13${NB}000 ₽`]);
+  assert.deepEqual(poryadok(html), ["Штора b", "Штора a", "Штора c", "Штора d", "Штора e"]);
+  // помещения нет ни у кого: ни заголовков, ни блока-обёртки, ни правил CSS; страница та же, что для тела без поля room
+  const pustye = [poz("a", "", 1000), poz("b", "   ", 2000), poz("c", null, 3000), poz("d", "Без помещения", 4000)];
+  const bezPolya = pustye.map(({ room, ...ostalnoe }) => ostalnoe);
+  const bez = smeta({ items: pustye });
+  assert.equal(bez, smeta({ items: bezPolya }));
+  assert.ok(!bez.includes('class="rm"') && !bez.includes("blk-rhead") && !bez.includes(".rm {"));
+});
+
+test("итог помещения: сумма итогов позиций после скидки и НДС; с группой вариантов — «от … до …» (обычные + минимум / максимум группы); в группе только позиции ЭТОГО помещения; min = max — одно число", () => {
+  const groups = [{ id: "g1", name: "Ткань" }, { id: "g2", name: "Цвет" }];
+  const html = smeta({
+    groups,
+    items: [
+      poz("k1", "Кухня", 10000),
+      poz("k2", "Кухня", 5000, { groupId: "g1", discountPercent: 10, discountedPrice: 4500, vatEnabled: true, vatAmount: 990, finalPriceWithVat: 5490 }), // вариант 1: итог 5 490
+      poz("k3", "Кухня", 8000, { groupId: "g1" }), // вариант 2: итог 8 000
+      poz("s1", "Спальня", 7000),
+      poz("s2", "Спальня", 3000),
+      poz("d1", "Детская", 2000, { groupId: "g2" }), // второй вариант группы g2 — в Гостиной
+      poz("g1", "Гостиная", 9000, { groupId: "g2" }),
+    ],
+  });
+  assert.deepEqual(zagolovkiKomnat(html), [
+    `Кухня — от 15${NB}490 до 18${NB}000 ₽`, // 10 000 + min(5 490; 8 000) … 10 000 + max
+    `Спальня — 10${NB}000 ₽`, // min = max
+    `Детская — 2${NB}000 ₽`, // в группе g2 здесь один вариант
+    `Гостиная — 9${NB}000 ₽`,
+  ]);
+  // без групп сумма итогов помещений (с «Без помещения») равна «Итого к оплате»: НДС и скидка учтены
+  const bezGrupp = smeta({
+    items: [poz("a", "Кухня", 3000, { vatEnabled: true, vatAmount: 660, finalPriceWithVat: 3660 }), poz("b", "Спальня", 4000, { discountPercent: 10, discountedPrice: 3600 }), poz("c", undefined, 1000)],
+  });
+  assert.deepEqual(zagolovkiKomnat(bezGrupp), [`Кухня — 3${NB}660 ₽`, `Спальня — 3${NB}600 ₽`, `Без помещения — 1${NB}000 ₽`]);
+  assert.equal(itogo(bezGrupp), `8${NB}260 ₽`);
+});
+
+test("помещение идёт в страницу через escapeHtml и не длиннее 60 знаков: теги и кавычки не становятся разметкой, 70 знаков режутся до 60", () => {
+  const html = smeta({ items: [poz("a", `<script>alert(1)</script> & "x"`, 1000), poz("b", "Ж".repeat(70), 2000)] });
+  assert.ok(html.includes('<span class="rm-name">&lt;script&gt;alert(1)&lt;/script&gt; &amp; &quot;x&quot;</span>'));
+  assert.ok(!html.includes("<script>alert"));
+  assert.ok(html.includes(`<span class="rm-name">${"Ж".repeat(60)}</span>`) && !html.includes("Ж".repeat(61)));
+  assert.deepEqual(zagolovkiKomnat(html), [`&lt;script&gt;alert(1)&lt;/script&gt; &amp; &quot;x&quot; — 1${NB}000 ₽`, `${"Ж".repeat(60)} — 2${NB}000 ₽`]);
+});
+
+test("размеры: «1 200 × 1 400 мм» мелкой строкой под материалом; без размеров (или только один из двух) строки нет, а правила CSS нет, пока размеров нет ни у кого", () => {
+  const sRazmerami = poz("a", undefined, 1000, { materialName: "Лён", widthMm: 1200, heightMm: 1400 });
+  const html = smeta({ items: [sRazmerami, poz("b", undefined, 2000, { widthMm: 900 })] });
+  const [a, b] = kartochki(html);
+  assert.ok(a.includes(`<div class="cd-mat">Лён</div><div class="cd-size">1${NB}200${NB}×${NB}1${NB}400${NB}мм</div>`));
+  assert.ok(a.indexOf("cd-size") < a.indexOf("cd-meta"));
+  assert.doesNotMatch(b, /cd-size/);
+  assert.match(html, /\.cd-size \{ margin-top: 2px; font-size: 12\.5px; font-weight: 500;/);
+  assert.ok(!smeta({ items: [poz("b", undefined, 2000, { widthMm: 900 })] }).includes("cd-size"));
+});
+
+test("связка .tail учитывает заголовок помещения: последняя карточка — первая в своей секции → заголовок идёт с ней и на грани листа она уходит из связки; в одной секции с предыдущей — остаётся", () => {
+  const smetaSPoslednej = (komnata) => smeta({
+    items: [{ ...POZICIYA, id: "a", vatEnabled: true, room: "Кухня" }, { id: "z", productLabel: "Штора", quantity: 2, price: 1000, discountPercent: 10, discountedPrice: 900, room: komnata }],
+    promoDiscount: 15, vatIncluded5: true, montage: { mode: "included" },
+  });
+  const vSvyazke = (html) => { const v = BEZ_STILEI(html); return v.lastIndexOf('<div class="cd"') > v.indexOf('<div class="tail">'); };
+  assert.equal(vSvyazke(smetaSPoslednej("Кухня")), true);
+  assert.equal(vSvyazke(smetaSPoslednej("Спальня")), false);
+});

@@ -1,0 +1,90 @@
+{
+  "clientData": {
+    "appealId": "#920004",
+    "clientName": "Образцов Тест Иванович",
+    "phone": "8 (900) 000-00-02",
+    "city": "Тестоград",
+    "address": "ул. Тестовая, д. 1, кв. 5"
+  },
+  "items": [
+    {
+      "id": "p1",
+      "productType": "roller_mini",
+      "productLabel": "Поз-01 Рулонная штора MINI",
+      "materialName": "Вариант А: Мулине, бежевый 2260",
+      "quantity": 1,
+      "price": 8977,
+      "discountPercent": 10,
+      "discountedPrice": 8079,
+      "vatEnabled": true,
+      "vatPercent": 22,
+      "vatAmount": 1777,
+      "finalPriceWithVat": 9856,
+      "groupId": "g1"
+    },
+    {
+      "id": "p2",
+      "productType": "roller_uni",
+      "productLabel": "Поз-02 Рулонная штора UNI-2",
+      "materialName": "Вариант Б: Блэкаут, графит 2877",
+      "quantity": 2,
+      "price": 9991,
+      "discountPercent": 5,
+      "discountedPrice": 9491,
+      "vatEnabled": false,
+      "vatPercent": 22,
+      "vatAmount": 0,
+      "finalPriceWithVat": 9491,
+      "groupId": "g1"
+    },
+    {
+      "id": "p3",
+      "productType": "day_night",
+      "productLabel": "Поз-03 Зебра (день-ночь)",
+      "materialName": "Вариант А: Жаккард, песочный 4107",
+      "quantity": 3,
+      "price": 11079,
+      "discountPercent": 10,
+      "discountedPrice": 9971,
+      "vatEnabled": true,
+      "vatPercent": 22,
+      "vatAmount": 2194,
+      "finalPriceWithVat": 12165,
+      "groupId": "g2"
+    },
+    {
+      "id": "p4",
+      "productType": "plisse",
+      "productLabel": "Поз-04 Плиссе",
+      "materialName": "Вариант Б: Мулине, бежевый 2260",
+      "quantity": 4,
+      "price": 12241,
+      "discountPercent": 0,
+      "discountedPrice": 12241,
+      "vatEnabled": true,
+      "vatPercent": 22,
+      "vatAmount": 2693,
+      "finalPriceWithVat": 14934,
+      "groupId": "g2"
+    }
+  ],
+  "promoDiscount": 10,
+  "vatIncluded5": true,
+  "groups": [
+    {
+      "id": "g1",
+      "name": "Вариант 1"
+    },
+    {
+      "id": "g2",
+      "name": "Вариант 2"
+    }
+  ],
+  "montage": {
+    "mode": "sum",
+    "amount": 4300
+  },
+  "validUntil": "2026-10-26",
+  "createdDay": "2026-10-12",
+  "printDay": "2026-10-19"
+}

@@ -413,3 +413,136 @@ test("клиент ушёл, пока печать занята другим: в
   assert.equal(s.napechatano.length, 2);
   assert.match(s.napechatano[1], /Клиент #3/);
 });
+
+// --- буква Б (20.10.2026): новые поля тела — priceMode, promoDiscount 1–90, promoFromQty 2–20, promoApply ---
+
+test("новые поля: границы допустимы (promoDiscount 1 и 90, promoFromQty 2 и 20, priceMode total / unit / нет / null), строки-числа приводятся; promoApply ничего не меняет, promoFromQty и «за штуку» доходят до страницы", async (t) => {
+  tishina(t);
+  const { app, vyzovy } = await sobrat(t);
+  for (const dop of [
+    { promoDiscount: 1, promoFromQty: 2 }, { promoDiscount: 90, promoFromQty: 20 }, { promoDiscount: "15", promoFromQty: "3" }, { promoDiscount: 15, promoFromQty: null },
+    { items: [{ ...POZICIYA, priceMode: "total" }] }, { items: [{ ...POZICIYA, priceMode: "unit" }] }, { items: [{ ...POZICIYA, priceMode: null }] },
+  ]) assert.equal((await otpravit(app, telo(dop))).statusCode, 200, JSON.stringify(dop));
+
+  vyzovy.length = 0;
+  assert.equal((await otpravit(app, telo({ promoDiscount: 15, promoFromQty: 3 }))).statusCode, 200);
+  assert.equal((await otpravit(app, telo({ promoDiscount: 15, promoFromQty: 3, promoApply: true }))).statusCode, 200);
+  assert.equal(vyzovy[1], vyzovy[0], "promoApply изменил страницу: сервер акцию не применяет");
+  assert.match(vyzovy[0], /При заказе <b class="promo-cond">от 3 изделий<\/b> действует скидка на весь заказ в размере 15%/);
+  // «за штуку»: база 2 × 10 000 = 20 000
+  assert.equal((await otpravit(app, telo({ items: [{ ...POZICIYA, priceMode: "unit" }] }))).statusCode, 200);
+  assert.ok(vyzovy[2].includes('<div class="cd-unit">2 × 10 000 ₽</div>'));
+  assert.ok(vyzovy[2].includes('<div class="cd-fin">20 000 ₽</div>'));
+});
+
+test("новые поля: priceMode не 'total'|'unit', promoDiscount не целое 1–90, promoFromQty не целое 2–20 — 400 с понятным details, печать не зовут", async (t) => {
+  tishina(t);
+  const { app, vyzovy } = await sobrat(t);
+  const plohie = [
+    [{ items: [{ ...POZICIYA, priceMode: "x" }] }, "Invalid priceMode", /«total».*«unit»/],
+    [{ items: [POZICIYA, { ...POZICIYA, priceMode: "UNIT" }] }, "Invalid priceMode", /«total».*«unit»/],
+    [{ items: [{ ...POZICIYA, priceMode: 1 }] }, "Invalid priceMode", /«total».*«unit»/],
+    ...[0, 91, 20.5, -5].map((promoDiscount) => [{ promoDiscount }, "Invalid promoDiscount", /от 1 до 90/]),
+    ...[0, 1, 21, 2.5].map((promoFromQty) => [{ promoDiscount: 15, promoFromQty }, "Invalid promoFromQty", /от 2 до 20/]),
+  ];
+  for (const [dop, error, details] of plohie) {
+    const res = await otpravit(app, telo(dop));
+    assert.equal(res.statusCode, 400, JSON.stringify(dop));
+    assert.equal(res.json().error, error, JSON.stringify(dop));
+    assert.match(res.json().details, details, JSON.stringify(dop));
+  }
+  assert.equal(vyzovy.length, 0);
+});
+
+// --- буква В (20.10.2026): помещение room и размеры widthMm / heightMm позиции ---
+
+test("помещения и размеры: допустимое проходит (нет поля, null, пусто, пробелы, 1 и 20000 мм, размеры строками), помещение режется до 60 знаков и дочищается, всё доходит до страницы", async (t) => {
+  tishina(t);
+  const { app, vyzovy } = await sobrat(t);
+  for (const dop of [
+    {}, { room: null }, { room: "" }, { room: "   " }, { room: "Кухня" }, { room: "К".repeat(61) },
+    { widthMm: 1, heightMm: 1 }, { widthMm: 20000, heightMm: 20000 }, { widthMm: "1200", heightMm: "1400" }, { widthMm: null, heightMm: null },
+  ]) assert.equal((await otpravit(app, telo({ items: [{ ...POZICIYA, ...dop }] }))).statusCode, 200, JSON.stringify(dop));
+
+  vyzovy.length = 0;
+  assert.equal((await otpravit(app, telo({ items: [{ ...POZICIYA, room: "  Кухня   большая ", widthMm: "1200", heightMm: 1400 }, { ...POZICIYA, id: "p2", room: "Ж".repeat(70) }] }))).statusCode, 200);
+  assert.ok(vyzovy[0].includes('<span class="rm-name">Кухня большая</span>'), "пробелы по краям убраны, повторные — в один");
+  assert.ok(vyzovy[0].includes(`<span class="rm-name">${"Ж".repeat(60)}</span>`) && !vyzovy[0].includes("Ж".repeat(61)), "70 знаков режутся до 60");
+  assert.ok(vyzovy[0].includes('<div class="cd-size">1\u00a0200\u00a0×\u00a01\u00a0400\u00a0мм</div>'), "размеры строками приведены к числам");
+});
+
+test("помещения и размеры: room не строка, размеры не целые 1–20000 или только один из двух — 400 с понятным details, печать не зовут", async (t) => {
+  tishina(t);
+  const { app, vyzovy } = await sobrat(t);
+  const plohie = [
+    ...[5, true, {}, ["Кухня"]].map((room) => [{ room }, "Invalid room", /текстом.*60/]),
+    ...[{ widthMm: 1200 }, { heightMm: 1400 }, { widthMm: 1200, heightMm: null }].map((razmery) => [razmery, "Invalid size", /вместе/]),
+    ...[[0, 1400], [1200, 20001], [-5, 10], [1200.5, 10], ["1200.5", 10]].map(([widthMm, heightMm]) => [{ widthMm, heightMm }, "Invalid size", /целым числом.*от 1 до 20000/]),
+    [{ widthMm: "abc", heightMm: 10 }, "Invalid numbers", /числами/],
+  ];
+  for (const [dop, error, details] of plohie) {
+    const res = await otpravit(app, telo({ items: [{ ...POZICIYA, ...dop }] }));
+    assert.equal(res.statusCode, 400, JSON.stringify(dop));
+    assert.equal(res.json().error, error, JSON.stringify(dop));
+    assert.match(res.json().details, details, JSON.stringify(dop));
+  }
+  assert.equal(vyzovy.length, 0);
+});
+
+// --- правка по независимому ревью (20.10.2026): «за штуку» — количество умножает деньги, поэтому числа позиции держим в границах; «за всю позицию» не проверяется ---
+
+const ZA_SHTUKU = { ...POZICIYA, priceMode: "unit" };
+
+test("«за штуку»: количество не в (0; 100000], цена не в [0; 1e9], скидка не в 0–100 — 400 с понятным details, печать не зовут", async (t) => {
+  tishina(t);
+  const { app, vyzovy } = await sobrat(t);
+  const kolichestvo = /Режим «цена за штуку»: количество должно быть больше 0 и не больше 100000/;
+  const cena = /Режим «цена за штуку»: цена должна быть не меньше 0 и не больше 1000000000/;
+  const skidka = /Режим «цена за штуку»: скидка должна быть числом от 0 до 100 процентов/;
+  const plohie = [
+    ...[0, -3, 1e9, 100001, "0", "-3"].map((quantity) => [{ quantity }, "Invalid quantity", kolichestvo]),
+    ...[-1, -100, 1e308, 1000000001, "-1"].map((price) => [{ price }, "Invalid price", cena]),
+    ...[150, -5, 100.5, "150"].map((discountPercent) => [{ discountPercent }, "Invalid discountPercent", skidka]),
+  ];
+  for (const [dop, error, details] of plohie) {
+    const res = await otpravit(app, telo({ items: [{ ...ZA_SHTUKU, ...dop }] }));
+    assert.equal(res.statusCode, 400, JSON.stringify(dop));
+    assert.equal(res.json().error, error, JSON.stringify(dop));
+    assert.match(res.json().details, details, JSON.stringify(dop));
+  }
+  // Проверяются все позиции, а не первая: плохая «за штуку» стоит после позиции «за всю» и после хорошей «за штуку»
+  const posle = await otpravit(app, telo({ items: [POZICIYA, ZA_SHTUKU, { ...ZA_SHTUKU, id: "p3", quantity: -3 }] }));
+  assert.equal(posle.statusCode, 400);
+  assert.equal(posle.json().error, "Invalid quantity");
+  assert.equal(vyzovy.length, 0);
+});
+
+test("«за штуку»: допустимое проходит — границы (100000 штук, цена 0 и 1e9, скидка 0 и 100), дробное количество, строки-числа; сумма считается как раньше", async (t) => {
+  tishina(t);
+  const { app, vyzovy } = await sobrat(t);
+  for (const dop of [
+    {}, { quantity: 100000, price: 1e9, discountPercent: 100 }, { quantity: 1, price: 0 }, { quantity: 2.5 }, { discountPercent: 0 }, { discountPercent: null },
+  ]) assert.equal((await otpravit(app, telo({ items: [{ ...ZA_SHTUKU, ...dop }] }))).statusCode, 200, JSON.stringify(dop));
+
+  vyzovy.length = 0;
+  // Строки-числа приводятся до проверки: 3 × 12 500 = 37 500, скидка 10% → 33 750
+  assert.equal((await otpravit(app, telo({ items: [{ ...ZA_SHTUKU, quantity: "3", price: " 12500 ", discountPercent: "10" }] }))).statusCode, 200);
+  assert.match(vyzovy[0], /<div class="cd-unit">3\s×\s12\s500\s₽<\/div>/);
+  assert.match(vyzovy[0], /<div class="cd-fin">33\s750\s₽<\/div>/);
+});
+
+test("«за всю позицию»: границы не действуют — те же числа дают 200, как до правки (количество 0 и −3, цена −100, скидка 150), и с priceMode 'total', и без него", async (t) => {
+  tishina(t);
+  const { app, vyzovy } = await sobrat(t);
+  for (const rezhim of [{}, { priceMode: "total" }, { priceMode: null }]) {
+    for (const dop of [{ quantity: 0 }, { quantity: -3 }, { price: -100 }, { discountPercent: 150 }]) {
+      const res = await otpravit(app, telo({ items: [{ ...POZICIYA, ...rezhim, ...dop }] }));
+      assert.equal(res.statusCode, 200, JSON.stringify({ ...rezhim, ...dop }));
+    }
+  }
+  // Как на закоммиченном сервере: количество 0 печатается «0 шт.», цена остаётся ценой за всю позицию и на количество не умножается
+  vyzovy.length = 0;
+  assert.equal((await otpravit(app, telo({ items: [{ ...POZICIYA, quantity: 0 }] }))).statusCode, 200);
+  assert.match(vyzovy[0], /<span class="cd-qty">0\sшт\.<\/span>/);
+  assert.match(vyzovy[0], /<div class="cd-fin">10\s000\s₽<\/div>/);
+});

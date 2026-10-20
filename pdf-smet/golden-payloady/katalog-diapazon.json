@@ -1,0 +1,107 @@
+{
+ "clientData": {
+  "appealId": "#00000",
+  "isCustomMemo": false,
+  "clientName": "Тест Тестов",
+  "phone": "8(900)000-00-00",
+  "city": "Химки",
+  "address": "ул. Тестовая, 1"
+ },
+ "promoDiscount": null,
+ "vatIncluded5": false,
+ "groups": [
+  {
+   "id": "g1",
+   "label": "Группа 1",
+   "color": "0"
+  },
+  {
+   "id": "g2",
+   "label": "Группа 2",
+   "color": "1"
+  }
+ ],
+ "montage": {
+  "mode": "sum",
+  "amount": 7500
+ },
+ "validUntil": "2026-10-30",
+ "createdDay": "2026-10-16",
+ "printDay": "2026-10-19",
+ "items": [
+  {
+   "id": "p1",
+   "productType": "roller_mini",
+   "productLabel": "Рулонная штора MINI",
+   "materialName": "Ткань Лён 01",
+   "quantity": 2,
+   "price": 10000,
+   "discountPercent": 25,
+   "discountedPrice": 7500,
+   "vatEnabled": true,
+   "vatPercent": 22,
+   "vatAmount": 1650,
+   "finalPriceWithVat": 9150
+  },
+  {
+   "id": "p2",
+   "productType": "zebra",
+   "productLabel": "Зебра",
+   "materialName": "Вариант А: Ткань 05",
+   "quantity": 1,
+   "price": 25000,
+   "discountPercent": 25,
+   "discountedPrice": 18750,
+   "vatEnabled": true,
+   "vatPercent": 22,
+   "vatAmount": 4125,
+   "finalPriceWithVat": 22875,
+   "groupId": "g1"
+  },
+  {
+   "id": "p3",
+   "productType": "zebra",
+   "productLabel": "Зебра",
+   "materialName": "Вариант Б: Ткань 07",
+   "quantity": 1,
+   "price": 31000,
+   "discountPercent": 25,
+   "discountedPrice": 23250,
+   "vatEnabled": true,
+   "vatPercent": 22,
+   "vatAmount": 5115,
+   "finalPriceWithVat": 28365,
+   "groupId": "g1"
+  },
+  {
+   "id": "p4",
+   "productType": "mosquito",
+   "productLabel": "Москитная сетка",
+   "materialName": "Вариант А: Стандарт",
+   "quantity": 2,
+   "price": 12000,
+   "discountPercent": 25,
+   "discountedPrice": 9000,
+   "vatEnabled": false,
+   "vatPercent": 22,
+   "vatAmount": 0,
+   "finalPriceWithVat": 9000,
+   "groupId": "g2"
+  },
+  {
+   "id": "p5",
+   "productType": "mosquito",
+   "productLabel": "Москитная сетка",
+   "materialName": "Вариант Б: Антикошка",
+   "quantity": 2,
+   "price": 15000,
+   "discountPercent": 25,
+   "discountedPrice": 11250,
+   "vatEnabled": false,
+   "vatPercent": 22,
+   "vatAmount": 0,
+   "finalPriceWithVat": 11250,
+   "groupId": "g2"
+  }
+ ]
+}

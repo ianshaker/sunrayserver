@@ -36,6 +36,16 @@
  * Защита: весь пользовательский текст идёт через escapeHtml; числа — только через privestiChisla (его зовёт route.js); значение в
  * CSS-строке подвала («SUNRAY · КП №…», номер обращения из тела запроса) проходит cssString: кавычки, обратная косая, < > & и
  * управляющие знаки превращаются в CSS-коды, поэтому ни строка, ни <style> не закрываются изнутри.
+ *
+ * Буква Б «Цена без сюрпризов» + Акция (20.10.2026, PLANS/CRM/20-smety-vid-stekla/tz-uluchsheniya-smety.md §1–3): позиция может быть с ценой за штуку
+ * (`priceMode: 'unit'`, база = price × quantity — itemBase, зеркало estimateUtils.ts в CRM), акция — с условием «от N изделий» (`promoFromQty`, 2–20).
+ * Акцию сервер не считает: CRM присылает готовые discountPercent / discountedPrice / НДС, здесь они печатаются как есть. Тела без новых полей печатаются
+ * побайтно как раньше (golden-тест shablon.golden.test.js): новая разметка и новый CSS появляются только под новыми полями.
+ *
+ * Буква В «Помещения и размеры» (20.10.2026, тот же ТЗ §1–3): позиция может нести `room` (помещение, 1–60 знаков после trim) и `widthMm` × `heightMm` (целые мм 1–20000, оба или ни одного).
+ * Если помещение есть хотя бы у одной позиции, карточки идут секциями: порядок секций — первое появление помещения (ключ: без регистра, «ё» = «е», пробелы в один; показ — как введено первым),
+ * позиции без помещения — последней секцией «Без помещения»; над карточками секции стоит заголовок «Кухня — 24 500 ₽» / «Кухня — от 21 500 до 29 500 ₽» (итог помещения — ТЗ §2.3, зеркало roomTotals
+ * в estimateUtils.ts). Заголовок держится с первой карточкой секции в одном неразрывном блоке (.blk-rhead). Размеры — мелкой строкой под материалом. Нет `room` ни у одной позиции — разметка прежняя (golden).
  */
 
 const { mskDate } = require('../lib/mskTime');
@@ -110,7 +120,37 @@ function pageCss(footerLeft) {
   }`;
 }
 
-function getStyles({ footerLeft = '' } = {}) {
+// Условие акции «от N изделий» в плашке — жирным цветом акцента листа (оранжевый #a34a0b, как у строки скидки в расчёте; на #ffe8cf контраст ≈ 5:1). Правило дописывается в конец CSS
+// только телам с promoFromQty: у старых смет HTML побайтно прежний (golden), поэтому в общий CSS оно не входит
+const CSS_PROMO_COND = `
+  .promo-banner .promo-cond { font-weight: 700; color: #a34a0b; white-space: nowrap; }`;
+
+// Строка «N × цена ₽» над ценником позиции «за штуку» (priceMode 'unit') — самая тихая строка ценника: 13 px / 500, цвет как у «Цена …» (.cd-pre). Правило дописывается в конец CSS только телам,
+// где такая позиция есть: у остальных HTML побайтно прежний (golden)
+const CSS_UNIT = `
+  .cd-unit { font-size: 13px; font-weight: 500; line-height: 1.25; color: #57534e; }`;
+
+// Размеры позиции «ширина × высота, мм» (буква В) — мелкая строка под материалом: 12,5 px / 500, цвет как у материала (.cd-mat), в одну строку. Правило дописывается в конец CSS только телам,
+// где размеры есть хотя бы у одной позиции: у остальных HTML побайтно прежний (golden)
+const CSS_SIZE = `
+  .cd-size { margin-top: 2px; font-size: 12.5px; font-weight: 500; line-height: 1.3; color: #625d56; white-space: nowrap; }`;
+
+// Секции помещений (буква В): заголовок «Кухня — 24 500 ₽» над карточками помещения — мягкая мятная полоса в тон плашки «НДС 5 %» (градиент 120°, контур 1 px, непрозрачные заливки, без золота) с «диском»
+// 8 px, как у номера карточки; легче карточки: одна строка 14 px, вес не выше 700. Высота строки заголовка — ROOM_LINE_H, одной строки вместе с воздухом под ним — ROOM_HEAD_H (3 + 18 + 3 поля, 2 контур,
+// 6 воздух = 32 px): по этим числам считается связка .tail (estNeed). Правило дописывается в конец CSS только телам, где у какой-то позиции есть помещение
+const ROOM_LINE_H = 18; // строка заголовка помещения, px
+const ROOM_HEAD_H = 32; // заголовок помещения из одной строки вместе с воздухом под ним, px
+const CSS_ROOMS = `
+  .rm { display: flex; align-items: flex-start; gap: 8px; padding: 3px 14px; margin-bottom: 6px; background: linear-gradient(120deg, #f5faf7 0%, #e6f1ea 100%); border: 1px solid #d6e9de; border-radius: 14px; font-size: 14px; line-height: ${ROOM_LINE_H}px; color: #0f3a2c; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .rm::before { content: ''; flex: none; width: 8px; height: 8px; margin-top: 5px; border-radius: 50%; background: radial-gradient(circle at 32% 26%, #1c6b50 0%, #0f3a2c 100%); }
+  .rm-t { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+  .rm-name { font-weight: 700; }
+  .rm-dash { font-weight: 500; color: #625d56; }
+  .rm-sum { font-weight: 700; color: #145c45; white-space: nowrap; }
+  /* заголовок и первая карточка секции — один неразрывный блок (.blk): заголовок не остаётся один внизу листа; между секциями воздуха больше, чем между карточками */
+  .blk-card + .blk-rhead { margin-top: 8px; }`;
+
+function getStyles({ footerLeft = '', promoCond = false, unitRow = false, sizeRow = false, roomRows = false } = {}) {
   return `${pageCss(footerLeft)}
   :root {
     --fs-m: 15.5px;
@@ -195,7 +235,7 @@ function getStyles({ footerLeft = '' } = {}) {
   /* ── Сменные модули визуала ── */
   ${CSS_PLASHKA}
   ${CSS_CARD}
-  ${CSS_TILE}
+  ${CSS_TILE}${promoCond ? CSS_PROMO_COND : ''}${unitRow ? CSS_UNIT : ''}${sizeRow ? CSS_SIZE : ''}${roomRows ? CSS_ROOMS : ''}
 `;
 }
 
@@ -216,10 +256,91 @@ const TH_GLOW = [[84, .03], [70, .035], [57, .04], [45, .045], [34, .05], [24, .
   .map(([r, a]) => `<circle cx="440" cy="42" r="${r.toFixed(1)}" fill-opacity="${a.toFixed(4)}"/>`).join('');
 const TH_ART = `<svg class="th-art" viewBox="0 0 482 36" preserveAspectRatio="none" aria-hidden="true" focusable="false"><g fill="#ffd9a8">${TH_GLOW}</g><g fill="none" stroke="#ffe8d8" stroke-width="1" stroke-linecap="round"><path stroke-opacity=".26" d="M300 8h46M316 16h40M334 24h34M350 31h28"/><path stroke-opacity=".15" d="M354 8h22M364 16h18M376 24h14M386 31h10"/></g></svg>`;
 
+/**
+ * База позиции (ТЗ 20.10.2026 §1): `priceMode: 'unit'` — цена за штуку, база = price × quantity; иначе ('total' и тела без поля) — цена за всю
+ * позицию, база = price. Скидка, НДС и итог позиции считаются от базы. Зеркало itemBase в CRM (estimateUtils.ts): правишь тут — правь там.
+ */
+function itemBase(item) {
+  return item.priceMode === 'unit' ? item.price * item.quantity : item.price;
+}
+
+// ── Помещения и размеры (буква В) ────────────────────────────────────────────
+const NAZVANIE_MAX = 60; // знаков в названии помещения после trim
+const BEZ_POMESHCHENIYA = 'Без помещения'; // подпись последней секции: позиции, у которых помещения нет
+
+/**
+ * Название помещения для показа: пробелы по краям убраны, повторные пробелы — в один, не длиннее NAZVANIE_MAX знаков (по символам, а не по кодовым единицам). Не строка и пусто — '' («помещения нет»).
+ * Идемпотентна: route.js (privestiChisla) зовёт её на входе, buildHtml — ещё раз при группировке, чтобы тело, собранное мимо маршрута, вело себя так же.
+ */
+function nazvanieKomnaty(value) {
+  if (typeof value !== 'string') return '';
+  return Array.from(value.replace(/\s+/g, ' ').trim()).slice(0, NAZVANIE_MAX).join('').trim();
+}
+
+/** Ключ секции: «кухня», «Кухня», «КУХНЯ» — одно помещение, «ё» = «е». */
+function klyuchKomnaty(nazvanie) {
+  return nazvanie.toLowerCase().replace(/ё/g, 'е');
+}
+
+/** «1 200 × 1 400 мм» (ширина × высота; неразрывные пробелы) или '' — размеров нет или они не целые 1–20000 (маршрут такие тела не пропускает). */
+function razmeryTekst(item, num) {
+  const { widthMm: w, heightMm: h } = item;
+  const verno = (v) => Number.isInteger(v) && v >= 1 && v <= 20000;
+  return verno(w) && verno(h) ? `${num(w)} × ${num(h)} мм` : '';
+}
+
+/**
+ * Итог помещения (ТЗ §2.3; зеркало roomTotals в estimateUtils.ts): сумма итогов позиций помещения после скидки и НДС (finalPriceWithVat, как пришли; монтаж не входит). Позиции группы вариантов
+ * (groupId есть в groups — иначе карточка тоже печатается без группы) считаются одним вариантом: минимум = обычные + минимум каждой группы, максимум = обычные + максимум каждой группы.
+ * В группе считаются только позиции ЭТОГО помещения. min === max — итог одним числом.
+ */
+function itogPomeshcheniya(items, groups) {
+  const idGrupp = new Set(groups.map((g) => g.id));
+  let obychnye = 0;
+  const poGruppam = new Map();
+  for (const item of items) {
+    const cena = item.finalPriceWithVat ?? item.discountedPrice;
+    if (!item.groupId || !idGrupp.has(item.groupId)) { obychnye += cena; continue; }
+    const g = poGruppam.get(item.groupId);
+    if (g) { g.min = Math.min(g.min, cena); g.max = Math.max(g.max, cena); } else poGruppam.set(item.groupId, { min: cena, max: cena });
+  }
+  let min = obychnye, max = obychnye;
+  for (const g of poGruppam.values()) { min += g.min; max += g.max; }
+  return { min, max };
+}
+
+/**
+ * Секции помещений в порядке ПЕРВОГО появления помещения в items; внутри секции позиции идут в порядке тела. Позиции без помещения — последней секцией «Без помещения».
+ * null — помещения нет ни у одной позиции (или все позиции «без помещения»): смета печатается без секций, разметка прежняя.
+ * @returns {{ label: string, items: any[], min: number, max: number }[] | null}
+ */
+function sektsiiPomeshcheniy(items, groups) {
+  const nazvaniya = items.map((item) => nazvanieKomnaty(item.room));
+  if (!nazvaniya.some(Boolean)) return null;
+  const sektsii = [];
+  const poKlyuchu = new Map();
+  const klyuchBez = klyuchKomnaty(BEZ_POMESHCHENIYA);
+  let bez = null;
+  items.forEach((item, i) => {
+    const klyuch = nazvaniya[i] ? klyuchKomnaty(nazvaniya[i]) : '';
+    if (!klyuch || klyuch === klyuchBez) { // «без помещения», напечатанное руками, — то же, что пусто
+      bez = bez || { label: BEZ_POMESHCHENIYA, items: [] };
+      bez.items.push(item);
+      return;
+    }
+    let s = poKlyuchu.get(klyuch);
+    if (!s) { s = { label: nazvaniya[i], items: [] }; poKlyuchu.set(klyuch, s); sektsii.push(s); }
+    s.items.push(item);
+  });
+  if (!sektsii.length) return null;
+  if (bez) sektsii.push(bez);
+  return sektsii.map((s) => ({ ...s, ...itogPomeshcheniya(s.items, groups) }));
+}
+
 function buildHtml(data) {
   // headerImageUrl шаблон не читает: плитка рисуется кодом, фото-обложки нет (решение Яна 19.10.2026)
   const {
-    clientData, items, promoDiscount = null, vatIncluded5 = false,
+    clientData, items, promoDiscount = null, promoFromQty = null, vatIncluded5 = false,
     groups = [], montage = null, validUntil = null, createdDay = null, printDay = null,
   } = data;
 
@@ -283,7 +404,8 @@ function buildHtml(data) {
         ? `<span class="t-chip">${ICO_CHECK}бесплатно</span>`
         : `${montageAmount.toLocaleString('ru-RU')} ₽`;
 
-  const totalBasePrice = items.reduce((sum, item) => sum + item.price, 0);
+  // «Сумма без скидки» — сумма баз позиций (itemBase): у позиции «за штуку» это цена × количество, у остальных цена
+  const totalBasePrice = items.reduce((sum, item) => sum + itemBase(item), 0);
   const totalAfterDiscount = items.reduce((sum, item) => sum + item.discountedPrice, 0);
   const totalDiscountAmount = totalBasePrice - totalAfterDiscount;
   const totalVatAmount = items.reduce((sum, item) => sum + (item.vatAmount ?? 0), 0);
@@ -307,9 +429,9 @@ function buildHtml(data) {
   const finalMax = baseTotal + groupMax + montageAmount;
 
   // Базовые суммы без групп (нужны для диапазонов)
-  const basePriceNoGroup = items.filter(i => !i.groupId).reduce((s, i) => s + i.price, 0);
+  const basePriceNoGroup = items.filter(i => !i.groupId).reduce((s, i) => s + itemBase(i), 0);
   const baseAfterDiscountNoGroup = items.filter(i => !i.groupId).reduce((s, i) => s + i.discountedPrice, 0);
-  const baseDiscNoGroup = items.filter(i => !i.groupId).reduce((s, i) => s + (i.price - i.discountedPrice), 0);
+  const baseDiscNoGroup = items.filter(i => !i.groupId).reduce((s, i) => s + (itemBase(i) - i.discountedPrice), 0);
   const baseVatNoGroup = items.filter(i => !i.groupId).reduce((s, i) => s + (i.vatAmount ?? 0), 0);
 
   let groupPriceMin = 0, groupPriceMax = 0;
@@ -320,13 +442,13 @@ function buildHtml(data) {
     groups.forEach(g => {
       const gItems = items.filter(i => i.groupId === g.id);
       if (gItems.length === 0) return;
-      groupPriceMin         += Math.min(...gItems.map(i => i.price));
-      groupPriceMax         += Math.max(...gItems.map(i => i.price));
+      groupPriceMin         += Math.min(...gItems.map(i => itemBase(i)));
+      groupPriceMax         += Math.max(...gItems.map(i => itemBase(i)));
       groupAfterDiscountMin += Math.min(...gItems.map(i => i.discountedPrice));
       groupAfterDiscountMax += Math.max(...gItems.map(i => i.discountedPrice));
-      // скидка = price - discountedPrice у каждого item, не разница вариантов
-      groupDiscMin          += Math.min(...gItems.map(i => i.price - i.discountedPrice));
-      groupDiscMax          += Math.max(...gItems.map(i => i.price - i.discountedPrice));
+      // скидка = база - discountedPrice у каждого item, не разница вариантов
+      groupDiscMin          += Math.min(...gItems.map(i => itemBase(i) - i.discountedPrice));
+      groupDiscMax          += Math.max(...gItems.map(i => itemBase(i) - i.discountedPrice));
       groupVatMin           += Math.min(...gItems.map(i => i.vatAmount ?? 0));
       groupVatMax           += Math.max(...gItems.map(i => i.vatAmount ?? 0));
     });
@@ -378,13 +500,21 @@ function buildHtml(data) {
   const rub = (n) => `${num(n)} ₽`;
 
   // Карточки позиций: разметку каждой даёт модуль cardHtml, обёртку (неразрывный блок) — buildHtml.
-  // Цена — за позицию целиком, на количество не умножается.
-  const cardBlocks = items.map((item, idx) => {
+  // Цена — за позицию целиком, на количество не умножается (кроме priceMode 'unit').
+  // Помещения (буква В): есть хотя бы одно — карточки идут секциями (порядок и «Без помещения» — sektsiiPomeshcheniy), номера карточек — по порядку на листе; первая карточка секции несёт заголовок
+  // помещения в том же неразрывном блоке (.blk-rhead). Помещений нет — shown это items как пришли, разметка прежняя (golden)
+  const sektsii = sektsiiPomeshcheniy(items, groups);
+  const shown = sektsii
+    ? sektsii.flatMap((s) => s.items.map((item, k) => ({ item, sektsiya: k === 0 ? s : null })))
+    : items.map((item) => ({ item, sektsiya: null }));
+  const roomSum = (s) => (s.min === s.max ? rub(s.min) : `от ${num(s.min)} до ${rub(s.max)}`);
+  const roomHead = (s) => `<div class="rm"><span class="rm-t"><span class="rm-name">${escapeHtml(s.label)}</span><span class="rm-dash"> — </span><span class="rm-sum">${roomSum(s)}</span></span></div>`;
+  const cardBlocks = shown.map(({ item, sektsiya }, idx) => {
     const groupIdx = item.groupId ? groups.findIndex(g => g.id === item.groupId) : -1;
     const groupColor = groupIdx >= 0 ? GROUP_COLORS_PDF[groupIdx % GROUP_COLORS_PDF.length] : null;
     const groupNum = groupIdx >= 0 ? groupIdx + 1 : null;
     const html = cardHtml(item, idx, { hasAnyDiscount, hasAnyVat, groupColor, groupNum, rub, num, escapeHtml });
-    return `<div class="blk blk-card">${html}</div>`;
+    return sektsiya ? `<div class="blk blk-card blk-rhead">${roomHead(sektsiya)}${html}</div>` : `<div class="blk blk-card">${html}</div>`;
   });
   // Последняя карточка уходит в связку «хвост» с расчётом (расчёт не остаётся на листе без позиции). Исключение — одна позиция:
   // шапка + карточка + расчёт бывают выше листа, и тогда шапка важнее — карточка остаётся с шапкой, расчёт может уйти на
@@ -412,11 +542,17 @@ function buildHtml(data) {
       </div>
   ` : '';
 
+  // Плашка акции. Тело с promoFromQty (целое; 2–20 проверяет route.js) — «от N изделий» жирным цветом акцента (.promo-cond). Тело без него (старые сметы) — «от 2 изделий»
+  // обычным текстом, побайтно как раньше (golden)
+  const promoOt = Number.isInteger(promoFromQty) ? promoFromQty : null;
+  const promoText = promoOt === null
+    ? `При заказе от 2 изделий действует скидка на весь заказ в размере ${promoDiscount}%`
+    : `При заказе <b class="promo-cond">от ${promoOt} изделий</b> действует скидка на весь заказ в размере ${promoDiscount}%`;
   const promoBlock = promoDiscount ? `
       <div class="blk blk-promo">
         <div class="promo-banner">
           <span class="bn-ico">${ICO_PERCENT}</span>
-          <span class="bn-txt">При заказе от 2 изделий действует скидка на весь заказ в размере ${promoDiscount}%</span>
+          <span class="bn-txt">${promoText}</span>
         </div>
       </div>
   ` : '';
@@ -500,8 +636,9 @@ function buildHtml(data) {
   const estCard = (item) => {
     const showDisc = hasAnyDiscount && item.discountPercent > 0;
     const showVat = hasAnyVat && item.vatEnabled;
-    const left = estLines(item.productLabel, 22) * 20.1 + (item.materialName ? 2 + estLines(item.materialName, 30) * 18.9 : 0) + 6 + 21.5; // 22 и 30 знаков в строке — по замерам печати (катал. образец: 4 строки названия, 4 материала)
-    const right = (showDisc ? 19 : 0) + (!showDisc && showVat ? 19.5 : 0) + (showDisc && showVat ? 19.5 : 0) + (showVat ? 17.6 : 0) + (showDisc || showVat ? 4 : 0) + 25.3;
+    const showUnit = item.priceMode === 'unit'; // строка «N × цена ₽» над ценником (.cd-unit): 13 px × 1,25 = 16,25 + зазор 2 = 18,25 px (замер Chrome 20.10.2026, карточки A–D), а без скидки и НДС — ещё 4 px над итогом
+    const left = estLines(item.productLabel, 22) * 20.1 + (item.materialName ? 2 + estLines(item.materialName, 30) * 18.9 : 0) + 6 + 21.5 + (razmeryTekst(item, num) ? 18.25 : 0); // 22 и 30 знаков в строке — по замерам печати (катал. образец: 4 строки названия, 4 материала); строка размеров .cd-size: 2 + 12,5 × 1,3 = 18,25 px
+    const right = (showDisc ? 19 : 0) + (!showDisc && showVat ? 19.5 : 0) + (showDisc && showVat ? 19.5 : 0) + (showVat ? 17.6 : 0) + (showUnit ? 18.25 : 0) + (showDisc || showVat || showUnit ? 4 : 0) + 25.3;
     return 22 + Math.max(left, right);
   };
   const estRows = 1 + (hasAnyDiscount ? 3 : 1) + (hasAnyVat ? 1 : 0) + (montageLine ? 1 : 0);
@@ -511,7 +648,11 @@ function buildHtml(data) {
   const estMainLines = estLines(validityMain.replace(/<[^>]+>/g, ''), 62);
   const estNote = TB_NOTE_H0 + estMainLines * TB_NOTE_MAIN_LH + (validitySub ? TB_NOTE_SUB_GAP + TB_NOTE_SUB_LH + TB_NOTE_GAP : TB_NOTE_GAP_MAIN);
   const estTile = TB_TILE_H + 1 + estNote;
-  const estNeed = lastCardBlock !== '' ? estCard(items[items.length - 1]) + 8 + estTotals + estBanners + 8 + estTile : 0;
+  // последняя карточка — в порядке показа (с помещениями он не равен порядку тела); если она первая в своей секции, вместе с ней в связку идёт заголовок помещения: ROOM_HEAD_H и по ROOM_LINE_H на каждую
+  // лишнюю строку (≈ 46 знаков в строке заголовка 14 px / 700 при ширине 484 px за вычетом полей и «диска»)
+  const lastShown = shown[shown.length - 1];
+  const estRoomHead = lastShown?.sektsiya ? ROOM_HEAD_H + (estLines(`${lastShown.sektsiya.label} — ${roomSum(lastShown.sektsiya)}`, 46) - 1) * ROOM_LINE_H : 0;
+  const estNeed = lastCardBlock !== '' ? estCard(lastShown.item) + estRoomHead + 8 + estTotals + estBanners + 8 + estTile : 0;
   const lastInTail = lastCardBlock !== '' && estNeed <= TAIL_MIN_PX - 6;
 
   const totalsBlock = `
@@ -555,7 +696,7 @@ function buildHtml(data) {
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&display=block" rel="stylesheet">
 <style>
-${getStyles({ footerLeft })}
+${getStyles({ footerLeft, promoCond: Boolean(promoDiscount) && promoOt !== null, unitRow: items.some((i) => i.priceMode === 'unit'), sizeRow: items.some((i) => razmeryTekst(i, num) !== ''), roomRows: Boolean(sektsii) })}
 </style>
 </head>
 <body>
@@ -797,10 +938,13 @@ function cardHtml(item, idx, ctx) {
   const fin = item.finalPriceWithVat ?? item.discountedPrice;
   // Строки ценника по состояниям A–D (см. CSS_CARD); показ: скидка при hasAnyDiscount && discountPercent > 0,
   // НДС при hasAnyVat && vatEnabled, итог — finalPriceWithVat ?? discountedPrice. Без НДС итог и есть цена со скидкой — отдельной строки нет.
+  const base = itemBase(item); // зачёркнутая цена и «Цена …» — база позиции: у «за штуку» price × quantity, у остальных price (разметка «за всю позицию» прежняя)
+  const razmery = razmeryTekst(item, num); // «1 200 × 1 400 мм» мелко под материалом (буква В); размеров нет — пусто, разметка прежняя
   const rows = [];
-  if (showDisc) rows.push(`<div class="cd-r1"><s class="cd-old">${rub(item.price)}</s><span class="cd-off">−${num(item.discountPercent)}%</span></div>`);
+  if (item.priceMode === 'unit') rows.push(`<div class="cd-unit">${num(item.quantity)} × ${rub(item.price)}</div>`);
+  if (showDisc) rows.push(`<div class="cd-r1"><s class="cd-old">${rub(base)}</s><span class="cd-off">−${num(item.discountPercent)}%</span></div>`);
   if (showDisc && showVat) rows.push(`<div class="cd-r2">${rub(item.discountedPrice)}</div>`);
-  if (!showDisc && showVat) rows.push(`<div class="cd-pre">Цена ${rub(item.price)}</div>`);
+  if (!showDisc && showVat) rows.push(`<div class="cd-pre">Цена ${rub(base)}</div>`);
   if (showVat) rows.push(`<div class="cd-vat">+ НДС ${num(item.vatPercent || 22)}% · ${rub(item.vatAmount ?? 0)}</div>`);
   const style = groupColor ? ` style="--cd-main:${groupColor.label};--cd-bg:${groupColor.bg};--cd-line:${cdMix(groupColor.label, 0.22)};--cd-bg2:${cdMix(groupColor.label, 0.16)};--cd-lo:${cdDeep(groupColor.label, 0.72)}"` : '';
   return `<div class="cd${groupColor ? ' cd-g' : ''}"${style}>
@@ -808,7 +952,7 @@ function cardHtml(item, idx, ctx) {
         <span class="cd-num">${idx + 1}</span>
         <div class="cd-txt">
           <div class="cd-name">${escapeHtml(item.productLabel)}</div>
-          ${item.materialName ? `<div class="cd-mat">${escapeHtml(item.materialName)}</div>` : ''}
+          ${item.materialName ? `<div class="cd-mat">${escapeHtml(item.materialName)}</div>` : ''}${razmery ? `<div class="cd-size">${razmery}</div>` : ''}
           <div class="cd-meta"><span class="cd-qty">${num(item.quantity)} шт.</span>${groupNum != null ? `<span class="cd-gr">Гр. ${groupNum}</span>` : ''}</div>
         </div>
       </div>
@@ -924,7 +1068,9 @@ function tileHtml(ctx) {
 function dozapolnitPozicii(items) {
   return items.map((item) => {
     const discountPercent = item.discountPercent ?? 0;
-    const discountedPrice = item.discountedPrice ?? item.price;
+    // Цена за штуку (priceMode 'unit'): скидка и всё дальнейшее — от базы price × quantity (формула CRM calculateEstimateLine: round(база × (1 − %/100))). Пришедшее от CRM discountedPrice
+    // не трогаем: акцию CRM считает сама и шлёт эффективные цифры. У остальных позиций поведение прежнее (golden)
+    const discountedPrice = item.discountedPrice ?? (item.priceMode === 'unit' ? Math.round(itemBase(item) * (1 - discountPercent / 100)) : item.price);
     const vatEnabled = item.vatEnabled ?? false;
     const vatPercent = item.vatPercent ?? 22;
     const vatAmount = item.vatAmount ?? (vatEnabled ? Math.round(discountedPrice * vatPercent / 100) : 0);
@@ -973,15 +1119,18 @@ const CHISLA_POZICII = [
   { pole: 'vatAmount', obyazatelno: false },
   { pole: 'finalPriceWithVat', obyazatelno: false },
   { pole: 'vatPercent', obyazatelno: false },
+  // Размеры позиции (буква В): строка-число становится числом; целые 1–20000 и «оба или ни одного» проверяет route.js
+  { pole: 'widthMm', obyazatelno: false },
+  { pole: 'heightMm', obyazatelno: false },
 ];
 
 /**
- * Приводит числа тела к числам: quantity, price, discountPercent каждой позиции и promoDiscount тела
- * (promoDiscount может быть null/не прислан). Позицию, которая не объект, не трогает: её отвергнет dozapolnitPozicii.
- * @param {{ items: any[], promoDiscount?: any }} body
- * @returns {{ items: any[], promoDiscount: number|null|undefined } | null} — null, если какое-то число неверное
+ * Приводит числа тела к числам: quantity, price, discountPercent (и необязательные расчётные поля, размеры widthMm / heightMm) каждой позиции и promoDiscount тела
+ * (promoDiscount и promoFromQty могут быть null/не присланы); строковое room позиции доводит до названия помещения (nazvanieKomnaty). Позицию, которая не объект, не трогает: её отвергнет dozapolnitPozicii.
+ * @param {{ items: any[], promoDiscount?: any, promoFromQty?: any }} body
+ * @returns {{ items: any[], promoDiscount: number|null|undefined, promoFromQty: number|null|undefined } | null} — null, если какое-то число неверное
  */
-function privestiChisla({ items, promoDiscount }) {
+function privestiChisla({ items, promoDiscount, promoFromQty }) {
   const privedennye = [];
   for (const item of items) {
     if (!item || typeof item !== 'object') { privedennye.push(item); continue; }
@@ -992,6 +1141,7 @@ function privestiChisla({ items, promoDiscount }) {
       if (n === null) return null;
       kopiya[pole] = n;
     }
+    if (typeof item.room === 'string') kopiya.room = nazvanieKomnaty(item.room); // помещение (буква В): trim, пробелы в один, не длиннее 60 знаков; строкой не являющееся route.js отвергает раньше
     privedennye.push(kopiya);
   }
   let promo = promoDiscount;
@@ -999,7 +1149,12 @@ function privestiChisla({ items, promoDiscount }) {
     promo = chislo(promoDiscount);
     if (promo === null) return null;
   }
-  return { items: privedennye, promoDiscount: promo };
+  let ot = promoFromQty; // «от N изделий» (буква Б): строка-число — в число, как promoDiscount; диапазон 2–20 проверяет route.js
+  if (promoFromQty !== undefined && promoFromQty !== null) {
+    ot = chislo(promoFromQty);
+    if (ot === null) return null;
+  }
+  return { items: privedennye, promoDiscount: promo, promoFromQty: ot };
 }
 
 module.exports = {

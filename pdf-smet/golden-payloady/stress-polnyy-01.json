@@ -1,0 +1,35 @@
+{
+  "clientData": {
+    "appealId": "#920001",
+    "clientName": "Образцов Тест Иванович",
+    "phone": "8 (900) 000-00-02",
+    "city": "Тестоград",
+    "address": "ул. Тестовая, д. 1, кв. 5"
+  },
+  "items": [
+    {
+      "id": "p1",
+      "productType": "roller_mini",
+      "productLabel": "Поз-01 Рулонная штора MINI",
+      "materialName": "Мулине, бежевый 2260",
+      "quantity": 1,
+      "price": 8977,
+      "discountPercent": 10,
+      "discountedPrice": 8079,
+      "vatEnabled": true,
+      "vatPercent": 22,
+      "vatAmount": 1777,
+      "finalPriceWithVat": 9856
+    }
+  ],
+  "promoDiscount": 10,
+  "vatIncluded5": true,
+  "groups": [],
+  "montage": {
+    "mode": "sum",
+    "amount": 4300
+  },
+  "validUntil": "2026-10-26",
+  "createdDay": "2026-10-12",
+  "printDay": "2026-10-19"
+}
