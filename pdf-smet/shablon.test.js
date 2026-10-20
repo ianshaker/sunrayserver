@@ -7,7 +7,11 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { buildHtml, dozapolnitPozicii, imyaFayla, denPechati, privestiChisla, SUPABASE_URL } = require("./shablon");
+const {
+  buildHtml, dozapolnitPozicii, imyaFayla, denPechati, privestiChisla, SUPABASE_URL,
+  planKompakta, gorodObekta, SITE_HOST_RE, estCardCompact, estLinesM,
+  CP_A5, CP_PC, CP_PL_H, CP_ONE_SAFE, CP_TAIL_SAFE, CP_TAIL_SAFE_PER_CARD, CP_PACK_SAFE,
+} = require("./shablon");
 
 const OBLOZHKA = `${SUPABASE_URL}/storage/v1/object/public/estimate_products/MAIN-pics/oblojkafull.jpg`;
 const POZICIYA = {
@@ -695,4 +699,536 @@ test("связка .tail учитывает заголовок помещени�
   const vSvyazke = (html) => { const v = BEZ_STILEI(html); return v.lastIndexOf('<div class="cd"') > v.indexOf('<div class="tail">'); };
   assert.equal(vSvyazke(smetaSPoslednej("Кухня")), true);
   assert.equal(vSvyazke(smetaSPoslednej("Спальня")), false);
+});
+
+// --- формат листа «компактный» / «ПК» и город объекта (20.10.2026): sheet, cityContext, раскладка planKompakta ---
+// Числа листа (запасы, границы, высоты) в проверках ниже записаны ЛИТЕРАЛАМИ, а не берутся из экспорта шаблона: это замеры печати Chrome (20.10.2026), и проверка, пересчитывающая их из самого
+// кода, не заметила бы случайной правки константы. Перекалибровали лист — поправьте числа здесь же (мутационная проверка: правка любой из них краснит тесты).
+
+const FORMATY_LISTA = ["big", "compact", "pc"];
+const OSNOVNOY_SAYT = "zhalyuzi-sunray.ru";
+const GOROD_ISTRA = { name: "Истра", siteHost: "istra.zhalyuzi-sunray.ru" };
+// n позиций POZICIYA: «Штора 1», «Штора 2»…; dop(i) — поля i-й позиции
+const pozicii = (n, dop = () => ({})) => Array.from({ length: n }, (_, i) => ({ ...POZICIYA, id: `p${i + 1}`, productLabel: `Штора ${i + 1}`, ...dop(i) }));
+const skolko = (tekst, podstroka) => tekst.split(podstroka).length - 1;
+// Логотип — base64, и «NaN» или «undefined» в нём бывают случайной подстрокой: перед поиском мусора data:-адреса вырезаем
+const BEZ_DATA = (html) => html.replace(/data:image\/[a-z+]+;base64,[A-Za-z0-9+/=]+/g, "data:");
+// Левый край подвала — строка content: "…" margin-бокса @bottom-left; null — строка разорвана (закрывающей кавычки нет там, где она должна быть)
+const levyPodval = (html) => {
+  const m = html.match(/@bottom-left \{\s*content: "((?:[^"\\\n\r]|\\[^\n\r])*)";\s*margin-left: 10mm;/);
+  return m ? m[1] : null;
+};
+// Парный <div …>…</div>, начинающийся с nachalo; null — такого блока нет или он не закрыт
+function blokDiv(razmetka, nachalo) {
+  const s = razmetka.indexOf(nachalo);
+  if (s < 0) return null;
+  let glubina = 0;
+  for (const m of razmetka.slice(s).matchAll(/<div[\s>]|<\/div>/g)) {
+    glubina += m[0] === "</div>" ? -1 : 1;
+    if (glubina === 0) return razmetka.slice(s, s + m.index + m[0].length);
+  }
+  return null;
+}
+const tegi = (razmetka) => new Set([...razmetka.matchAll(/<([a-zA-Z][a-zA-Z0-9]*)/g)].map((m) => m[1].toLowerCase()));
+// Действующая ширина margin-бокса подвала: в блоке бокса основного @page последнее объявление width (с городом и номером оно расширяет левую часть, перекрывая общее 50 %)
+const shirinaPodvala = (html, bok) => [...html.match(new RegExp(`@${bok} \\{([^}]*)\\}`))[1].matchAll(/width: ([^;]+);/g)].at(-1)[1];
+
+test("формат листа: sheet не задан, null, '', 'big', 'BIG', 'xl', 0, {} и прочий мусор — большой лист, HTML побайтно как без поля (два образца)", () => {
+  const obrazcy = [
+    {},
+    {
+      clientData: { appealId: "#7", clientName: "Иванов Иван", phone: "8(900)111-22-33", city: "Химки", address: "ул. Длинная, д. 1, кв. 2" },
+      items: DIAPAZON.items, groups: DIAPAZON.groups, promoDiscount: 15, promoFromQty: 3, vatIncluded5: true,
+      montage: { mode: "sum", amount: 5000 }, validUntil: "2026-10-22", cityContext: GOROD_ISTRA,
+    },
+  ];
+  const musor = [undefined, null, "", "big", "BIG", "xl", "Compact", "COMPACT", "PC", " pc", "pc ", "compact\n", 0, 1, false, true, {}, [], ["pc"], { sheet: "pc" }];
+  for (const obrazec of obrazcy) {
+    const bez = smeta(obrazec);
+    assert.match(bez, /<body>/); // у большого листа на body класса нет
+    for (const sheet of musor) assert.equal(smeta({ ...obrazec, sheet }), bez, `sheet = ${JSON.stringify(sheet) ?? "undefined"}`);
+    // проверка не пустая: настоящие значения страницу меняют
+    for (const sheet of ["compact", "pc"]) assert.notEqual(smeta({ ...obrazec, sheet }), bez, sheet);
+  }
+});
+
+test("форматы листа структурно: «ПК» — @page 595pt × 842pt, короткая смета (1–4 позиции) одной страницей .one без связки .tail, длинная (30) без .one и с одной связкой; compact — 420pt × 595pt, класс cp у body, pc нет", () => {
+  const chisloSlov = (html, slovo) => skolko(BEZ_STILEI(html), slovo);
+  for (const n of [1, 2, 3, 4]) {
+    const html = smeta({ items: pozicii(n), sheet: "pc" });
+    assert.match(html, /@page \{\s*size: 595pt 842pt;\s*margin: 12mm 0 16mm 0;/, `ПК, ${n}`);
+    assert.match(html, /@page one \{\s*margin: 0;/, `ПК, ${n}: страницы one нет`);
+    assert.equal(chisloSlov(html, '<div class="one">'), 1, `ПК, ${n} поз.: нет страницы .one`);
+    assert.equal(chisloSlov(html, 'class="tail"'), 0, `ПК, ${n} поз.: связка .tail осталась`);
+    assert.match(html, /<body class="cp pc">/);
+    // на странице .one лежит всё: шапка, клиент, карточки, расчёт, срок КП и нижняя плитка
+    const odna = blokDiv(BEZ_STILEI(html), '<div class="one">');
+    assert.ok(odna, `ПК, ${n}: .one не закрыт`);
+    for (const chast of ['class="bleed"', "blk-client", 'class="cd"', "blk-totals", 'class="tb-note', 'class="tb"']) assert.ok(odna.includes(chast), `ПК, ${n}: в .one нет ${chast}`);
+    assert.equal(skolko(odna, 'class="cd"'), n);
+  }
+  const dlinnaya = smeta({ items: pozicii(30), sheet: "pc" });
+  assert.match(dlinnaya, /@page \{\s*size: 595pt 842pt;/);
+  assert.equal(chisloSlov(dlinnaya, '<div class="one">'), 0);
+  assert.equal(chisloSlov(dlinnaya, 'class="tail"'), 1);
+  assert.match(dlinnaya, /<body class="cp pc">/);
+
+  for (const n of [1, 4, 30]) {
+    const kompakt = smeta({ items: pozicii(n), sheet: "compact" });
+    assert.match(kompakt, /@page \{\s*size: 420pt 595pt;\s*margin: 12mm 0 16mm 0;/);
+    assert.doesNotMatch(kompakt, /size: 595pt 842pt|@page one/);
+    assert.match(kompakt, /<body class="cp">/);
+    assert.doesNotMatch(kompakt, /<body class="cp pc"|<body class="[^"]*\bpc\b/);
+    assert.equal(chisloSlov(kompakt, '<div class="one">'), 0, "у компактного листа страницы .one нет");
+    assert.equal(chisloSlov(kompakt, 'class="tail"'), 1);
+  }
+  const bolshoy = smeta({ items: pozicii(4) });
+  assert.match(bolshoy, /@page \{\s*size: 420pt 595pt;/);
+  assert.match(bolshoy, /<body>/);
+  // везде один @page без имени и один размер листа; div'ы закрыты
+  for (const sheet of FORMATY_LISTA) for (const n of [1, 4, 30]) {
+    const html = smeta({ items: pozicii(n), sheet });
+    assert.equal((html.match(/@page\s*\{/g) || []).length, 1, `${sheet}, ${n}`);
+    assert.equal((html.match(/size:\s*\d+pt \d+pt/g) || []).length, 1, `${sheet}, ${n}`);
+    const razmetka = BEZ_STILEI(html);
+    assert.equal((razmetka.match(/<div[\s>]/g) || []).length, (razmetka.match(/<\/div>/g) || []).length, `${sheet}, ${n}: div'ы не закрыты`);
+  }
+});
+
+// --- защита (XSS) нового вида: пользовательский текст — в каждом поле, во всех трёх форматах ---
+
+// Тело, где КАЖДОЕ пользовательское поле — строка s; daty — validUntil, createdDay, printDay
+function zapolnennoeTelo(s, daty = { validUntil: s, createdDay: s, printDay: s }) {
+  return {
+    clientData: { appealId: `#7${s}`, clientName: s, phone: s, city: s, address: s },
+    items: [
+      { ...POZICIYA, id: "a", productLabel: s, materialName: s, room: s },
+      { ...POZICIYA, id: "b", productLabel: s, materialName: s, room: s, groupId: "g1" },
+      { ...POZICIYA, id: "c", productLabel: s, materialName: s, groupId: "g1", price: 12000 },
+    ],
+    groups: [{ id: "g1", name: s, label: s }],
+    cityContext: { name: s, siteHost: "istra.zhalyuzi-sunray.ru" },
+    ...daty,
+  };
+}
+const CHISTYE_DATY = { validUntil: "2026-10-22", createdDay: "2026-09-12", printDay: "2026-10-17" };
+const OPASNYE_STROKI = [
+  // vShapke — как город попадает в подзаголовок шапки (режется до 18 знаков, экранируется); vPodvale — как в CSS-строку подвала (кавычка, «<», «>» — CSS-кодами)
+  { imya: "тег с обработчиком и скрипт", s: '"><img src=x onerror=alert(1)><script>alert(1)</script>', vShapke: "<i>Объект</i><span>&quot;&gt;&lt;img src=x", vPodvale: "\\22 \\3e \\3c img src=x" },
+  { imya: "закрытие стиля", s: "</style><script>alert(2)</script>", vShapke: "<i>Объект</i><span>&lt;/style&gt;&lt;script&gt;", vPodvale: "\\3c /style\\3e \\3c script\\3e " },
+];
+
+test("защита: опасная строка в КАЖДОМ пользовательском поле (клиент, телефон, город, адрес, номер, название, материал, помещение, группа, город объекта, даты) — big, compact и pc без сырых тегов, второго <style> и разрыва строки подвала", () => {
+  for (const { imya, s, vShapke, vPodvale } of OPASNYE_STROKI) {
+    for (const sheet of FORMATY_LISTA) {
+      const kuda = `${imya}, ${sheet}`;
+      const html = smeta({ ...zapolnennoeTelo(s), sheet });
+      const razmetka = BEZ_STILEI(html);
+      assert.ok(!html.includes("<img src=x onerror"), kuda);
+      assert.ok(!html.includes("<script"), kuda); // в том числе «<script>alert»
+      assert.ok(!html.includes("</style><script"), kuda);
+      assert.equal(skolko(html, "<style"), 1, `${kuda}: второй <style`);
+      assert.equal(skolko(html, "</style>"), 1, `${kuda}: второй </style>`);
+      // новых тегов нет: набор тегов страницы с опасными строками — часть набора чистой сметы того же формата и того же строения
+      const chistye = tegi(BEZ_STILEI(smeta({ ...zapolnennoeTelo("Тест", CHISTYE_DATY), sheet })));
+      for (const teg of tegi(razmetka)) assert.ok(chistye.has(teg), `${kuda}: появился тег <${teg}>`);
+      for (const teg of razmetka.match(/<[^>]*>/g)) assert.ok(!/\son[a-z]+\s*=/i.test(teg), `${kuda}: обработчик в теге ${teg.slice(0, 80)}`);
+      // текст попал в страницу экранированным (проверка не пустая): имя клиента целиком, город — в подзаголовке шапки и в метке над итогом
+      assert.ok(razmetka.includes(`<div class="cl-name">${s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")}</div>`), `${kuda}: имя клиента`);
+      assert.ok(razmetka.includes(vShapke), `${kuda}: город в шапке`);
+      assert.ok(razmetka.includes(`<i>Объект</i><b>${vShapke.slice("<i>Объект</i><span>".length)}`), `${kuda}: город в метке`);
+      // подвал: строка content: "…" закрыта где надо, опасных знаков в ней нет, город в ней — CSS-кодами (\22 — кавычка, \3c — «<», \3e — «>»)
+      const podval = levyPodval(html);
+      assert.ok(podval !== null, `${kuda}: строка подвала разорвана`);
+      assert.match(podval, /^SUNRAY · КП №/);
+      assert.ok(!/[<>&"'\n\r]/.test(podval), `${kuda}: в строке подвала опасный знак: ${podval}`);
+      const gorodVPodvale = podval.split(" · Объект: ")[1];
+      assert.ok(gorodVPodvale && gorodVPodvale.startsWith(vPodvale), `${kuda}: город в подвале: ${podval}`);
+      assert.equal(skolko(html, 'content: "Лист " counter(page) " из " counter(pages);'), 1, `${kuda}: правая половина подвала`);
+    }
+  }
+});
+
+// --- числа и пустая смета ---
+
+test("числа: в HTML big, compact и pc нет NaN, Infinity и undefined — при 1, 2, 30 и 400 позициях, нулевых и отрицательных ценах и количествах, скидке 100%, НДС, группах, акции и монтаже", () => {
+  const raznye = (n) => pozicii(n, (i) => ({
+    price: [-500, 0, 12345, 1e9][i % 4],
+    quantity: [0, 1, 3, -2][(i + 1) % 4],
+    discountPercent: [0, 10, 100, 0][(i + 2) % 4],
+    vatEnabled: i % 5 === 0,
+    ...(i % 7 === 0 ? { priceMode: "unit" } : {}),
+    ...(i % 3 === 1 ? { groupId: "g1" } : i % 3 === 2 ? { groupId: "g2" } : {}),
+  }));
+  for (const sheet of FORMATY_LISTA) {
+    for (const n of [1, 2, 30, 400]) {
+      const html = smeta({
+        items: raznye(n), groups: [{ id: "g1", name: "А" }, { id: "g2", name: "Б" }], promoDiscount: 90, promoFromQty: 20, vatIncluded5: true,
+        montage: { mode: "sum", amount: 1e9 }, cityContext: GOROD_ISTRA, sheet,
+      });
+      const chistoe = BEZ_DATA(html);
+      assert.ok(!/NaN|Infinity|undefined|\[object/.test(chistoe), `${sheet}, ${n} поз.: ${chistoe.match(/.{0,30}(NaN|Infinity|undefined|\[object).{0,30}/)?.[0]}`);
+      assert.equal(skolko(BEZ_STILEI(html), 'class="blk blk-card'), n, `${sheet}, ${n} поз.: карточек столько же, сколько позиций`);
+    }
+  }
+});
+
+test("пустой items: шаблон не падает ни в одном формате — карточек нет, «Количество позиций» 0, «Итого к оплате» 0 ₽; compact и pc ведут себя как big", () => {
+  for (const sheet of FORMATY_LISTA) {
+    const html = smeta({ items: [], sheet });
+    const razmetka = BEZ_STILEI(html);
+    assert.equal(skolko(razmetka, 'class="blk blk-card'), 0, sheet);
+    assert.equal(skolko(razmetka, "blk-totals"), 1, sheet);
+    assert.match(razmetka, /Количество позиций<\/span>\s*<span class="t-value">0\sшт\.<\/span>/, sheet);
+    assert.equal(itogo(html), "0 ₽", sheet);
+    assert.ok(!/NaN|Infinity|undefined/.test(BEZ_DATA(html)), sheet);
+  }
+});
+
+test("отладки в странице нет: при CP_DEBUG=1 (в окружении и до загрузки шаблона, и после) в HTML big, compact и pc нет «CPDBG» и data-est", () => {
+  const put = require.resolve("./shablon");
+  const staryy = require.cache[put];
+  const bylo = process.env.CP_DEBUG;
+  process.env.CP_DEBUG = "1";
+  delete require.cache[put];
+  try {
+    const svezhiy = require("./shablon"); // шаблон, загруженный уже с CP_DEBUG=1: переменную, прочитанную при загрузке, тест тоже увидит
+    for (const modul of [{ buildHtml }, svezhiy]) {
+      for (const sheet of FORMATY_LISTA) {
+        for (const items of [[POZICIYA], pozicii(3), pozicii(30)]) {
+          const html = modul.buildHtml({ clientData: { appealId: "#7", clientName: "Иванов" }, items: dozapolnitPozicii(items), sheet, cityContext: GOROD_ISTRA, printDay: "2026-10-17" });
+          assert.ok(!html.includes("CPDBG"), `${sheet}: CPDBG`);
+          assert.ok(!/data-est/.test(html), `${sheet}: data-est`);
+          assert.ok(!html.includes("CP_DEBUG"), `${sheet}: CP_DEBUG`);
+        }
+      }
+    }
+  } finally {
+    if (bylo === undefined) delete process.env.CP_DEBUG; else process.env.CP_DEBUG = bylo;
+    if (staryy) require.cache[put] = staryy; else delete require.cache[put];
+  }
+});
+
+// --- раскладка компактного листа planKompakta ---
+
+// Эталон раскладки по описанию planKompakta: листы тела — следующая карточка, не влезшая в остаток листа, открывает новый; связка — последние k карточек вместе с расчётом, плашками, сроком
+// и плиткой; берётся k с наименьшим числом листов тела, при равенстве меньшее. Эталон проверяет АЛГОРИТМ, поэтому числа берёт из экспорта шаблона (CP_PL_H, запасы, поля CP_A5 / CP_PC): перекалибровка
+// не делает его красным. Саму КАЛИБРОВКУ держат литералы: тест «числа калибровки листа» и граничные тесты ниже (ровно на границе — да, на 1 px выше — нет).
+const summa = (a) => a.reduce((x, y) => x + y, 0);
+function listyTela(hs, clientH, G) {
+  let listy = 1, ostatok = G.FIRST_FIELD - (CP_PL_H + 8) - (clientH + 8) - 4;
+  for (const h of hs) { if (h > ostatok) { listy++; ostatok = G.NEXT_FREE; } ostatok -= h; }
+  return listy;
+}
+function etalonPlana({ heights, clientH, tailBase }, G) {
+  const n = heights.length;
+  let k = 0, luchshiy = Infinity;
+  for (let t = 1; t <= n - 1; t++) {
+    if (summa(heights.slice(n - t)) + tailBase > G.TAIL - CP_TAIL_SAFE - CP_TAIL_SAFE_PER_CARD * t) break;
+    const listy = listyTela(heights.slice(0, n - t).map((h) => h * CP_PACK_SAFE), clientH, G);
+    if (listy < luchshiy) { luchshiy = listy; k = t; }
+  }
+  return { k, onePage: G.PC && CP_PL_H + 8 + clientH + 8 + summa(heights) + tailBase <= G.ONE - CP_ONE_SAFE };
+}
+// Детерминированные «случайные» числа: один и тот же прогон каждый раз
+function sluchaynye(seed) {
+  let s = seed >>> 0;
+  return () => { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; };
+}
+
+test("числа калибровки листа: запас связки 8 + 18 на карточку, запас «одного листа» 40, запас листов тела 1,03, шапка 144 px; A5 — поле 733 / 683, связка 747; ПК — 1062 / 1012, связка 1076, лист 1121", () => {
+  // 18 px на карточку и 40 px — запас на недооценку estCardCompact на строку (12–18 px, независимая проверка 20.10.2026); было 2 и 24 — связка A5 рвалась на 4 из 10 состязательных тел
+  assert.equal(CP_TAIL_SAFE, 8);
+  assert.equal(CP_TAIL_SAFE_PER_CARD, 18);
+  assert.equal(CP_ONE_SAFE, 40);
+  assert.equal(CP_PACK_SAFE, 1.03);
+  assert.equal(CP_PL_H, 144);
+  const kalibrovka = {
+    A5: [CP_A5, { PC: false, FIRST_FIELD: 733, NEXT_FREE: 683, TAIL: 747, ONE: 0 }],
+    "ПК": [CP_PC, { PC: true, FIRST_FIELD: 1062, NEXT_FREE: 1012, TAIL: 1076, ONE: 1121 }],
+  };
+  for (const [kuda, [G, ozhidaemoe]] of Object.entries(kalibrovka)) {
+    for (const pole of Object.keys(ozhidaemoe)) assert.equal(G[pole], ozhidaemoe[pole], `${kuda}: ${pole}`);
+  }
+});
+
+test("раскладка planKompakta: пустой список карточек — {k: 0, onePage: false} (A5 всегда; ПК — если шапка, клиент и связка не влезают на лист) и без исключения", () => {
+  assert.deepEqual(planKompakta({ heights: [], clientH: 80, tailBase: 400, G: CP_A5 }), { k: 0, onePage: false });
+  assert.deepEqual(planKompakta({ heights: [], clientH: 0, tailBase: 0, G: CP_A5 }), { k: 0, onePage: false });
+  assert.deepEqual(planKompakta({ heights: [], clientH: 80, tailBase: 2000, G: CP_PC }), { k: 0, onePage: false });
+  // ПК: пустая шапка + клиент + обычная связка (152 + 88 + 400 = 640 ≤ 1081) на одном листе помещаются
+  assert.deepEqual(planKompakta({ heights: [], clientH: 80, tailBase: 400, G: CP_PC }), { k: 0, onePage: true });
+});
+
+test("раскладка planKompakta: одна карточка — k = 0 (она остаётся с шапкой); две малых — k = 1; три малых — тоже 1 (листов поровну — меньшее k)", () => {
+  for (const G of [CP_A5, CP_PC]) {
+    for (const h of [1, 100, 500, 5000]) assert.equal(planKompakta({ heights: [h], clientH: 80, tailBase: 400, G }).k, 0, `одна карточка ${h}`);
+    assert.equal(planKompakta({ heights: [100, 100], clientH: 80, tailBase: 400, G }).k, 1);
+    assert.equal(planKompakta({ heights: [100, 100, 100], clientH: 80, tailBase: 400, G }).k, 1);
+  }
+});
+
+test("раскладка planKompakta: хвост больше связки — одна последняя карточка в связку не влезает (A5: 747 − 8 − 18 = 721 px, ПК: 1076 − 8 − 18 = 1050) — k = 0 при любом n ≥ 2; ровно на границе k = 1, на 1 px выше 0", () => {
+  for (const [G, granica] of [[CP_A5, 721], [CP_PC, 1050]]) {
+    const tailBase = 400;
+    const kuda = G.PC ? "ПК" : "A5";
+    assert.equal(planKompakta({ heights: [100, granica - tailBase], clientH: 80, tailBase, G }).k, 1, `${kuda}: ровно на границе`);
+    assert.equal(planKompakta({ heights: [100, granica - tailBase + 1], clientH: 80, tailBase, G }).k, 0, `${kuda}: на 1 px выше`);
+    assert.equal(planKompakta({ heights: [100, 100, 100, 100, 5000], clientH: 80, tailBase, G }).k, 0, `${kuda}: огромная последняя`);
+    assert.equal(planKompakta({ heights: [5000, 5000, 100], clientH: 80, tailBase, G }).k, 1, `${kuda}: огромные ранние карточки в связку не просятся`);
+  }
+  // две карточки в связке: на каждую карточку запас растёт ещё на 18 px (A5: 747 − 8 − 2 × 18 = 703). Тело из четырёх карточек по 119 px — два листа, из трёх — один, поэтому две карточки в связке выгоднее одной
+  // и k = 2, пока связка (119 + последняя + 300) не выше 703: последняя 284 — ровно 703, 285 — на 1 px выше, и остаётся одна карточка
+  assert.equal(planKompakta({ heights: [119, 119, 119, 119, 284], clientH: 80, tailBase: 300, G: CP_A5 }).k, 2, "A5: две карточки, связка ровно 703");
+  assert.equal(planKompakta({ heights: [119, 119, 119, 119, 285], clientH: 80, tailBase: 300, G: CP_A5 }).k, 1, "A5: связка 704 > 703 — две карточки уже не влезают");
+  // первая карточка всегда остаётся в теле (с шапкой): k не больше n − 1, даже когда все три влезли бы в связку (480 + 60 + 60 + 50 = 650 ≤ 747 − 8 − 3 × 18 = 685), а тело из одной
+  // карточки в 480 px (× 1,03 = 494 > 489) считалось бы за два листа; без карточек в теле лист был бы один — но такого k нет
+  assert.equal(planKompakta({ heights: [480, 60, 60], clientH: 80, tailBase: 50, G: CP_A5 }).k, 1);
+});
+
+test("раскладка planKompakta: листы тела считаются с запасом 3 % на оценку — тело из четырёх карточек по 118 px (4 × 118 × 1,03 = 486,2 ≤ 489 — поле первого листа A5) ещё один лист, по 119 px (490,3 > 489) уже два, и в связку уходят две карточки, а не одна", () => {
+  // поле первого листа A5: 733 − (144 + 8) − (80 + 8) − 4 = 489
+  const plan = (h) => planKompakta({ heights: [h, h, h, h, h], clientH: 80, tailBase: 300, G: CP_A5 });
+  assert.equal(plan(118).k, 1);
+  assert.equal(plan(119).k, 2);
+  assert.equal(plan(120).k, 2);
+  assert.equal(plan(100).k, 1);
+});
+
+test("раскладка planKompakta: onePage у ПК — вся смета (шапка 144 + 8, клиент + 8, карточки, связка) не выше 1121 − 40 = 1081 px: ровно на границе истина, на 1 px выше ложь; у A5 всегда ложь", () => {
+  const one = (heights, clientH = 80, tailBase = 400, G = CP_PC) => planKompakta({ heights, clientH, tailBase, G }).onePage;
+  // 152 + 80 + 8 + h + 400 = 1081 → h = 441
+  assert.equal(one([441]), true);
+  assert.equal(one([442]), false);
+  assert.equal(one([200, 150, 91]), true);
+  assert.equal(one([200, 150, 92]), false);
+  assert.equal(one([440], 81), true, "клиент входит в сумму");
+  assert.equal(one([441], 81), false);
+  assert.equal(one([440], 80, 401), true, "связка входит в сумму");
+  assert.equal(one([441], 80, 401), false);
+  for (const heights of [[], [1], [441], [100, 100], [5000]]) assert.equal(one(heights, 0, 0, CP_A5), false, `A5: ${JSON.stringify(heights)}`);
+  // решает флаг PC, а не высота листа: у листа не-ПК onePage ложь, даже если высота «листа целиком» задана
+  assert.equal(one([100], 80, 400, { ...CP_A5, ONE: 1121 }), false);
+  // k от onePage не зависит
+  assert.deepEqual(planKompakta({ heights: [100, 100], clientH: 80, tailBase: 400, G: CP_PC }), { k: 1, onePage: true });
+});
+
+test("раскладка planKompakta совпадает с эталоном на 4000 случайных тел (A5 и ПК, 0–14 карточек); эталонные листы тела не убывают при росте высот", () => {
+  const rnd = sluchaynye(20261020);
+  const videl = { k0: 0, kBolshe0: 0, odna: 0, neOdna: 0 };
+  for (let i = 0; i < 4000; i++) {
+    const G = i % 2 ? CP_PC : CP_A5;
+    const n = Math.floor(rnd() * 15);
+    const heights = Array.from({ length: n }, () => 40 + Math.floor(rnd() * 230));
+    const clientH = 80 + Math.floor(rnd() * 60);
+    const tailBase = 150 + Math.floor(rnd() * (G.PC ? 800 : 500));
+    const ozhidaemoe = etalonPlana({ heights, clientH, tailBase }, G);
+    const poluchili = planKompakta({ heights, clientH, tailBase, G });
+    assert.deepEqual(poluchili, ozhidaemoe, JSON.stringify({ pc: G.PC, heights, clientH, tailBase }));
+    videl[poluchili.k ? "kBolshe0" : "k0"]++;
+    videl[poluchili.onePage ? "odna" : "neOdna"]++;
+    // листы тела (эталон) при росте высот не убывают
+    const vyshe = heights.map((h) => (rnd() < 0.4 ? h + Math.floor(rnd() * 60) : h));
+    assert.ok(listyTela(vyshe, clientH, G) >= listyTela(heights, clientH, G), JSON.stringify({ heights, vyshe, clientH }));
+  }
+  for (const [chto, skolkoRaz] of Object.entries(videl)) assert.ok(skolkoRaz >= 100, `случаев «${chto}» слишком мало (${skolkoRaz}): проверка пустая`);
+});
+
+test("раскладка planKompakta, свойства: выбранное k всегда влезает в связку; рост последней карточки или связки k не увеличивает; onePage при росте любых высот, клиента и связки только гаснет", () => {
+  const rnd = sluchaynye(7);
+  for (let i = 0; i < 1500; i++) {
+    const G = i % 2 ? CP_PC : CP_A5;
+    const n = 2 + Math.floor(rnd() * 10);
+    const heights = Array.from({ length: n }, () => 60 + Math.floor(rnd() * 120));
+    const clientH = 80 + Math.floor(rnd() * 40);
+    const tailBase = 250 + Math.floor(rnd() * 250);
+    const plan = (hs, c = clientH, t = tailBase) => planKompakta({ heights: hs, clientH: c, tailBase: t, G });
+    const { k } = plan(heights);
+    assert.ok(k >= 0 && k <= n - 1, `k = ${k} при n = ${n}`);
+    if (k > 0) assert.ok(summa(heights.slice(n - k)) + tailBase <= G.TAIL - CP_TAIL_SAFE - CP_TAIL_SAFE_PER_CARD * k, `связка из ${k} карточек не влезает: ${JSON.stringify({ pc: G.PC, heights, clientH, tailBase })}`);
+    let kProshloe = Infinity, kProshloeT = Infinity, odnaProshloe = true;
+    for (let dop = 0; dop <= 800; dop += 40) {
+      const kNovoe = plan([...heights.slice(0, -1), heights[n - 1] + dop]).k;
+      assert.ok(kNovoe <= kProshloe, `рост последней карточки на ${dop} увеличил k: ${kProshloe} → ${kNovoe}`);
+      kProshloe = kNovoe;
+      const kT = plan(heights, clientH, tailBase + dop).k;
+      assert.ok(kT <= kProshloeT, `рост связки на ${dop} увеличил k: ${kProshloeT} → ${kT}`);
+      kProshloeT = kT;
+      const odna = plan(heights.map((h) => h + dop / 10), clientH + dop / 10, tailBase + dop / 10).onePage;
+      assert.ok(!(odna && !odnaProshloe), `рост высот на ${dop / 10} вернул onePage`);
+      odnaProshloe = odna;
+    }
+  }
+});
+
+// --- оценка строк: заглавные буквы шире строчных ---
+
+test("оценка строк estLinesM: заглавные слова дают не меньше строк, чем строчные того же числа знаков; «ЖАЛЮЗИ ГОРИЗОНТАЛЬНЫЕ» в колонке 22 знака — две строки, «жалюзи горизонтальные» — одна", () => {
+  assert.equal(estLinesM("жалюзи горизонтальные", 22), 1);
+  assert.equal(estLinesM("ЖАЛЮЗИ ГОРИЗОНТАЛЬНЫЕ", 22), 2);
+  assert.equal(estLinesM("", 22), 1);
+  assert.equal(estLinesM(undefined, 22), 1);
+  assert.equal(estLinesM("Ш".repeat(50), 22), 3, "слово длиннее строки переносится");
+  const teksty = [
+    "жалюзи горизонтальные", "рулонная штора мини", "шторы плиссе для мансардных окон", "ткань блэкаут жемчуг", "жалюзи вертикальные тканевые белые", "шторы день-ночь зебра",
+    "шшшшшшшшшш шшшшшшшшшш", "ммммммммм ююююююююю", "ыыыыыыыыыыыыыыыыыыыыы", "щщщщщщ ъъъъъъ жжжжжж фффффф", "римская штора на заказ из натурального льна",
+  ];
+  for (const perLine of [10, 22, 30, 40, 62]) {
+    for (const tekst_ of teksty) {
+      assert.ok(estLinesM(tekst_.toUpperCase(), perLine) >= estLinesM(tekst_, perLine), `${tekst_} в колонке ${perLine}`);
+    }
+  }
+  // карточка с заглавным названием не ниже строчной, а «ЖАЛЮЗИ ГОРИЗОНТАЛЬНЫЕ 1 шт.» в колонке 30 знаков A5 — на строку выше (18 + 2 × 17,7 против 18 + 22)
+  const num = (n) => n.toLocaleString("ru-RU");
+  const rub = (n) => `${num(n)} ₽`;
+  const vysota = (productLabel) => estCardCompact({ productLabel, quantity: 1, price: 1000 }, { hasAnyDiscount: false, hasAnyVat: false, num, rub, G: CP_A5 });
+  assert.ok(Math.abs(vysota("жалюзи горизонтальные") - 40) < 1e-9);
+  assert.ok(Math.abs(vysota("ЖАЛЮЗИ ГОРИЗОНТАЛЬНЫЕ") - 53.4) < 1e-9);
+});
+
+// --- город объекта: gorodObekta, страница, подвал ---
+
+test("город объекта gorodObekta: нет cityContext, null, число, строка, массив, {} , не строка в name, имя из одних пробелов — города нет (name ''), хост основной", () => {
+  for (const vhod of [
+    undefined, null, 0, 5, true, "Истра", ["Истра"], [], {}, { name: 5 }, { name: null }, { name: [] }, { name: {} }, { name: "" }, { name: "   " }, { name: "\n\t  " },
+    { siteHost: "istra.zhalyuzi-sunray.ru" }, { name: "  ", siteHost: "istra.zhalyuzi-sunray.ru" }, { name: "", siteHost: "istra.zhalyuzi-sunray.ru" },
+  ]) assert.deepEqual(gorodObekta(vhod), { name: "", host: OSNOVNOY_SAYT }, JSON.stringify(vhod) ?? "undefined");
+});
+
+test("город объекта: пробелы по краям убираются, повторные — в один; до 18 знаков — как есть; длиннее — одна общая строка до 18 знаков с «…»: резка по границе слова или дефиса, висячие слова до двух букв уходят", () => {
+  const imya = (name) => gorodObekta({ name }).name;
+  assert.equal(imya("  Красная   Пахра "), "Красная Пахра");
+  assert.equal(imya("Лосино-Петровский"), "Лосино-Петровский"); // 17 знаков — самое длинное название справочника
+  assert.equal(imya("Электрозаводская"), "Электрозаводская");
+  assert.equal(imya("А".repeat(18)), "А".repeat(18));
+  assert.equal(imya("Красная Пахра-на-Оке и далее"), "Красная Пахра…");
+  assert.equal(imya("Старая Купавна и Ногинск"), "Старая Купавна…"); // висячее «и» убрано
+  assert.equal(imya("Сергиево-Посадский район"), "Сергиево…"); // режем по дефису
+  assert.equal(imya("Ростов-на-Дону-и-окрестности"), "Ростов-на-Дону…");
+  assert.equal(imya("Москва Сити Центр Юг Запад"), "Москва Сити Центр…"); // 18-й знак — пробел: границы слова совпали с границей строки
+  assert.equal(imya("А".repeat(19)), `${"А".repeat(17)}…`); // слово без границ — жёсткий рез: 17 знаков и «…»
+  assert.equal(imya("Ж".repeat(30)), `${"Ж".repeat(17)}…`);
+  assert.equal(imya("😀".repeat(20)), `${"😀".repeat(17)}…`); // считаем знаки, а не кодовые единицы
+  // что бы ни пришло: на листе не больше 18 знаков, обрезанное кончается «…» сразу за буквой, а начало — начало присланного имени
+  for (const name of [
+    "Красная Пахра-на-Оке и далее", "Старая Купавна и Ногинск", "Нижний Новгород Верхний", "Сергиев Посад и окрестные деревни", "Орехово-Зуевский городской округ",
+    "Новая Москва Троицк", "Московская область Одинцовский район", "Ак Бар-Сунгуровское сельское", "А".repeat(40), "Ab cd ef gh ij kl mn op qr st", "1234567890 1234567890 1234567890",
+  ]) {
+    const norma = name.replace(/\s+/g, " ").trim();
+    const pokazano = imya(name);
+    assert.ok(Array.from(pokazano).length <= 18, `${name}: ${pokazano}`);
+    assert.ok(pokazano.endsWith("…") && !/[\s-]…$/.test(pokazano), `${name}: ${pokazano}`);
+    assert.ok(norma.startsWith(pokazano.slice(0, -1)), `${name}: ${pokazano}`);
+  }
+});
+
+test("город объекта: хост сайта — только zhalyuzi-sunray.ru и его поддомен из белого списка SITE_HOST_RE; чужой, составной, с протоколом, пробелом, в верхнем регистре, слишком длинный или не строка — основной сайт", () => {
+  const host = (siteHost) => gorodObekta({ name: "Истра", siteHost }).host;
+  const horoshie = ["istra.zhalyuzi-sunray.ru", "zhalyuzi-sunray.ru", "a.zhalyuzi-sunray.ru", "a-b-1.zhalyuzi-sunray.ru", `${"a".repeat(40)}.zhalyuzi-sunray.ru`];
+  for (const h of horoshie) { assert.equal(host(h), h); assert.equal(SITE_HOST_RE.test(h), true, h); }
+  const plohie = [
+    "evil.com", "a.zhalyuzi-sunray.ru.evil.com", "https://istra.zhalyuzi-sunray.ru", "istra.zhalyuzi-sunray.ru ", " istra.zhalyuzi-sunray.ru", "ISTRA.ZHALYUZI-SUNRAY.RU", "Istra.zhalyuzi-sunray.ru",
+    `${"a".repeat(41)}.zhalyuzi-sunray.ru`, "a.b.zhalyuzi-sunray.ru", "istra.zhalyuzi-sunray.ru\n", "istra.zhalyuzi-sunray.ru:443", "istra.zhalyuzi-sunray.ru/", "istra.zhalyuzi-sunray.ru/x",
+    "xzhalyuzi-sunray.ru", ".zhalyuzi-sunray.ru", "zhalyuzi-sunray.ru.", "istra.zhalyuzi-sunray.rux", "istra_1.zhalyuzi-sunray.ru", "evil.com#.zhalyuzi-sunray.ru", "evil.com/.zhalyuzi-sunray.ru",
+    "evil.com?.zhalyuzi-sunray.ru", "evil.com\\.zhalyuzi-sunray.ru", "istra.zhalyuzi-sunray.ru\u0000", "", 5, null, undefined, {}, [], ["istra.zhalyuzi-sunray.ru"],
+  ];
+  for (const h of plohie) {
+    assert.equal(host(h), OSNOVNOY_SAYT, `siteHost = ${JSON.stringify(h) ?? "undefined"}`);
+    if (typeof h === "string") assert.equal(SITE_HOST_RE.test(h), false, `SITE_HOST_RE.test(${JSON.stringify(h)})`); // не строки RegExp.test приводит к строке сам: массив из одного хоста стал бы им, поэтому тип проверяет код
+  }
+  assert.equal(SITE_HOST_RE.global, false, "с флагом g test() помнил бы lastIndex между запросами");
+  // хост без города не нужен
+  assert.equal(gorodObekta({ name: "", siteHost: "istra.zhalyuzi-sunray.ru" }).host, OSNOVNOY_SAYT);
+  // хост из кармана сайта доходит до страницы только через белый список: «evil.com» в страницу не попадает ни в одном формате
+  for (const sheet of FORMATY_LISTA) {
+    const html = smeta({ cityContext: { name: "Истра", siteHost: 'evil.com"><script>alert(1)</script>' }, sheet });
+    assert.ok(!html.includes("evil.com") && !html.includes("<script"), sheet);
+    assert.ok(BEZ_STILEI(html).includes(`<a href="https://${OSNOVNOY_SAYT}/">${OSNOVNOY_SAYT}</a>`), sheet);
+  }
+});
+
+test("город в странице: «Объект Истра» в шапке (подзаголовок), в метке над итогом и в подвале «SUNRAY · КП №… · Объект: Истра», ссылка сайта — на поддомен города; во всех форматах, остальная разметка та же", () => {
+  for (const sheet of FORMATY_LISTA) {
+    const html = smeta({ cityContext: GOROD_ISTRA, sheet });
+    const razmetka = BEZ_STILEI(html);
+    assert.match(razmetka, /<div class="pl-hb"><h1 class="pl-h">Коммерческое предложение<\/h1><div class="pl-city"><svg class="city-ico"[^>]*>[\s\S]*?<\/svg><i>Объект<\/i><span>Истра<\/span><\/div><\/div>/, `${sheet}: шапка`);
+    assert.match(razmetka, /<div class="tb-vlab tb-vlab-city"><span>Срок предложения<\/span><span class="tb-city"><svg class="city-ico"[^>]*>[\s\S]*?<\/svg><i>Объект<\/i><b>Истра<\/b><\/span><\/div>/, `${sheet}: метка над итогом`);
+    assert.equal(levyPodval(html), "SUNRAY · КП №09784 · Объект: Истра", `${sheet}: подвал`);
+    assert.ok(html.includes('content: "SUNRAY · КП №09784 · Объект: Истра";'), sheet);
+    assert.equal(skolko(razmetka, "Объект"), 2, `${sheet}: «Объект» в разметке (шапка и метка)`);
+    assert.equal(skolko(razmetka, "<i>Объект</i>"), 2, sheet);
+    assert.ok(razmetka.includes('<div class="tb-ln"><a href="https://istra.zhalyuzi-sunray.ru/">istra.zhalyuzi-sunray.ru</a></div>'), `${sheet}: ссылка сайта города`);
+    assert.ok(!razmetka.includes(`href="https://${OSNOVNOY_SAYT}/"`), `${sheet}: осталась ссылка на основной сайт`);
+    // CSS города: правила есть, подвал шире слева (76 % / 24 %), ПК — город на линии даты
+    for (const pravilo of [".city-ico {", ".pl-hb {", ".pl-city {", ".tb-vlab-city {", ".tb-city {"]) assert.ok(html.includes(pravilo), `${sheet}: нет CSS ${pravilo}`);
+    assert.ok(html.includes(".pc .pl-hb { padding-bottom: 5px; }"), `${sheet}: правило ПК для шапки города`);
+    assert.equal(shirinaPodvala(html, "bottom-left"), "calc(76% - 10mm)", sheet);
+    assert.equal(shirinaPodvala(html, "bottom-right"), "calc(24% - 10mm)", sheet);
+    // ничего лишнего: если свернуть три места города обратно, разметка равна разметке без города (связка и страница .one считаются как прежде)
+    const svernuto = razmetka
+      .replace(/<div class="pl-hb">(<h1 class="pl-h">[^<]*<\/h1>)<div class="pl-city">[\s\S]*?<\/div><\/div>/, "$1")
+      .replace(/<div class="tb-vlab tb-vlab-city"><span>Срок предложения<\/span><span class="tb-city">[\s\S]*?<\/span><\/div>/, '<div class="tb-vlab">Срок предложения</div>')
+      .replaceAll("istra.zhalyuzi-sunray.ru", OSNOVNOY_SAYT);
+    assert.equal(svernuto, BEZ_STILEI(smeta({ sheet })), `${sheet}: разметка с городом отличается не только городом`);
+    // реквизиты ИП не менялись: ИНН, ОГРНИП, телефон, почта — как были
+    const rekvizity = blokDiv(razmetka, '<div class="tb-req">');
+    for (const stroka_ of ["Индивидуальный предприниматель", "Журович-Миронова Дарья Васильевна", "<i>ИНН</i> 910502074977", "<i>ОГРНИП</i> 321911200058121", '<a href="tel:+79998107717">+7 (999) 810-77-17</a>', '<a href="mailto:sunray-zhalyuzi@yandex.ru">sunray-zhalyuzi@yandex.ru</a>']) {
+      assert.ok(rekvizity.includes(stroka_), `${sheet}: реквизит ${stroka_}`);
+    }
+  }
+});
+
+test("город в странице: без номера обращения подвала нет, а город в шапке и в метке есть (подвал остаётся узким 50 / 50); без города — ни разметки, ни CSS города, строка сайта основная", () => {
+  for (const sheet of FORMATY_LISTA) {
+    const bezNomera = smeta({ clientData: { clientName: "Без номера" }, cityContext: GOROD_ISTRA, sheet });
+    assert.equal(levyPodval(bezNomera), "", sheet);
+    assert.match(BEZ_STILEI(bezNomera), /<div class="pl-city">[\s\S]*<i>Объект<\/i><span>Истра<\/span>/);
+    assert.match(BEZ_STILEI(bezNomera), /<span class="tb-city">[\s\S]*<i>Объект<\/i><b>Истра<\/b>/);
+    assert.ok(!bezNomera.includes("calc(76%") && !bezNomera.includes("calc(24%"), `${sheet}: подвал расширен без подвала`);
+    assert.equal(shirinaPodvala(bezNomera, "bottom-left"), "calc(50% - 10mm)");
+
+    const bezGoroda = smeta({ sheet });
+    for (const sled of ["pl-hb", "pl-city", "tb-vlab-city", "tb-city", "city-ico", "Объект", ".pc .pl-hb", "calc(76%", "calc(24%"]) assert.ok(!bezGoroda.includes(sled), `${sheet}, без города: ${sled}`);
+    assert.equal(levyPodval(bezGoroda), "SUNRAY · КП №09784");
+    assert.equal(skolko(bezGoroda, "width: calc(50% - 10mm);"), 2);
+    assert.equal(shirinaPodvala(bezGoroda, "bottom-left"), "calc(50% - 10mm)");
+    assert.equal(shirinaPodvala(bezGoroda, "bottom-right"), "calc(50% - 10mm)");
+    assert.ok(BEZ_STILEI(bezGoroda).includes(`<div class="tb-ln"><a href="https://${OSNOVNOY_SAYT}/">${OSNOVNOY_SAYT}</a></div>`));
+    // «города нет» в любом виде — страница побайтно та же, что без поля
+    for (const cityContext of [undefined, null, {}, { name: "" }, { name: "   " }, { name: 5 }, { siteHost: "istra.zhalyuzi-sunray.ru" }, "Истра", ["Истра"], 5, true]) {
+      assert.equal(smeta({ cityContext, sheet }), bezGoroda, `${sheet}: cityContext = ${JSON.stringify(cityContext) ?? "undefined"}`);
+    }
+  }
+});
+
+test("город в странице: длинное имя режется один раз и одинаково в шапке, метке и подвале; пробелы и & \" в имени — экранированы в разметке и CSS-кодами в подвале; хост без города не нужен", () => {
+  for (const sheet of FORMATY_LISTA) {
+    const html = smeta({ cityContext: { name: "  Красная   Пахра-на-Оке и далее ", siteHost: "pahra.zhalyuzi-sunray.ru" }, sheet });
+    const razmetka = BEZ_STILEI(html);
+    assert.ok(razmetka.includes("<i>Объект</i><span>Красная Пахра…</span>"), `${sheet}: шапка`);
+    assert.ok(razmetka.includes("<i>Объект</i><b>Красная Пахра…</b>"), `${sheet}: метка`);
+    assert.equal(levyPodval(html), "SUNRAY · КП №09784 · Объект: Красная Пахра…", `${sheet}: подвал`);
+    assert.ok(razmetka.includes('<a href="https://pahra.zhalyuzi-sunray.ru/">pahra.zhalyuzi-sunray.ru</a>'));
+
+    const osobyy = smeta({ cityContext: { name: 'Ростов & "Дон"' }, sheet });
+    assert.ok(BEZ_STILEI(osobyy).includes("<i>Объект</i><span>Ростов &amp; &quot;Дон&quot;</span>"), sheet);
+    const podval = levyPodval(osobyy);
+    assert.ok(podval !== null && podval.endsWith("Ростов \\26  \\22 Дон\\22 ") && !/[<>&"']/.test(podval), `${sheet}: ${podval}`);
+    assert.ok(BEZ_STILEI(osobyy).includes(`<a href="https://${OSNOVNOY_SAYT}/">`), "без siteHost — основной сайт");
+  }
+});
+
+test("город объекта: обрезка снимает висячие тире и запятые, имя из одних невидимых знаков — города нет (разбор проверяющих 20.10.2026)", () => {
+  const imya = (name) => gorodObekta({ name }).name;
+  assert.equal(imya("Ростов – на – Дону – Большой"), "Ростов…");
+  assert.equal(imya("Петропавловск — Камчатский Большой"), "Петропавловск…");
+  assert.equal(imya("Красная Пахра, г. Москва"), "Красная Пахра…");
+  assert.equal(imya("Красная Пахра-на-Оке и далее"), "Красная Пахра…");
+  assert.equal(imya("Лосино-Петровский"), "Лосино-Петровский");
+  assert.equal(imya("-".repeat(25)), "");
+  // нулевой ширины, невидимый разделитель, braille-пустышка, хангыль-заполнитель, selector-16: видимого знака нет
+  for (const c of ["\u200b", "\u2060", "\u3164", "\u2800", "\u115f", "\u180e", "\u00ad", "\u034f", "\ufe0f", "\u200e", "\u061c"]) {
+    assert.equal(imya(c.repeat(3)), "", `U+${c.codePointAt(0).toString(16)}`);
+  }
+  assert.equal(imya("\u200bИстра\u200b"), "\u200bИстра\u200b", "видимые знаки среди невидимых — имя остаётся как есть");
 });

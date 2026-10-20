@@ -9,7 +9,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const http = require("node:http");
 const Fastify = require("fastify");
-const { registerPdfSmetRoute, zagolovokFayla } = require("./route");
+const { registerPdfSmetRoute, zagolovokFayla, oshibkaFormataIGoroda } = require("./route");
 const { sozdatPechatnika, PechatZanyata } = require("./brauzer");
 
 const TOKEN = "Bearer test";
@@ -545,4 +545,158 @@ test("«за всю позицию»: границы не действуют —
   assert.equal((await otpravit(app, telo({ items: [{ ...POZICIYA, quantity: 0 }] }))).statusCode, 200);
   assert.match(vyzovy[0], /<span class="cd-qty">0\sшт\.<\/span>/);
   assert.match(vyzovy[0], /<div class="cd-fin">10\s000\s₽<\/div>/);
+});
+
+// --- формат листа и город объекта (20.10.2026): sheet 'big' | 'compact' | 'pc' и cityContext { name, siteHost? } ---
+
+const GOROD = { name: "Истра", siteHost: "istra.zhalyuzi-sunray.ru" };
+const skolkoRaz = (tekst, podstroka) => tekst.split(podstroka).length - 1;
+
+test("формат листа: sheet вне big|compact|pc ('xl', 1, {}, '', 'BIG', 'Compact', 'PC', 0, false, [] …) — 400 «Invalid sheet» с понятным details, печать не зовут", async (t) => {
+  tishina(t);
+  const { app, vyzovy } = await sobrat(t);
+  for (const sheet of ["xl", 1, {}, "", "BIG", "Compact", "PC", " pc", "pc ", "компакт", 0, false, true, [], ["pc"]]) {
+    const res = await otpravit(app, telo({ sheet }));
+    assert.equal(res.statusCode, 400, JSON.stringify(sheet));
+    assert.equal(res.json().error, "Invalid sheet", JSON.stringify(sheet));
+    assert.match(res.json().details, /Формат листа.*«big».*«compact».*«pc»/, JSON.stringify(sheet));
+  }
+  // и вместе с хорошим городом, и после хороших полей: ошибка формата не теряется
+  assert.equal((await otpravit(app, telo({ sheet: "xl", cityContext: GOROD, promoDiscount: 15 }))).json().error, "Invalid sheet");
+  assert.equal(vyzovy.length, 0);
+});
+
+test("формат листа: compact и pc — 200, в печать уходит страница с нужным @page size и классом body; big и без поля — лист A5 как раньше, побайтно одинаковый", async (t) => {
+  tishina(t);
+  const { app, vyzovy } = await sobrat(t);
+  const ozhidaemye = { compact: ["420pt 595pt", '<body class="cp">'], pc: ["595pt 842pt", '<body class="cp pc">'], big: ["420pt 595pt", "<body>"] };
+  const htmlPo = {};
+  for (const [sheet, [razmer, teloStranicy]] of Object.entries(ozhidaemye)) {
+    vyzovy.length = 0;
+    const res = await otpravit(app, telo({ sheet }));
+    assert.equal(res.statusCode, 200, sheet);
+    assert.equal(res.headers["content-type"], "application/pdf", sheet);
+    assert.deepEqual(res.rawPayload, PDF, sheet);
+    assert.equal(vyzovy.length, 1, sheet);
+    assert.match(vyzovy[0], new RegExp(`@page \\{\\s*size: ${razmer};`), sheet);
+    assert.equal((vyzovy[0].match(/[^-]size:\s*\d+pt \d+pt/g) || []).length, 1, `${sheet}: размер листа задан не один раз`);
+    assert.ok(vyzovy[0].includes(teloStranicy), `${sheet}: ${teloStranicy}`);
+    assert.ok(vyzovy[0].includes('content: "Лист " counter(page) " из " counter(pages);'), sheet);
+    htmlPo[sheet] = vyzovy[0];
+  }
+  assert.notEqual(htmlPo.compact, htmlPo.big);
+  assert.notEqual(htmlPo.pc, htmlPo.big);
+  assert.notEqual(htmlPo.pc, htmlPo.compact);
+  vyzovy.length = 0;
+  assert.equal((await otpravit(app, telo())).statusCode, 200);
+  assert.equal(vyzovy[0], htmlPo.big, "тело без sheet печатается как sheet: 'big'");
+  // «ПК»: короткая смета — одна страница
+  assert.ok(skolkoRaz(htmlPo.pc, '<div class="one">') === 1 && !htmlPo.pc.includes('<div class="tail">'));
+});
+
+test("город объекта: cityContext не объект, без name, пустое или пробельное имя, имя длиннее 60 знаков, чужой или не строковый siteHost — 400 «Invalid cityContext», печать не зовут", async (t) => {
+  tishina(t);
+  const { app, vyzovy } = await sobrat(t);
+  const imyaPlohoe = /name.*строка с видимыми знаками не длиннее 60 знаков/;
+  const hostPlohoy = /siteHost.*zhalyuzi-sunray\.ru.*поддомен/;
+  const plohie = [
+    ["строка", "Истра", imyaPlohoe], ["пустая строка", "", imyaPlohoe], ["число", 5, imyaPlohoe], ["ноль", 0, imyaPlohoe], ["false", false, imyaPlohoe], ["true", true, imyaPlohoe],
+    ["массив", ["Истра"], imyaPlohoe], ["пустой массив", [], imyaPlohoe], ["массив с name", Object.assign(["Истра"], { name: "Истра" }), imyaPlohoe],
+    ["без name", { siteHost: "istra.zhalyuzi-sunray.ru" }, imyaPlohoe], ["пустой объект", {}, imyaPlohoe],
+    ["name null", { name: null }, imyaPlohoe], ["name число", { name: 123 }, imyaPlohoe], ["name массив", { name: ["Истра"] }, imyaPlohoe], ["name объект", { name: { v: "Истра" } }, imyaPlohoe],
+    ["name пустой", { name: "" }, imyaPlohoe], ["name пробелы", { name: "   " }, imyaPlohoe], ["name табы и переводы строк", { name: "\n\t \r" }, imyaPlohoe],
+    ["name 61 знак", { name: "Я".repeat(61) }, imyaPlohoe], ["name 61 знак с пробелами по краям", { name: `  ${"Я".repeat(61)}  ` }, imyaPlohoe],
+    ["name 61 эмодзи", { name: "😀".repeat(61) }, imyaPlohoe], ["name из невидимых", { name: "\u200b\u200b\u200b" }, imyaPlohoe], ["name U+2800", { name: "\u2800" }, imyaPlohoe], ["name 61 знак с повторными пробелами", { name: `${"Я".repeat(30)}      ${"Ю".repeat(30)}` }, imyaPlohoe],
+    ["siteHost evil.com", { name: "Истра", siteHost: "evil.com" }, hostPlohoy],
+    ["siteHost с чужим хвостом", { name: "Истра", siteHost: "a.zhalyuzi-sunray.ru.evil.com" }, hostPlohoy],
+    ["siteHost с протоколом", { name: "Истра", siteHost: "https://zhalyuzi-sunray.ru" }, hostPlohoy],
+    ["siteHost число", { name: "Истра", siteHost: 123 }, hostPlohoy], ["siteHost пустая строка", { name: "Истра", siteHost: "" }, hostPlohoy],
+    ["siteHost объект", { name: "Истра", siteHost: {} }, hostPlohoy], ["siteHost массив", { name: "Истра", siteHost: ["istra.zhalyuzi-sunray.ru"] }, hostPlohoy],
+    ["siteHost в верхнем регистре", { name: "Истра", siteHost: "ISTRA.zhalyuzi-sunray.ru" }, hostPlohoy],
+    ["siteHost с пробелом в конце", { name: "Истра", siteHost: "istra.zhalyuzi-sunray.ru " }, hostPlohoy],
+    ["siteHost с переводом строки", { name: "Истра", siteHost: "istra.zhalyuzi-sunray.ru\n" }, hostPlohoy],
+    ["siteHost с портом", { name: "Истра", siteHost: "istra.zhalyuzi-sunray.ru:8080" }, hostPlohoy],
+    ["siteHost слишком длинный поддомен", { name: "Истра", siteHost: `${"a".repeat(41)}.zhalyuzi-sunray.ru` }, hostPlohoy],
+    ["siteHost двойной поддомен", { name: "Истра", siteHost: "a.b.zhalyuzi-sunray.ru" }, hostPlohoy],
+  ];
+  for (const [chto, cityContext, details] of plohie) {
+    const res = await otpravit(app, telo({ cityContext }));
+    assert.equal(res.statusCode, 400, chto);
+    assert.equal(res.json().error, "Invalid cityContext", chto);
+    assert.match(res.json().details, details, chto);
+  }
+  assert.equal(vyzovy.length, 0);
+});
+
+test("город объекта: допустимое — 200, в странице «Объект» и город, при любом формате; имя ровно 60 знаков проходит (знаки, а не кодовые единицы); поддомен идёт в реквизиты, без siteHost — основной сайт", async (t) => {
+  tishina(t);
+  const { app, vyzovy } = await sobrat(t);
+  for (const sheet of [undefined, "big", "compact", "pc"]) {
+    const kuda = String(sheet);
+    const stranica = async (cityContext) => {
+      vyzovy.length = 0;
+      const res = await otpravit(app, telo({ sheet, cityContext }));
+      assert.equal(res.statusCode, 200, `${kuda}: ${JSON.stringify(cityContext)} → ${res.payload.slice(0, 120)}`);
+      assert.equal(vyzovy.length, 1);
+      return vyzovy[0];
+    };
+    const istra = await stranica(GOROD);
+    assert.ok(istra.includes("<i>Объект</i><span>Истра</span>"), `${kuda}: город в шапке`);
+    assert.ok(istra.includes("<i>Объект</i><b>Истра</b>"), `${kuda}: город в метке`);
+    assert.ok(istra.includes('content: "SUNRAY · КП №09784 · Объект: Истра";'), `${kuda}: город в подвале`);
+    assert.ok(istra.includes('<a href="https://istra.zhalyuzi-sunray.ru/">istra.zhalyuzi-sunray.ru</a>'), `${kuda}: сайт города`);
+    assert.ok(!istra.includes('href="https://zhalyuzi-sunray.ru/"'));
+
+    const svoe = await stranica({ name: "Свое" });
+    assert.ok(svoe.includes("<i>Объект</i><span>Свое</span>"), kuda);
+    assert.ok(svoe.includes('<a href="https://zhalyuzi-sunray.ru/">zhalyuzi-sunray.ru</a>'), `${kuda}: без siteHost — основной сайт`);
+    assert.ok(!svoe.includes("istra"));
+    // siteHost: null, основной хост и «хоста нет» — одна и та же страница
+    assert.equal(await stranica({ name: "Свое", siteHost: null }), svoe, kuda);
+    assert.equal(await stranica({ name: "Свое", siteHost: "zhalyuzi-sunray.ru" }), svoe, kuda);
+
+    // граница длины: 60 знаков проходят (в том числе 60 эмодзи — 120 кодовых единиц), на листе город режется до 18 знаков
+    const dlinnyy = await stranica({ name: "Я".repeat(60) });
+    assert.ok(dlinnyy.includes(`<i>Объект</i><span>${"Я".repeat(17)}…</span>`), kuda);
+    assert.ok(!dlinnyy.includes("Я".repeat(18)));
+    const emodzi = await stranica({ name: "😀".repeat(60) });
+    assert.ok(emodzi.includes(`<i>Объект</i><span>${"😀".repeat(17)}…</span>`), kuda);
+    const probely = await stranica({ name: `  ${"Я".repeat(30)}   ${"Ю".repeat(26)}  ` }); // 30 + 1 + 26 = 57 знаков после чистки пробелов
+    assert.ok(probely.includes("<i>Объект</i><span>"), kuda);
+    assert.ok((await stranica({ name: "  Красная   Пахра " })).includes("<i>Объект</i><span>Красная Пахра</span>"), kuda);
+    // лишние поля города страница не читает: ни хост из них, ни текст в неё не попадают
+    const lishnee = await stranica({ name: "Свое", host: "evil.com", url: "https://evil.com/x", html: "<script>alert(1)</script>" });
+    assert.ok(!lishnee.includes("evil.com") && !lishnee.includes("alert(1)"), kuda);
+    assert.equal(lishnee, svoe, `${kuda}: лишние поля изменили страницу`);
+  }
+});
+
+test("sheet: null и cityContext: null (и 'big') — 200, HTML побайтно как без полей", async (t) => {
+  tishina(t);
+  const { app, vyzovy } = await sobrat(t);
+  const stranica = async (dop) => {
+    vyzovy.length = 0;
+    const res = await otpravit(app, telo(dop));
+    assert.equal(res.statusCode, 200, JSON.stringify(dop));
+    return vyzovy[0];
+  };
+  const bez = await stranica({});
+  for (const dop of [{ sheet: null }, { cityContext: null }, { sheet: null, cityContext: null }, { sheet: "big" }, { sheet: "big", cityContext: null }]) {
+    assert.equal(await stranica(dop), bez, JSON.stringify(dop));
+  }
+  assert.ok(!bez.includes("Объект"));
+});
+
+test("oshibkaFormataIGoroda: нет полей и null — не ошибка; формат проверяется раньше города; ошибка — {error, details}", () => {
+  assert.equal(oshibkaFormataIGoroda({}), null);
+  assert.equal(oshibkaFormataIGoroda({ sheet: null, cityContext: null }), null);
+  assert.equal(oshibkaFormataIGoroda({ sheet: undefined, cityContext: undefined }), null);
+  for (const sheet of ["big", "compact", "pc"]) assert.equal(oshibkaFormataIGoroda({ sheet, cityContext: GOROD }), null, sheet);
+  assert.equal(oshibkaFormataIGoroda({ cityContext: { name: "Я".repeat(60) } }), null);
+  assert.equal(oshibkaFormataIGoroda({ cityContext: { name: "Свое", siteHost: null } }), null);
+  assert.equal(oshibkaFormataIGoroda({ sheet: "xl", cityContext: "плохой" }).error, "Invalid sheet");
+  assert.equal(oshibkaFormataIGoroda({ sheet: "pc", cityContext: "плохой" }).error, "Invalid cityContext");
+  const oshibka = oshibkaFormataIGoroda({ sheet: 1 });
+  assert.deepEqual(Object.keys(oshibka).sort(), ["details", "error"]);
+  assert.equal(typeof oshibka.details, "string");
 });

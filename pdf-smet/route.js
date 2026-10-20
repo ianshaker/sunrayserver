@@ -4,19 +4,21 @@
 // Заменяет Deno-функцию Supabase generate-estimate-pdf (index.ts) вместе с Api2Pdf: то же тело запроса, тот же шаблон
 // (shablon.js), тот же ответ — application/pdf и имя файла как в index.ts:88-101.
 //
-// Body: { clientData, items, headerImageUrl?, promoDiscount?, promoFromQty?, vatIncluded5?, groups?, montage?, validUntil?, createdDay?, printDay? }
+// Body: { clientData, items, headerImageUrl?, promoDiscount?, promoFromQty?, vatIncluded5?, groups?, montage?, validUntil?, createdDay?, printDay?, sheet?, cityContext? }
 //   Буква Б (20.10.2026): items[i].priceMode? 'total' (по умолчанию, цена за всю позицию) | 'unit' (за штуку); promoDiscount — целое 1–90; promoFromQty — целое 2–20 (нет — «от 2 изделий»);
 //   promoApply? не читается: CRM шлёт уже посчитанные цифры (эффективные discountPercent / discountedPrice), сервер акцию не применяет.
 //   Буква В (20.10.2026): items[i].room? — помещение (строка; trim, пробелы в один, до 60 знаков; пусто — «без помещения»), items[i].widthMm? / heightMm? — размеры, целые мм 1–20000, оба или ни одного.
+//   Формат листа и город (20.10.2026): sheet? 'big' (по умолчанию, лист A5 как раньше) | 'compact' (лист A5, блоки плотнее) | 'pc' (лист A4, вся смета на одном листе, если помещается);
+//   cityContext? { name, siteHost? } — город объекта: name — строка 1–60 знаков с видимым знаком (на листе режется до 18 знаков с «…», CITY_SHOW_MAX в shablon.js), siteHost — только zhalyuzi-sunray.ru или его поддомен (иначе 400). Нет полей — лист как раньше.
 //   Ревью (20.10.2026): у позиции с priceMode 'unit' количество умножает деньги, поэтому quantity — число > 0 и ≤ 100000, price — от 0 до 1e9, discountPercent (если прислан) — от 0 до 100; у 'total' границ нет (старые тела печатаются как раньше).
 // Вход: Authorization: Bearer <токен сессии CRM> — проверка assertAuthenticatedFromRequest (подменяется параметром propusk).
-// Ответ: 200 PDF | 401 нет пропуска | 400 пустой items, слишком много позиций или групп, неверные числа, неверные promoDiscount / promoFromQty / priceMode / room / widthMm / heightMm, у позиций «за штуку» — quantity / price / discountPercent, или тело,
+// Ответ: 200 PDF | 401 нет пропуска | 400 пустой items, слишком много позиций или групп, неверные числа, неверные promoDiscount / promoFromQty / priceMode / room / widthMm / heightMm / sheet / cityContext, у позиций «за штуку» — quantity / price / discountPercent, или тело,
 //        из которого смета не собирается | 503 печать занята (Retry-After: 60) | 502 Chrome не напечатал или не уложился
 //        в срок. Клиент ушёл, пока печать ждала места, — печати нет и ответа нет. В тексте ответа ошибок Chrome и путей нет:
 //        полный текст — в console.error.
 // ============================================================================
 
-const { buildHtml, dozapolnitPozicii, imyaFayla, denPechati, privestiChisla } = require('./shablon');
+const { buildHtml, dozapolnitPozicii, imyaFayla, denPechati, privestiChisla, SITE_HOST_RE, VIDIMOE_RE } = require('./shablon');
 const { pechatatSmetu } = require('./brauzer');
 
 // Реальная смета — до 22 позиций; больше — уже не смета, а нагрузка: шаблон считается синхронно в главном потоке сервера
@@ -26,6 +28,9 @@ const MAX_GRUPP = 100;
 // Буква Б: допустимые значения новых полей (ТЗ tz-uluchsheniya-smety.md §1): скидка по акции — целое 1–90 (раньше 20|25), «от N изделий» — целое 2–20 (нет — «от 2»),
 // способ цены позиции — 'total' (за всю позицию, по умолчанию) или 'unit' (за штуку)
 const PRICE_MODES = new Set(['total', 'unit']);
+// Формат листа (20.10.2026): большой как раньше, «компактный» A5 и «ПК» A4. Мусор — 400, а не тихий «большой»: ошибка CRM должна быть видна
+const SHEETS = new Set(['big', 'compact', 'pc']);
+const CITY_NAME_MAX = 60;
 const celoeV = (n, min, max) => Number.isInteger(n) && n >= min && n <= max;
 
 // Режим «цена за штуку» (priceMode 'unit', ревью 20.10.2026): деньги позиции = price × quantity, поэтому числа позиции держим в границах — иначе −3 штуки,
@@ -92,6 +97,28 @@ function oshibkaNovyhPolej(items, { items: privedennye, promoDiscount, promoFrom
 }
 
 /**
+ * Проверка полей «формат листа» и «город объекта» (нет поля или null — «не задано», это не ошибка).
+ * @param {any} body — тело запроса как пришло
+ * @returns {{ error: string, details: string } | null}
+ */
+function oshibkaFormataIGoroda(body) {
+  if (body.sheet != null && !SHEETS.has(body.sheet)) {
+    return { error: 'Invalid sheet', details: 'Формат листа должен быть «big», «compact» или «pc»' };
+  }
+  const c = body.cityContext;
+  if (c != null) {
+    const imya = c && typeof c === 'object' && !Array.isArray(c) && typeof c.name === 'string' ? c.name.replace(/\s+/g, ' ').trim() : '';
+    if (!imya || !VIDIMOE_RE.test(imya) || Array.from(imya).length > CITY_NAME_MAX) {
+      return { error: 'Invalid cityContext', details: `Город объекта: name — строка с видимыми знаками не длиннее ${CITY_NAME_MAX} знаков` };
+    }
+    if (c.siteHost != null && !(typeof c.siteHost === 'string' && SITE_HOST_RE.test(c.siteHost))) {
+      return { error: 'Invalid cityContext', details: 'Город объекта: siteHost — только zhalyuzi-sunray.ru или его поддомен' };
+    }
+  }
+  return null;
+}
+
+/**
  * Content-Disposition как в index.ts:95-101. В filename="…" остаётся только печатный ASCII без кавычек и «\»: имя вроде
  * «#09784.pdf» от этого не меняется, а имя с кириллицей или переводом строки не роняет заголовок (полное имя — в filename*).
  */
@@ -145,7 +172,7 @@ function registerPdfSmetRoute(fastify, { propusk, pechatat = pechatatSmetu } = {
       });
     }
 
-    const oshibka = oshibkaNovyhPolej(body.items, chisla);
+    const oshibka = oshibkaNovyhPolej(body.items, chisla) || oshibkaFormataIGoroda(body);
     if (oshibka) return reply.code(400).send(oshibka);
 
     let html;
@@ -190,4 +217,4 @@ function registerPdfSmetRoute(fastify, { propusk, pechatat = pechatatSmetu } = {
   });
 }
 
-module.exports = { registerPdfSmetRoute, zagolovokFayla };
+module.exports = { registerPdfSmetRoute, zagolovokFayla, oshibkaFormataIGoroda };

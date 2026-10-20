@@ -145,3 +145,46 @@ test("страница сметы просит только разрешённы
   for (const adres of vse) assert.ok(dopustimye.has(new URL(adres).host), adres.slice(0, 100));
   assert.ok(!adresa.some((a) => a.includes("evil.example")));
 });
+
+// Город объекта (20.10.2026): строка сайта в реквизитах ведёт на поддомен города. Это <a href> — страница её не грузит, и белый список печати (razreshenAdres) сайт компании не пускает.
+// Тест выше (допустим только точный zhalyuzi-sunray.ru) не тронут; здесь — страницы с городом во всех трёх форматах.
+test("страница сметы с городом объекта (поддомен) во всех трёх форматах просит те же разрешённые адреса; абсолютные адреса в тексте — шрифты Google, Storage Supabase, zhalyuzi-sunray.ru или его поддомен", () => {
+  const body = {
+    clientData: { appealId: "#09784", clientName: "Тест Тестов", phone: "8(900)000-00-00", city: "Химки", address: "ул. Тестовая, 1" },
+    headerImageUrl: "https://evil.example/cover.png",
+    items: dozapolnitPozicii([{ productLabel: "Штора", materialName: "Ткань", quantity: 1, price: 1000 }, { productLabel: "Жалюзи", quantity: 2, price: 2500 }]),
+    montage: { mode: "sum", amount: 500 }, promoDiscount: 10, vatIncluded5: true, validUntil: "2026-10-22", createdDay: "2026-10-08", printDay: "2026-10-17",
+  };
+  const gorod = { name: "Истра", siteHost: "istra.zhalyuzi-sunray.ru" };
+  const hostSupabase = new URL(SUPABASE_URL).host;
+  const dopustimyHost = (host) => host === "fonts.googleapis.com" || host === "fonts.gstatic.com" || host === hostSupabase
+    || host === "zhalyuzi-sunray.ru" || host.endsWith(".zhalyuzi-sunray.ru");
+  for (const sheet of ["big", "compact", "pc"]) {
+    const bez = buildHtml({ ...body, sheet });
+    const html = buildHtml({ ...body, sheet, cityContext: gorod });
+    const adresa = adresaStranicy(html);
+    assert.ok(adresa.length >= 4, `${sheet}: адресов слишком мало: ${adresa.length}`);
+    // страница просит ровно то, что просила без города, и всё это пускает razreshenAdres
+    assert.deepEqual(adresa, adresaStranicy(bez), `${sheet}: город добавил адреса для загрузки`);
+    for (const adres of adresa) assert.equal(razreshenAdres(adres), true, `${sheet}: ${adres.slice(0, 100)}`);
+    assert.deepEqual([...new Set(adresa.map((a) => (a.startsWith("data:") ? "data:" : new URL(a).host)))].sort(), ["data:", "fonts.googleapis.com", "fonts.gstatic.com"], sheet);
+    // любые абсолютные адреса в тексте (в том числе ссылка <a href> сайта города, она не грузится)
+    const vse = [...html.matchAll(/https?:\/\/[^\s"'<>)\\]+/g)].map((m) => m[0]);
+    assert.ok(vse.length >= 3, `${sheet}: абсолютных адресов слишком мало: ${vse.length}`);
+    for (const adres of vse) assert.ok(dopustimyHost(new URL(adres).hostname), `${sheet}: ${adres.slice(0, 100)}`);
+    assert.ok(vse.includes("https://istra.zhalyuzi-sunray.ru/"), `${sheet}: ссылки на сайт города нет`);
+    assert.ok(!html.includes("evil.example"), `${sheet}: адрес из headerImageUrl попал в страницу`);
+  }
+  // сайт компании печатающему Chrome не нужен и не разрешён: ссылку в реквизитах страница не грузит
+  assert.equal(razreshenAdres("https://istra.zhalyuzi-sunray.ru/"), false);
+  assert.equal(razreshenAdres("https://zhalyuzi-sunray.ru/"), false);
+  // чужой хост и ссылка в имени города — не адреса для загрузки: страница просит то же, что без города, чужого хоста в ней нет
+  for (const sheet of ["big", "compact", "pc"]) {
+    const bez = adresaStranicy(buildHtml({ ...body, sheet }));
+    const podmena = buildHtml({ ...body, sheet, cityContext: { name: "Истра", siteHost: "evil.example/x.png" } });
+    assert.ok(!podmena.includes("evil.example"), `${sheet}: чужой хост попал в страницу`);
+    assert.deepEqual(adresaStranicy(podmena), bez, sheet);
+    const sSylkoy = buildHtml({ ...body, sheet, cityContext: { name: "https://evil.example/x.png" } });
+    assert.deepEqual(adresaStranicy(sSylkoy), bez, `${sheet}: ссылка в имени города стала адресом загрузки`);
+  }
+});

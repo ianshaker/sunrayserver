@@ -80,7 +80,7 @@ function cssString(value) {
 // рисует в полях @page, поэтому плитка во весь лист стоит вне .sheet, а не вылетает в поля).
 // Подвал — margin-боксы: каждый 50 % ширины минус 10 мм отступа от края листа; линия сверху (border-top) стоит в 5 мм под полем
 // содержимого, текст — под линией. @page :first меняет только верхнее поле, боксы подвала остаются на первом листе.
-function pageCss(footerLeft) {
+function pageCss(footerLeft, pc = false, wideFooter = false) {
   const footer = `
     font-family: 'Montserrat', 'Segoe UI', Arial, sans-serif;
     font-size: 12px; font-weight: 600; line-height: 1;
@@ -93,19 +93,21 @@ function pageCss(footerLeft) {
   `;
   return `
   @page {
-    size: 420pt 595pt;
+    size: ${pc ? '595pt 842pt' : '420pt 595pt'};
     margin: 12mm 0 16mm 0;
     @bottom-left {
       content: "${footerLeft ? cssString(footerLeft) : ''}";
       margin-left: 10mm;
       text-align: left;
-      ${footer}
+      ${footer}${wideFooter ? `
+      width: calc(76% - 10mm);` : ''}
     }
     @bottom-right {
       content: "Лист " counter(page) " из " counter(pages);
       margin-right: 10mm;
       text-align: right;
-      ${footer}
+      ${footer}${wideFooter ? `
+      width: calc(24% - 10mm);` : ''}
       font-weight: 700;
       color: #145c45;
     }
@@ -117,7 +119,13 @@ function pageCss(footerLeft) {
     margin-bottom: 0;
     @bottom-left { content: none; margin: 0; padding: 0; border: 0; }
     @bottom-right { content: none; margin: 0; padding: 0; border: 0; }
-  }`;
+  }${pc ? `
+  /* вся смета на одном листе (формат «ПК»): ни полей, ни подвала — шапка у верха, плитка у низа */
+  @page one {
+    margin: 0;
+    @bottom-left { content: none; margin: 0; padding: 0; border: 0; }
+    @bottom-right { content: none; margin: 0; padding: 0; border: 0; }
+  }` : ''}`;
 }
 
 // Условие акции «от N изделий» в плашке — жирным цветом акцента листа (оранжевый #a34a0b, как у строки скидки в расчёте; на #ffe8cf контраст ≈ 5:1). Правило дописывается в конец CSS
@@ -150,8 +158,8 @@ const CSS_ROOMS = `
   /* заголовок и первая карточка секции — один неразрывный блок (.blk): заголовок не остаётся один внизу листа; между секциями воздуха больше, чем между карточками */
   .blk-card + .blk-rhead { margin-top: 8px; }`;
 
-function getStyles({ footerLeft = '', promoCond = false, unitRow = false, sizeRow = false, roomRows = false } = {}) {
-  return `${pageCss(footerLeft)}
+function getStyles({ footerLeft = '', promoCond = false, unitRow = false, sizeRow = false, roomRows = false, compact = false, pc = false, city = false } = {}) {
+  return `${pageCss(footerLeft, pc, city && Boolean(footerLeft))}
   :root {
     --fs-m: 15.5px;
     --r-block: 22px;
@@ -235,7 +243,7 @@ function getStyles({ footerLeft = '', promoCond = false, unitRow = false, sizeRo
   /* ── Сменные модули визуала ── */
   ${CSS_PLASHKA}
   ${CSS_CARD}
-  ${CSS_TILE}${promoCond ? CSS_PROMO_COND : ''}${unitRow ? CSS_UNIT : ''}${sizeRow ? CSS_SIZE : ''}${roomRows ? CSS_ROOMS : ''}
+  ${CSS_TILE}${promoCond ? CSS_PROMO_COND : ''}${unitRow ? CSS_UNIT : ''}${sizeRow ? CSS_SIZE : ''}${roomRows ? CSS_ROOMS : ''}${compact ? CSS_COMPACT : ''}${pc ? CSS_PC : ''}${city ? CSS_CITY : ''}
 `;
 }
 
@@ -341,8 +349,12 @@ function buildHtml(data) {
   // headerImageUrl шаблон не читает: плитка рисуется кодом, фото-обложки нет (решение Яна 19.10.2026)
   const {
     clientData, items, promoDiscount = null, promoFromQty = null, vatIncluded5 = false,
-    groups = [], montage = null, validUntil = null, createdDay = null, printDay = null,
+    groups = [], montage = null, validUntil = null, createdDay = null, printDay = null, sheet = 'big', cityContext = null,
   } = data;
+  // Город объекта (необязательный): нет или пустое имя — лист печатается как раньше, побайтно; есть — подзаголовок шапки, метка над итогом, подвал и адрес сайта города в реквизитах
+  const { name: cityName, host: siteHost } = gorodObekta(cityContext);
+  const pc = sheet === 'pc'; // формат «ПК»: лист A4 (595 × 842 pt), та же компактная вёрстка, обычная смета — на одном листе
+  const compact = sheet === 'compact' || pc; // «компактный» лист: та же фирменная вёрстка, но блоки собраны плотнее (CP_*, CSS_COMPACT); большой лист печатается как раньше
 
   // Дни приходят готовыми строками «2026-09-29»: их считает CRM по Москве. Свои часы
   // у службы печати живут по UTC и ночью поставили бы в файл вчерашнее число.
@@ -388,7 +400,10 @@ function buildHtml(data) {
     ? `Предложение действительно${сколькоДействует ? ` ${сколькоДействует} —` : ''} до <b>${днём(validUntil)}</b>`
     : `Настоящее коммерческое предложение действительно в течение 14 дней с момента формирования. Дата: <b>${деньПечатиНаЛисте}</b>`;
   const validitySub = validUntil ? `Смета составлена ${днём(деньСоставления)}` : '';
-  const validityNote = `<div class="tb-vlab">Срок предложения</div><div class="tb-vmain">${validityMain}</div>${validitySub ? `<div class="tb-vsub">${validitySub}</div>` : ''}`;
+  const vlab = cityName
+    ? `<div class="tb-vlab tb-vlab-city"><span>Срок предложения</span><span class="tb-city">${CITY_ICO}<i>Объект</i><b>${escapeHtml(cityName)}</b></span></div>`
+    : '<div class="tb-vlab">Срок предложения</div>';
+  const validityNote = `${vlab}<div class="tb-vmain">${validityMain}</div>${validitySub ? `<div class="tb-vsub">${validitySub}</div>` : ''}`;
 
   // Зеркало montage.ts из CRM: к итогу прибавляется только своя сумма и только
   // больше нуля, «включён» и «бесплатно» показываются словами и итог не двигают
@@ -513,7 +528,7 @@ function buildHtml(data) {
     const groupIdx = item.groupId ? groups.findIndex(g => g.id === item.groupId) : -1;
     const groupColor = groupIdx >= 0 ? GROUP_COLORS_PDF[groupIdx % GROUP_COLORS_PDF.length] : null;
     const groupNum = groupIdx >= 0 ? groupIdx + 1 : null;
-    const html = cardHtml(item, idx, { hasAnyDiscount, hasAnyVat, groupColor, groupNum, rub, num, escapeHtml });
+    const html = (compact ? cardHtmlCompact : cardHtml)(item, idx, { hasAnyDiscount, hasAnyVat, groupColor, groupNum, rub, num, escapeHtml });
     return sektsiya ? `<div class="blk blk-card blk-rhead">${roomHead(sektsiya)}${html}</div>` : `<div class="blk blk-card">${html}</div>`;
   });
   // Последняя карточка уходит в связку «хвост» с расчётом (расчёт не остаётся на листе без позиции). Исключение — одна позиция:
@@ -537,6 +552,24 @@ function buildHtml(data) {
               <span><i>Город</i>${escapeHtml(clientData.city || '—')}</span>
               ${clientData.address ? `<span><i>Адрес</i>${escapeHtml(clientData.address)}</span>` : ''}
             </div>
+          </div>
+        </div>
+      </div>
+  ` : '';
+  const clientBlockC = clientData ? `
+      <div class="blk blk-client gap-m keep-next">
+        <div class="client cp-client">
+          <div class="cp-who">
+            <span class="cl-ava" aria-hidden="true">${escapeHtml(clientInitial)}</span>
+            <div class="cp-nm">
+              <div class="cl-name">${escapeHtml(clientData.clientName || '—')}</div>
+              ${clientData.appealId ? `<div class="cl-id">Обращение #${escapeHtml(String(clientData.appealId).replace(/^#/, ''))}</div>` : ''}
+            </div>
+          </div>
+          <div class="cp-det">
+            <i>Телефон</i><span>${escapeHtml(clientData.phone || '—')}</span>
+            <i>Город</i><span>${escapeHtml(clientData.city || '—')}</span>
+            ${clientData.address ? `<i>Адрес</i><span>${escapeHtml(clientData.address)}</span>` : ''}
           </div>
         </div>
       </div>
@@ -609,6 +642,18 @@ function buildHtml(data) {
     </div>
     ` : ''}
   `;
+  // компактный расчёт: те же строки, но сеткой 2 колонки — подпись мелко над значением
+  const totalsCellsC = [
+    ['', 'Количество позиций', `${displayQtyStr} шт.`],
+    ...(hasAnyDiscount ? [
+      ['', 'Сумма без скидки', hasGroups ? fmtRange(displayPriceMin, displayPriceMax) : rub(totalBasePrice)],
+      ['cp-disc', 'Скидка', hasGroups ? fmtRange(displayDiscMin, displayDiscMax, '−') : '−' + rub(totalDiscountAmount)],
+      ['', 'После скидки', hasGroups ? fmtRange(displayAfterDiscMin, displayAfterDiscMax) : rub(totalAfterDiscount)],
+    ] : [['', 'Сумма', hasGroups ? fmtRange(displayPriceMin, displayPriceMax) : rub(totalBasePrice)]]),
+    ...(hasAnyVat ? [['cp-vat', 'НДС 22%', hasGroups ? fmtRange(displayVatMin, displayVatMax, '+') : '+' + rub(totalVatAmount)]] : []),
+    ...(montageLine ? [['cp-vat', 'Монтаж', montageLine]] : []),
+  ];
+  const totalsRowsC = totalsCellsC.map(([cls, label, value]) => `<div class="cp-tc ${cls}"><span class="t-label">${label}</span><span class="t-value">${value}</span></div>`).join('');
 
   // «Итого к оплате» (в нижней плитке, .tb-strip): диапазон — одной строкой «от … до … ₽», числа крупно; равные варианты — одно число (а, б)
   const finalRange = hasGroups && finalMin !== finalMax;
@@ -623,16 +668,7 @@ function buildHtml(data) {
   // связка помещается в лист (иначе Chrome порвал бы её, а плитка осталась бы без расчёта): оценка высоты по правилам вёрстки этого файла
   // (строка расчёта 28,5 px, плашка 66,5 px с отступом, блок срока КП над плиткой — ряд TB_NOTE_H0 + строки пояснения (TB_NOTE_SUB_LH), плитка TB_TILE_H = 204 px, карточка — по числу строк
   // названия и материала; запас 6 px).
-  const estLines = (text, perLine) => {
-    let lines = 1, cur = 0;
-    for (const w of String(text || '').split(/\s+/).filter(Boolean)) {
-      if (cur === 0) cur = w.length;
-      else if (cur + 1 + w.length <= perLine) cur += 1 + w.length;
-      else { lines++; cur = w.length; }
-      while (cur > perLine) { lines++; cur -= perLine; }
-    }
-    return lines;
-  };
+  const estLines = (text, perLine) => estLinesBy(text, perLine, (w) => w.length);
   const estCard = (item) => {
     const showDisc = hasAnyDiscount && item.discountPercent > 0;
     const showVat = hasAnyVat && item.vatEnabled;
@@ -652,25 +688,40 @@ function buildHtml(data) {
   // лишнюю строку (≈ 46 знаков в строке заголовка 14 px / 700 при ширине 484 px за вычетом полей и «диска»)
   const lastShown = shown[shown.length - 1];
   const estRoomHead = lastShown?.sektsiya ? ROOM_HEAD_H + (estLines(`${lastShown.sektsiya.label} — ${roomSum(lastShown.sektsiya)}`, 46) - 1) * ROOM_LINE_H : 0;
+  // компактный лист: свои оценки (числа — по замеру печати, см. CP_* ниже)
+  const CPC = pc ? CP_PC : CP_A5; // числа формата (ширина колонки, листа)
+  const estRowsC = Math.ceil(estRows / CPC.TOT_COLS);
+  const estTotalsC = CPC.AIR_TOT + CP_TOT_HEAD + CP_TOT_PAD + CP_TOT_ROW * estRowsC + 8 + (montageLine && montageLine.includes('t-chip') ? 3 : 0);
+  const estBannersC = ((promoDiscount ? 1 : 0) + (vatIncluded5 ? 1 : 0)) * CPC.BANNER_H;
+  const estNoteC = TB_NOTE_H0 + estMainLines * TB_NOTE_MAIN_LH + (validitySub ? TB_NOTE_SUB_GAP + TB_NOTE_SUB_LH + CP_NOTE_GAP : CP_NOTE_GAP_MAIN);
+  const estTileC = CP_TB_STRIP_H + CP_TB_DUSK_H + 1 + estNoteC;
   const estNeed = lastCardBlock !== '' ? estCard(lastShown.item) + estRoomHead + 8 + estTotals + estBanners + 8 + estTile : 0;
+  // Компактный лист: в связку идут НЕСКОЛЬКО последних карточек — столько, сколько помещается в лист (оценка по CP_*), и ровно столько, чтобы тело до связки заняло наименьшее число листов
+  const estClientC = clientData ? 80 + 17.5 * (Math.max(0, estLinesM(clientData.address || '', CPC.ADDR_CHARS) - 1) + Math.max(0, estLinesM(clientData.clientName || '', CPC.NAME_CLIENT_CHARS) - 1)) : 0;
+  const cpBlocks = cardBlocks.concat(lastCardBlock ? [lastCardBlock] : []);
+  const cpHeights = shown.map(({ item, sektsiya }) => estCardCompact(item, { hasAnyDiscount, hasAnyVat, num, rub, G: CPC }) + CP_BLOCK_GAP + (sektsiya ? CPC.AIR_ROOM + CP_ROOM_HEAD_H + (estLines(`${sektsiya.label} — ${roomSum(sektsiya)}`, 50) - 1) * CP_ROOM_LINE_H : 0));
+  const cpTailBase = estTotalsC + estBannersC + estTileC;
   const lastInTail = lastCardBlock !== '' && estNeed <= TAIL_MIN_PX - 6;
+  const { k: cpK, onePage } = compact ? planKompakta({ heights: cpHeights, clientH: estClientC, tailBase: cpTailBase, G: CPC }) : { k: 0, onePage: false };
+  const cpBody = (onePage ? cpBlocks : cpBlocks.slice(0, cpBlocks.length - cpK)).join('\n  ');
+  const cpTail = onePage ? '' : cpBlocks.slice(cpBlocks.length - cpK).join('\n    ');
 
   const totalsBlock = `
       <div class="blk blk-totals gap-m">
         <div class="totals-right">
           <div class="totals-header">${TH_ART}<div class="totals-header-text">Расчёт стоимости</div></div>
-          <div class="totals-body">
+          ${compact ? `<div class="cp-tg">${totalsRowsC}</div>` : `<div class="totals-body">
             ${totalsRows}
-          </div>
+          </div>`}
         </div>
       </div>
   `;
 
   const appealId = clientData?.appealId ? String(clientData.appealId) : '';
   // Левый край подвала: «SUNRAY · КП №010251» (решётку номера обращения «#» не пишем); без номера обращения — пусто
-  // не длиннее 18 знаков: левый бокс подвала — половина колонки (242 px), длинный номер перенёсся бы на вторую строку
+  // не длиннее 18 знаков: левый бокс подвала на A5 без города — половина колонки (242 px, с городом 76 % листа ≈ 388 px; на A4 шире), длинный номер перенёсся бы на вторую строку
   const appealNum = appealId.replace(/^#/, '').trim().slice(0, 18);
-  const footerLeft = appealNum ? `SUNRAY · КП №${appealNum}` : '';
+  const footerLeft = appealNum ? `SUNRAY · КП №${appealNum}${cityName ? ` · Объект: ${cityName}` : ''}` : '';
   // Заголовок страницы (Chrome кладёт его в PDF как Title): «Коммерческое предложение № 09784»; номер — как в подвале, без номера обращения — без номера
   const docTitle = appealNum ? `Коммерческое предложение № ${appealNum}` : 'Коммерческое предложение';
 
@@ -679,12 +730,18 @@ function buildHtml(data) {
     createdDay: createdDay ? днём(createdDay) : '',
     escapeHtml,
     logoWhite: LOGO_WHITE, // PNG с прозрачностью, белая надпись — на тёмную плитку
+    city: cityName,
+    compact,
+    pc,
   });
   const bottomTile = tileHtml({
     finalValue,
     finalLong,
     validityNote,
     validityLastMain: !validitySub, // последняя строка блока срока — основная (форма А): зазор до плитки другой, см. TB_NOTE_GAP_MAIN
+    siteHost,
+    compact,
+    pc,
   });
 
   return `<!DOCTYPE html>
@@ -696,28 +753,32 @@ function buildHtml(data) {
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&display=block" rel="stylesheet">
 <style>
-${getStyles({ footerLeft, promoCond: Boolean(promoDiscount) && promoOt !== null, unitRow: items.some((i) => i.priceMode === 'unit'), sizeRow: items.some((i) => razmeryTekst(i, num) !== ''), roomRows: Boolean(sektsii) })}
+${getStyles({ footerLeft, promoCond: Boolean(promoDiscount) && promoOt !== null, unitRow: items.some((i) => i.priceMode === 'unit'), sizeRow: items.some((i) => razmeryTekst(i, num) !== ''), roomRows: Boolean(sektsii), compact, pc, city: Boolean(cityName) })}
 </style>
 </head>
-<body>
-  <div class="bleed">${plashka}</div>
+<body${compact ? ` class="cp${pc ? ' pc' : ''}"` : ''}>
+  ${onePage ? '<div class="one">' : ''}<div class="bleed">${plashka}</div>
 
   <div class="sheet">
-  ${clientBlock}
+  ${compact ? clientBlockC : clientBlock}
 
-  ${cardBlocks.join('\n  ')}
-  ${lastInTail ? '' : lastCardBlock}
+  ${compact ? cpBody : cardBlocks.join('\n  ')}
+  ${compact ? '' : (lastInTail ? '' : lastCardBlock)}${onePage ? `
+  ${totalsBlock}
+  ${promoBlock}
+  ${vatIncludedBlock}` : ''}
   </div>
-
+${onePage ? `  ${bottomTile}
+  </div>` : `
   <div class="tail">
     <div class="sheet">
-    ${lastInTail ? lastCardBlock : ''}
+    ${compact ? cpTail : (lastInTail ? lastCardBlock : '')}
     ${totalsBlock}
     ${promoBlock}
     ${vatIncludedBlock}
     </div>
     ${bottomTile}
-  </div>
+  </div>`}
 </body>
 </html>`;
 }
@@ -851,7 +912,7 @@ function arScene(c) {
 // Восход: левее x0 небо ровное; земля — приглушённый зелёный; под горизонтом рябь
 function artSunrise(W, H, o = {}) {
   const hor = o.hor ?? H * 0.6146; // 118 из 192
-  return arScene({ W, H, hor, id: 'artsr', cls: o.cls || 'pl-bg', sx: W * 0.8071, r: W * 0.1037, up: 0.2, x0: o.x0 ?? W * 0.48, ry: hor, gx: 300, gy: 56,
+  return arScene({ W, H, hor, id: 'artsr', cls: o.cls || 'pl-bg', sx: W * 0.8071, r: o.r ?? W * 0.1037, up: 0.2, x0: o.x0 ?? W * 0.48, ry: hor, gx: 300, gy: 56,
     base: [[0, '#0a3337'], [1, '#0a3337']],
     sky: [[0, '#ffe9b0'], [0.34, '#fdc283'], [0.46, '#f8b78f'], [0.58, '#f4d0a8'], [0.68, '#b7d6c4'], [0.76, '#66aea9'], [0.85, '#24787f'], [0.93, '#124a5f'], [1, '#0a3337']],
     disc: [[0, '#fff4c8'], [0.14, '#ffeaa9'], [0.3, '#ffd986'], [0.45, '#ffc474'], [0.58, '#ffb065'], [0.7, '#ffa25c']],
@@ -861,7 +922,7 @@ function artSunrise(W, H, o = {}) {
 }
 // Закат: встаёт из самого низа блока. Низ арта = нижний край (H = TB_DUSK_H); o.hor игнорируется, земли, горизонта и ряби нет
 function artSunset(W, H, o = {}) {
-  const x0 = o.x0 ?? W * 0.5357, r = W * 0.125, up = 0.14, hor = H, cy = hor - up * r; // up 0,14 → виден верх диска ≈57 %
+  const x0 = o.x0 ?? W * 0.5357, r = o.r ?? W * 0.125, up = 0.14, hor = H, cy = hor - up * r; // up 0,14 → виден верх диска ≈57 %
   return arScene({ W, H, hor, id: 'artss', cls: o.cls || 'tb-bg', sx: W * 0.839, r, up, x0, ry: cy,
     base: [[0, '#0e3a30'], [0.11, '#0e3a30'], [(x0 / W).toFixed(4), '#2b1b3e'], [1, '#2b1b3e']],
     sky: [[0, '#ffd08a'], [0.4, '#ffc27c'], [0.52, '#fa9d68'], [0.64, '#ec6a76'], [0.74, '#bb4a80'], [0.84, '#7a3d82'], [0.92, '#43306f'], [0.97, '#33275f'], [1, '#2b1b3e']],
@@ -870,12 +931,12 @@ function artSunset(W, H, o = {}) {
 }
 
 function plashkaHtml(ctx) {
-  const { appealId, createdDay, escapeHtml, logoWhite } = ctx;
+  const { appealId, createdDay, escapeHtml, logoWhite, city = '', compact = false, pc = false } = ctx;
   const no = appealId ? `№ ${escapeHtml(String(appealId).replace(/^#/, ''))}` : '';
   const dt = createdDay ? `от ${createdDay}` : '';
   return `
     <div class="pl">
-      ${artSunrise(PLATE_W_PX, PL_H, { hor: PL_HA, cls: 'pl-bg', x0: PL_ART_X })}
+      ${compact ? artSunrise(pc ? PC_PLATE_W_PX : PLATE_W_PX, CP_PL_H, { hor: CP_PL_HA, cls: 'pl-bg', x0: PL_ART_X, r: pc ? 50 : PLATE_W_PX * 0.092 }) : artSunrise(PLATE_W_PX, PL_H, { hor: PL_HA, cls: 'pl-bg', x0: PL_ART_X })}
       <div class="pl-art">
         <div class="pl-brand">
           ${logoWhite ? `<img class="pl-logo" src="${escapeHtml(logoWhite)}" alt="SUNRAY">` : ''}
@@ -883,7 +944,7 @@ function plashkaHtml(ctx) {
         </div>
       </div>
       <div class="pl-band">
-        <h1 class="pl-h">Коммерческое предложение</h1>
+        ${city ? `<div class="pl-hb"><h1 class="pl-h">Коммерческое предложение</h1><div class="pl-city">${CITY_ICO}<i>Объект</i><span>${escapeHtml(city)}</span></div></div>` : '<h1 class="pl-h">Коммерческое предложение</h1>'}
         ${no || dt ? `<div class="pl-meta">${no ? `<div class="pl-no">${no}</div>` : ''}${dt ? `<div class="pl-dt">${dt}</div>` : ''}</div>` : ''}
       </div>
     </div>`;
@@ -1040,9 +1101,62 @@ const CSS_TILE = `
   .tb-dot { color: #bfa468; }
 `;
 
+// ── Город объекта (cityContext: { name, siteHost }) ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+// Менеджер выбирает город сметы (Истра, Люберцы…): лист показывает «Объект Истра» в трёх местах (вариант «подзаголовок»: вторая строка шапки, метка справа над итогом, подвал «… · Объект: Истра»), а строка сайта
+// в реквизитах ведёт на поддомен города (istra.zhalyuzi-sunray.ru). Юридические реквизиты ИП не меняются никогда. Только именительный падеж и только со словом «Объект»: голая «Истра» рядом с датой читается
+// как «место составления». Хост приходит из тела запроса, поэтому проходит белый список (только zhalyuzi-sunray.ru и его поддомены), иначе — основной сайт. Нет города — вёрстка и CSS побайтно прежние (golden).
+const SITE_HOST_MAIN = 'zhalyuzi-sunray.ru';
+const SITE_HOST_RE = /^([a-z0-9-]{1,40}\.)?zhalyuzi-sunray\.ru$/;
+// В названии города есть хоть один ВИДИМЫЙ знак: имя из одних невидимых (U+200B, U+2060, U+3164, U+2800 и т. п.) городом не считается — иначе в шапке стояло бы «ОБЪЕКТ» без названия
+const VIDIMOE_RE = /[^\p{Cf}\p{Cc}\p{Z}\u034f\u115f\u1160\u2800\u3164\uffa0\ufe00-\ufe0f]/u;
+const CITY_SHOW_MAX = 18; // знаков города на листе: самое длинное название справочника — 17 («Лосино-Петровский»); подвал 12 px в одну строку, левая колонка 76 % листа (≈ 142 px под город). Одна и та же строка в шапке, метке и подвале
+// Длиннее max: режем по границе слова или дефиса (не меньше 5 знаков слева), убираем висячие слова до двух букв («и», «на», «в») и ставим «…»: «Красная Пахра-на-Оке и далее» → «Красная Пахра…»
+const cityDlya = (name, max) => {
+  const a = Array.from(name);
+  if (a.length <= max) return name;
+  let s = a.slice(0, max - 1);
+  if (/[\p{L}\p{N}]/u.test(a[max - 1])) { // разрез посреди слова — откат к границе
+    const i = s.findLastIndex((c) => c === ' ' || c === '-');
+    if (i >= 5) s = s.slice(0, i);
+  }
+  let t = s.join('').replace(/[\s\p{Pd},.;:]+$/u, '');
+  while (Array.from(t).length > 5 && /[\s\p{Pd},.;:]\p{L}{1,2}$/u.test(t)) t = t.replace(/[\s\p{Pd},.;:]+\p{L}{1,2}$/u, '');
+  return t === '' ? '' : `${t}…`; // одни разделители — города нет
+};
+
+/** @returns {{ name: string, host: string }} — name '' = города нет; host — всегда из белого списка */
+function gorodObekta(cityContext) {
+  const raw = cityContext && typeof cityContext === 'object' && typeof cityContext.name === 'string' ? cityContext.name : '';
+  const name = VIDIMOE_RE.test(raw) ? cityDlya(raw.replace(/\s+/g, ' ').trim(), CITY_SHOW_MAX) : '';
+  const host = name && typeof cityContext.siteHost === 'string' && SITE_HOST_RE.test(cityContext.siteHost) ? cityContext.siteHost : SITE_HOST_MAIN;
+  return { name, host };
+}
+
+// ромб из логотипа с точкой-солнцем, 8 × 12, цвет — currentColor
+const CITY_ICO = '<svg class="city-ico" viewBox="0 0 8 12" aria-hidden="true" focusable="false"><path d="M4 .6 7.4 5.3 4 11.4.6 5.3Z" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/><circle cx="4" cy="5.3" r="1.25" fill="currentColor"/></svg>';
+
+// Идёт в самый конец CSS (после .pl-*, .tb-vlab и компактных правил: «.pl * { padding: 0 }» иначе перебьёт). Высоту строки срока метка не меняет (line-height как у «СРОК ПРЕДЛОЖЕНИЯ»), связка .tail считается как прежде
+const CSS_CITY = `
+  .city-ico { flex: none; display: block; width: 8px; height: 12px; }
+  .pl-hb { flex: none; display: flex; flex-direction: column; padding-bottom: 7px; } /* 7 px: заголовок встаёт на линию «№», город — на линию даты */
+  .pl-city { display: flex; align-items: center; gap: 6px; max-width: 340px; font-size: 12px; font-weight: 500; line-height: 14.4px; color: #f0dba8; white-space: nowrap; }
+  .pl-city .city-ico, .pl-city i { color: #bfa468; }
+  .pl-city i { flex: none; font-style: normal; font-size: 10px; font-weight: 600; letter-spacing: 0.09em; text-transform: uppercase; }
+  .pl-city span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .tb-vlab-city { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .tb-city { display: flex; align-items: center; gap: 5px; min-width: 0; max-width: 58%; font-size: 12px; line-height: ${TB_NOTE_LAB_H}px; letter-spacing: 0; text-transform: none; color: #0f3a2c; white-space: nowrap; }
+  .tb-city .city-ico, .tb-city i { color: #145c45; }
+  .tb-city i { flex: none; font-style: normal; font-size: 10px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; }
+  .tb-city b { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
+  .cp .pl-hb { padding-bottom: 3px; }
+  .pc .pl-hb { padding-bottom: 5px; } /* ПК: город на линии даты, заголовок на линии «№» (разбор дизайнера 20.10.2026: было ≈ 3 px ниже) */
+  .cp .pl-city { font-size: 11px; line-height: 13px; gap: 5px; }
+  .cp .pl-city i { font-size: 9px; }
+`;
+
 // ctx = { finalValue, finalLong, validityNote, validityLastMain }. Разметка — два соседа в связке .tail: текст срока КП (.tb-note) и плитка (.tb)
 function tileHtml(ctx) {
-  const { finalValue, finalLong, validityNote, validityLastMain } = ctx;
+  const { finalValue, finalLong, validityNote, validityLastMain, siteHost = SITE_HOST_MAIN, compact = false, pc = false } = ctx;
   return `
     <div class="tb-note${validityLastMain ? ' tb-note-main' : ''}">${validityNote}</div>
     <div class="tb">
@@ -1051,15 +1165,225 @@ function tileHtml(ctx) {
         <span class="tb-amount${finalLong ? ' tb-long' : ''}">${finalValue}</span>
       </div>
       <div class="tb-dusk">
-        ${artSunset(PLATE_W_PX, TB_DUSK_H, { cls: 'tb-bg', x0: TB_ART_X })}
+        ${compact ? artSunset(pc ? PC_PLATE_W_PX : PLATE_W_PX, CP_TB_DUSK_H, { cls: 'tb-bg', x0: TB_ART_X, r: pc ? 58 : PLATE_W_PX * 0.108 }) : artSunset(PLATE_W_PX, TB_DUSK_H, { cls: 'tb-bg', x0: TB_ART_X })}
         <div class="tb-req">
           <div class="tb-ip">Индивидуальный предприниматель</div>
           <div class="tb-fio">Журович-Миронова Дарья Васильевна</div>
           <div class="tb-ln"><span><i>ИНН</i> 910502074977</span><span class="tb-dot">·</span><span><i>ОГРНИП</i> 321911200058121</span></div>
           <div class="tb-ln"><a href="tel:+79998107717">+7 (999) 810-77-17</a><span class="tb-dot">·</span><a href="mailto:sunray-zhalyuzi@yandex.ru">sunray-zhalyuzi@yandex.ru</a></div>
-          <div class="tb-ln"><a href="https://zhalyuzi-sunray.ru/">zhalyuzi-sunray.ru</a></div>
+          <div class="tb-ln"><a href="https://${siteHost}/">${siteHost}</a></div>
         </div>
       </div>
+    </div>`;
+}
+
+
+// ── Компактный лист (CP_*): та же фирменная вёрстка, блоки собраны плотнее. Только под compact (sheet === 'compact' или 'pc'; CP_PC, CSS_PC, PC_PLATE_W_PX — только под 'pc'); большой лист не затронут ──
+const CP_PL_HA = 92; // верх плитки-восхода: логотип, слоган, солнце, px (было 118)
+const CP_PL_HB = 52; // низ: заголовок, № и дата, px (было 74)
+const CP_PL_H = CP_PL_HA + CP_PL_HB; // 144 вместо 192
+const CP_TB_STRIP_H = 48; // полоса «Итого к оплате» (было 60)
+const CP_TB_DUSK_H = 116; // зона заката (было 144)
+const CP_BLOCK_GAP = 6; // воздух между блоками, px
+const CP_PACK_SAFE = 1.03; // запас на оценку при подсчёте листов тела (ошибка только добавит лист, связку не ломает)
+const CP_TAIL_SAFE = 8; // запас связки, px
+const CP_TAIL_SAFE_PER_CARD = 18; // и ещё по 18 px на каждую карточку в связке: оценка высоты карточки (estCardCompact) бывает занижена на строку (12–18 px, замер проверяющих 20.10.2026: длинное название и крупные цены с НДС дают третью строку названия), а связка не имеет права не влезть на последний лист; тело листов ошибка оценки не ломает, только число листов
+const PC_PLATE_W_PX = +(793.33 - 2 * PLATE_SIDE_MM * 96 / 25.4).toFixed(2); // плитка на листе A4: 595 pt = 793,33 px (793,7 — это 210 мм, а страница у нас в точках) минус два боковых отступа
+const CP_ONE_SAFE = 40; // запас при проверке «вся смета на одном листе», px (две занижённые на строку карточки — 2 × 16 px — не должны вытолкнуть смету на второй лист)
+// числа формата: A5 (компакт) и A4 (ПК): сколько места под карточки, сколько знаков в строке, сколько колонок у расчёта
+const CP_A5 = { PC: false, FIN_H: 22, AIR_TOT: 0, AIR_ROOM: 0, FIRST_FIELD: 733, NEXT_FREE: 687 - 4, TAIL: TAIL_MIN_PX, ONE: 0, NAME_CHARS: 30, SUB_CHARS: 40, TOT_COLS: 2, BANNER_H: 51, ADDR_CHARS: 24, NAME_CLIENT_CHARS: 22 };
+const CP_PC = { PC: true, FIN_H: 24, AIR_TOT: 8, AIR_ROOM: 8, FIRST_FIELD: 1062, NEXT_FREE: 1016 - 4, TAIL: 1076, ONE: 1121, NAME_CHARS: 40, SUB_CHARS: 62, TOT_COLS: 3, BANNER_H: 38, ADDR_CHARS: 34, NAME_CLIENT_CHARS: 30 };
+const CP_NAME_LH = 17.7; // строка названия, px
+const CP_SUB_LH = 16.3; // строка «материал · размеры», px
+const CP_R1_H = 15; // «старая цена −N %»
+const CP_R2_H = 16; // «цена со скидкой + НДС»
+const CP_CARD_PAD = 18; // отступы 2 × 8 + рамка 2
+const CP_TOT_HEAD = 30; // шапка «Расчёта стоимости»
+const CP_TOT_PAD = 6; // подол блока
+const CP_TOT_ROW = 44; // ряд сетки расчёта: подпись 11 px + значение 14 px + отступы (замер печати: блок 79 px при одном ряду, 167 при трёх)
+const CP_NOTE_GAP = 12;
+const CP_NOTE_GAP_MAIN = 14;
+const CP_ROOM_LINE_H = 17;
+const CP_ROOM_HEAD_H = 28;
+
+const CSS_PC = `
+  /* ── Формат «ПК»: лист A4 (595 × 842 pt) — то же оформление и та же плотная вёрстка; обычная смета влезает на один лист ── */
+  .pc .tail { min-height: ${CP_PC.TAIL}px; }
+  .pc .tb { background: linear-gradient(90deg, #0e3a30 0%, #0e3a30 11%, #2b1b3e ${(100 * TB_ART_X / PC_PLATE_W_PX).toFixed(2)}%, #2b1b3e 100%); }
+  .pc .pl-logo { width: 170px; }
+  .pc .pl-tag { font-size: 12px; height: 20px; }
+  .pc .pl-h { font-size: 21px; }
+  .pc .cp-fin { font-size: 22px; }
+  .pc .tb-label { font-size: 14.5px; }
+  .pc .tb-amount b { font-size: 27px; }
+  .pc .tb-amount.tb-long b { font-size: 23px; }
+  .pc .blk-totals { margin-top: 14px; }
+  .pc .blk-card + .blk-rhead { margin-top: 14px; }
+  .pc .cp-pl { gap: 2px; }
+  .pc .one { page: one; display: flex; flex-direction: column; height: ${CP_PC.ONE}px; }
+  .pc .one > .sheet { flex: none; }
+  .pc .cp-price { flex-direction: row; align-items: center; gap: 14px; }
+  .pc .cp-pl { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; }
+  .pc .cp-tg { grid-template-columns: repeat(3, 1fr); }
+  .pc .cp-tc:nth-child(n+3) { border-top: 0; }
+  .pc .cp-tc:nth-child(n+4) { border-top: 1px solid #eee8d9; }
+  .pc .cp-tc:not(:nth-child(3n+1)) { padding-left: 0; }
+  .pc .promo-banner, .pc .vat-included-banner { padding: 4px 12px 4px 8px; }
+`;
+
+const CSS_COMPACT = `
+  /* ── Компактный лист ── блоки собраны плотнее, фирменный вид тот же: клиент в две колонки, карточка — сетка «номер | название и мелочь | цены», расчёт — сеткой 2 × N,
+     плашки в одну-две тонкие строки, плитки ниже (шапка 144 вместо 192, низ 164 вместо 204). Деньги и «шт.» не мельче 11 px, метки и реквизиты не мельче 10 px. */
+  .cp .bleed { margin-bottom: 8px; }
+  .cp .blk { margin-bottom: 6px; }
+  .cp .blk.gap-m { margin-bottom: 8px; }
+  .cp .blk-card + .blk-rhead { margin-top: 6px; }
+  /* верхняя плитка */
+  .cp .pl { height: ${CP_PL_H}px; }
+  .cp .pl-art { height: ${CP_PL_HA}px; }
+  .cp .pl-band { height: ${CP_PL_HB}px; }
+  .cp .pl-logo { width: 150px; }
+  .cp .pl-brand { gap: 5px; }
+  .cp .pl-tag { height: 18px; font-size: 11px; }
+  .cp .pl-h { font-size: 19px; }
+  .cp .pl-no { font-size: 13.5px; }
+  .cp .pl-dt { margin-top: 1px; font-size: 11px; }
+  /* клиент: слева аватар + имя + «Обращение», справа три строки «подпись — значение» */
+  .cp .cp-client { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.06fr); gap: 0 14px; align-items: center; padding: 8px 14px; border-radius: 18px; }
+  .cp .cp-who { display: flex; align-items: center; gap: 9px; min-width: 0; }
+  .cp .cl-ava { width: 32px; height: 32px; margin-top: 0; font-size: 14px; }
+  .cp .cp-nm { min-width: 0; }
+  .cp .cl-name { font-size: 14.5px; line-height: 1.2; }
+  .cp .cl-id { display: inline-block; max-width: 100%; margin-top: 3px; padding: 2px 8px 3px; font-size: 11px; }
+  .cp .cp-det { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 1px 8px; align-items: baseline; font-size: 12.5px; line-height: 1.35; overflow-wrap: anywhere; }
+  .cp .cp-det i { font-style: normal; font-size: 10px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase; color: #145c45; white-space: nowrap; margin: 0; }
+  /* карточка позиции */
+  .cp .cd { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; gap: 0 9px; align-items: start; padding: 8px 14px; border-radius: 18px; }
+  .cp .cd-num { width: 24px; height: 24px; font-size: 12px; line-height: 24px; }
+  .cp .cp-main { min-width: 0; overflow-wrap: anywhere; }
+  .cp .cp-name { font-size: 14.5px; font-weight: 700; line-height: 1.22; color: #0f3a2c; }
+  .cp .cp-name .cd-qty, .cp .cp-name .cd-gr { margin-left: 5px; padding: 1px 7px; font-size: 11px; vertical-align: 1px; }
+  .cp .cp-name .cd-gr { padding-left: 6px; }
+  .cp .cp-sub { margin-top: 1px; font-size: 12.5px; font-weight: 400; line-height: 1.3; color: #625d56; }
+  .cp .cp-price { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; white-space: nowrap; text-align: right; }
+  .cp .cp-pl { display: contents; }
+  .cp .cp-r1 { display: flex; align-items: center; justify-content: flex-end; gap: 6px; line-height: 1.2; }
+  .cp .cp-r1 .cd-old { font-size: 11.5px; }
+  .cp .cp-r1 .cd-off { font-size: 11.5px; padding: 0 7px; }
+  .cp .cp-r2 { font-size: 12.5px; font-weight: 600; line-height: 1.3; color: #57534e; }
+  .cp .cp-r2 em { font-style: normal; font-size: 11.5px; font-weight: 600; color: #145c45; }
+  .cp .cp-fin { font-size: 20px; font-weight: 700; line-height: 1.1; letter-spacing: -0.01em; color: #0f3a2c; }
+  /* заголовок помещения */
+  .cp .rm { padding: 2px 12px; margin-bottom: 5px; font-size: 13px; line-height: ${CP_ROOM_LINE_H}px; border-radius: 12px; }
+  .cp .rm::before { margin-top: 5px; }
+  /* расчёт стоимости: сетка 2 колонки, подпись над значением */
+  .cp .totals-header { padding: 6px 14px; }
+  .cp .totals-header-text { font-size: 13.5px; }
+  .cp .cp-tg { display: grid; grid-template-columns: 1fr 1fr; column-gap: 14px; padding: 1px 14px 5px; }
+  .cp .cp-tc { display: flex; flex-direction: column; gap: 1px; min-width: 0; padding: 5px 0; }
+  .cp .cp-tc:nth-child(n+3) { border-top: 1px solid #eee8d9; }
+  .cp .cp-tc .t-label { font-size: 11px; line-height: 1.25; color: #625d56; }
+  .cp .cp-tc .t-value { font-size: 14px; line-height: 1.3; font-weight: 700; color: #0f3a2c; text-align: left; }
+  .cp .cp-tc.cp-disc .t-label, .cp .cp-tc.cp-disc .t-value { color: #a34a0b; }
+  .cp .cp-tc.cp-vat .t-label, .cp .cp-tc.cp-vat .t-value { color: #145c45; }
+  /* плашки акции и НДС */
+  .cp .promo-banner, .cp .vat-included-banner { gap: 9px; padding: 5px 12px 5px 8px; border-radius: 16px; font-size: 12.5px; line-height: 1.3; }
+  .cp .bn-txt { text-wrap: balance; }
+  .cp .bn-ico { width: 22px; height: 22px; }
+  .cp .bn-ico svg { width: 13px; height: 13px; }
+  /* срок КП и нижняя плитка */
+  .cp .tb-note { margin-bottom: ${CP_NOTE_GAP}px; }
+  .cp .tb-note.tb-note-main { margin-bottom: ${CP_NOTE_GAP_MAIN}px; }
+  .cp .tb-vmain { font-size: 12.5px; }
+  .cp .tb-strip { min-height: ${CP_TB_STRIP_H}px; }
+  .cp .tb-label { font-size: 13.5px; }
+  .cp .tb-amount b { font-size: 24px; }
+  .cp .tb-amount .tb-w { font-size: 13px; }
+  .cp .tb-amount.tb-long b { font-size: 21px; }
+  .cp .tb-dusk { height: ${CP_TB_DUSK_H}px; }
+  .cp .tb-req { top: 12px; }
+  .cp .tb-ip, .cp .tb-ln { font-size: 10px; }
+  .cp .tb-fio { font-size: 10.5px; }
+`;
+
+// Строки текста в колонке perLine знаков: общий цикл для обоих листов. Большой лист меряет слово его длиной (estLines в buildHtml — число замеров калибровано так, golden не менять),
+// компактный — шириной букв: заглавные и «широкие» шире строчных, а оценка откалибрована на строчных (иначе «ЖАЛЮЗИ ГОРИЗОНТАЛЬНЫЕ» занижается на строку)
+function estLinesBy(text, perLine, widthOf) {
+  let lines = 1, cur = 0;
+  for (const w of String(text || '').split(/\s+/).filter(Boolean)) {
+    const l = widthOf(w);
+    if (cur === 0) cur = l;
+    else if (cur + 1 + l <= perLine) cur += 1 + l;
+    else { lines++; cur = l; }
+    while (cur > perLine) { lines++; cur -= perLine; }
+  }
+  return lines;
+}
+const estWidthM = (w) => Array.from(w).reduce((a, ch) => a + (ch !== ch.toLowerCase() ? 1.3 : /[шщжфюмыъ]/.test(ch) ? 1.1 : 1), 0);
+const estLinesM = (text, perLine) => estLinesBy(text, perLine, estWidthM);
+
+/**
+ * Раскладка компактного листа по оценкам высот (px). Возвращает:
+ *   k — сколько ПОСЛЕДНИХ карточек идёт в связку .tail вместе с расчётом, плашками, сроком и плиткой (не меньше одной, пока карточек больше одной; 0 — одна карточка в смете
+ *       или даже одна не влезает в связку): берём то k, при котором тело до связки занимает наименьшее число листов (при равенстве — меньшее k, оно оставляет связке запас);
+ *   onePage — формат «ПК»: вся смета (шапка, клиент, карточки, расчёт, плашки, срок, плитка) помещается на один лист и печатается без деления на тело и связку.
+ * @param {{ heights: number[], clientH: number, tailBase: number, G: typeof CP_A5 }} a — heights: высота каждой карточки с воздухом и заголовком помещения; clientH: плитка клиента;
+ *   tailBase: расчёт + плашки + срок + плитка; G: числа формата (CP_A5 | CP_PC)
+ * @returns {{ k: number, onePage: boolean }}
+ */
+function planKompakta({ heights, clientH, tailBase, G }) {
+  const n = heights.length;
+  const packPages = (hs) => { // листы, которые займут карточки: первый лист — поле минус шапка и клиент, следующие — поле целого листа
+    let pages = 1, free = G.FIRST_FIELD - (CP_PL_H + 8) - (clientH + 8) - 4;
+    for (const h of hs) { if (h > free) { pages++; free = G.NEXT_FREE; } free -= h; }
+    return pages;
+  };
+  let k = 0;
+  if (n > 1) {
+    let best = Infinity;
+    for (let tryK = 1; tryK <= n - 1; tryK++) {
+      const tailH = heights.slice(n - tryK).reduce((a, b) => a + b, 0) + tailBase;
+      if (tailH > G.TAIL - CP_TAIL_SAFE - CP_TAIL_SAFE_PER_CARD * tryK) break; // дальше только больше
+      const pages = packPages(heights.slice(0, n - tryK).map((h) => h * CP_PACK_SAFE));
+      if (pages < best) { best = pages; k = tryK; }
+    }
+  }
+  const oneH = (CP_PL_H + 8) + clientH + 8 + heights.reduce((a, b) => a + b, 0) + tailBase;
+  return { k, onePage: G.PC && oneH <= G.ONE - CP_ONE_SAFE };
+}
+
+// Оценка высоты компактной карточки, px (по замеру печати; числа CP_*)
+function estCardCompact(item, { hasAnyDiscount, hasAnyVat, num, rub, G = CP_A5 }) {
+  const showDisc = hasAnyDiscount && item.discountPercent > 0;
+  const showVat = hasAnyVat && item.vatEnabled;
+  const sub = [item.materialName, razmeryTekst(item, num), item.priceMode === 'unit' ? `${num(item.quantity)} × ${rub(item.price)}` : ''].filter(Boolean).join(' · ');
+  const left = estLinesM(`${item.productLabel} ${num(item.quantity)} шт.${item.groupId ? ' Гр. 1' : ''}`, G.NAME_CHARS) * CP_NAME_LH + (sub ? 1 + estLinesM(sub, G.SUB_CHARS) * CP_SUB_LH : 0);
+  const rows = (showDisc ? 1 : 0) + (showVat ? 1 : 0) + 1;
+  const right = G.PC ? Math.max((showDisc ? CP_R1_H : 0) + (showVat ? CP_R2_H : 0) + (showDisc && showVat ? 1 : 0), G.FIN_H) : (showDisc ? CP_R1_H : 0) + (showVat ? CP_R2_H : 0) + G.FIN_H + (rows - 1);
+  return CP_CARD_PAD + Math.max(left, right);
+}
+
+// Компактная карточка позиции: слева № и название (с «N шт.» и «Гр. N» чипами в строке названия) и мелкая строка «материал · размеры · N × цена»; справа цены в три строки не больше:
+// «старая цена −N %», «цена со скидкой + НДС» одной строкой, итог крупно. Состояния те же, что у большой (A–D, цена за штуку, размеры, группа).
+function cardHtmlCompact(item, idx, ctx) {
+  const { hasAnyDiscount, hasAnyVat, groupColor, groupNum, rub, num, escapeHtml } = ctx;
+  const showDisc = hasAnyDiscount && item.discountPercent > 0;
+  const showVat = hasAnyVat && item.vatEnabled;
+  const fin = item.finalPriceWithVat ?? item.discountedPrice;
+  const base = itemBase(item);
+  const razmery = razmeryTekst(item, num);
+  const sub = [item.materialName ? escapeHtml(item.materialName) : '', razmery, item.priceMode === 'unit' ? `${num(item.quantity)} × ${rub(item.price)}` : ''].filter(Boolean).join(' · ');
+  const rows = [];
+  if (showDisc) rows.push(`<div class="cp-r1"><s class="cd-old">${rub(base)}</s><span class="cd-off">−${num(item.discountPercent)}%</span></div>`);
+  if (showVat) rows.push(`<div class="cp-r2">${showDisc ? rub(item.discountedPrice) : rub(base)} <em>+ НДС${(item.vatPercent || 22) !== 22 ? ` ${num(item.vatPercent)}%` : ''} ${rub(item.vatAmount ?? 0)}</em></div>`);
+  const style = groupColor ? ` style="--cd-main:${groupColor.label};--cd-bg:${groupColor.bg};--cd-line:${cdMix(groupColor.label, 0.22)};--cd-bg2:${cdMix(groupColor.label, 0.16)};--cd-lo:${cdDeep(groupColor.label, 0.72)}"` : '';
+  return `<div class="cd${groupColor ? ' cd-g' : ''}"${style}>
+      <span class="cd-num">${idx + 1}</span>
+      <div class="cp-main">
+        <div class="cp-name">${escapeHtml(item.productLabel)}<span class="cd-qty">${num(item.quantity)} шт.</span>${groupNum != null ? `<span class="cd-gr">Гр. ${groupNum}</span>` : ''}</div>
+        ${sub ? `<div class="cp-sub">${sub}</div>` : ''}
+      </div>
+      <div class="cp-price"><div class="cp-pl">${rows.join('')}</div><div class="cp-fin">${rub(fin)}</div></div>
     </div>`;
 }
 
@@ -1158,6 +1482,19 @@ function privestiChisla({ items, promoDiscount, promoFromQty }) {
 }
 
 module.exports = {
+  estCardCompact,
+  planKompakta,
+  gorodObekta,
+  SITE_HOST_RE,
+  VIDIMOE_RE,
+  CP_A5,
+  CP_PC,
+  CP_PL_H,
+  CP_ONE_SAFE,
+  CP_TAIL_SAFE,
+  CP_TAIL_SAFE_PER_CARD,
+  CP_PACK_SAFE,
+  estLinesM,
   SUPABASE_URL,
   buildHtml,
   dozapolnitPozicii,
