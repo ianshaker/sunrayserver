@@ -196,6 +196,7 @@ registerTelegramWebhook(fastify);
 registerBotChatsAdminRoutes(fastify);
 require("./rutina")(fastify);
 require("./pdf-smet/route").registerPdfSmetRoute(fastify);
+require("./pdf-smet/route-html").registerPdfSmetHtmlRoute(fastify);
 
 // --- Тестовый пинг --- //
 fastify.get("/ping", async (req, reply) => {

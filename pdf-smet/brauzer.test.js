@@ -220,3 +220,75 @@ test("запуск Chrome: puppeteer не перехватывает SIGINT, SIG
   assert.equal(zapuski[1].headless, true);
   assert.equal(zapuski[1].pipe, true);
 });
+
+test("очередь: pechatat в опциях печати — печатник страницы только для этой печати; очередь и Chrome общие, по умолчанию печатник прежний", async () => {
+  const s = podmenaChrome();
+  const strogiy = async (browser, html, opcii) => Buffer.from(`строгий:${html}:${opcii.timeout}`);
+  const pechatat = sozdatPechatnika({ zapustit: s.zapustit, pechatat: s.pechatat, maxZhdut: 5, srok: 5000 });
+  const kak = (p) => p.then((pdf) => pdf.toString(), (e) => e);
+
+  const smeta = kak(pechatat("смета")); // печатник по умолчанию
+  while (s.zhdut.length === 0) await tik();
+  const dokument = kak(pechatat("документ", { pechatat: strogiy })); // свой печатник, но место одно на обоих
+  await tik();
+  await tik();
+  assert.equal(s.aktivno, 1, "документ пошёл в печать, не дождавшись сметы");
+  assert.equal(s.zapuskov, 1);
+  s.zhdut.shift()();
+  assert.equal(await smeta, "смета");
+  assert.equal(await dokument, "строгий:документ:5000");
+  assert.deepEqual(s.poryadok, ["смета"], "печатник по умолчанию позван и для документа со своим печатником");
+  assert.equal(s.zapuskov, 2);
+  assert.equal(s.zakryto, 2, "Chrome после печати документа не закрыт");
+  assert.equal(s.maxAktivno, 1);
+
+  // Следующая печать без pechatat — снова печатник по умолчанию
+  const snova = kak(pechatat("снова смета"));
+  while (s.zhdut.length === 0) await tik();
+  s.zhdut.shift()();
+  assert.equal(await snova, "снова смета");
+  assert.deepEqual(s.poryadok, ["смета", "снова смета"]);
+
+  // Печатник страницы падает — ошибка доходит, Chrome закрыт, место свободно
+  const upal = await kak(pechatat("падает", { pechatat: async () => { throw new Error("страница упала"); } }));
+  assert.match(upal.message, /страница упала/);
+  assert.equal(s.zakryto, s.zapuskov, "Chrome после упавшей печати не закрыт");
+  const potom = kak(pechatat("потом"));
+  while (s.zhdut.length === 0) await tik();
+  s.zhdut.shift()();
+  assert.equal(await potom, "потом");
+});
+
+test("запуск Chrome: добавочные аргументы (argumenty) попадают в запуск — Linux: после аргументов пакета, Mac: в args; без них запуск прежний", async () => {
+  const zapuski = [];
+  const puppeteer = { defaultArgs: async ({ args }) => ["--default", ...args], launch: async (opcii) => { zapuski.push(opcii); return { podmena: true }; } };
+  const chromium = { args: ["--podmena"], executablePath: async () => "/tmp/chromium-podmena" };
+  const zagruzit = async (imya) => ({ default: imya === "puppeteer-core" ? puppeteer : chromium });
+  const bylo = process.env.CHROME_PATH;
+  process.env.CHROME_PATH = process.execPath;
+  try {
+    await zapustitChrome({ srok: 1, zagruzit, platforma: "linux", argumenty: ["--a=1", "--b=2"] });
+    await zapustitChrome({ srok: 1, zagruzit, platforma: "darwin", argumenty: ["--a=1", "--b=2"] });
+    await zapustitChrome({ srok: 1, zagruzit, platforma: "linux" });
+    await zapustitChrome({ srok: 1, zagruzit, platforma: "darwin" });
+  } finally {
+    if (bylo === undefined) delete process.env.CHROME_PATH; else process.env.CHROME_PATH = bylo;
+  }
+  assert.deepEqual(zapuski[0].args, ["--default", "--podmena", "--a=1", "--b=2"]);
+  assert.deepEqual(zapuski[1].args, ["--a=1", "--b=2"]);
+  assert.deepEqual(zapuski[2].args, ["--default", "--podmena"], "без argumenty запуск на Linux изменился");
+  assert.deepEqual(zapuski[3].args, []);
+  for (const opcii of zapuski) assert.equal(opcii.handleSIGTERM, false);
+});
+
+test("очередь: argumenty в опциях печати доходят до запуска Chrome только на эту печать", async () => {
+  const zapuski = [];
+  const pechatat = sozdatPechatnika({
+    zapustit: async (o) => { zapuski.push(o.argumenty); return { close: async () => {}, process: () => null }; },
+    pechatat: async () => Buffer.from("x"),
+    srok: 5000,
+  });
+  await pechatat("a", { argumenty: ["--x"] });
+  await pechatat("b");
+  assert.deepEqual(zapuski, [["--x"], undefined]);
+});

@@ -50,16 +50,16 @@ const SIGNALY_NE_PEREHVATYVAT = { handleSIGINT: false, handleSIGTERM: false, han
 
 /**
  * Запускает Chrome. Linux — @sparticuz/chromium (путь к Chrome и аргументы из пакета); иначе — Chrome с Mac.
- * zagruzit и platforma нужны тестам (подставные puppeteer и chromium без настоящего Chrome).
+ * zagruzit и platforma нужны тестам (подставные puppeteer и chromium без настоящего Chrome); argumenty — добавочные аргументы запуска на эту печать.
  * @returns {Promise<import('puppeteer-core').Browser>}
  */
-async function zapustitChrome({ srok = SROK_MS, zagruzit = (imya) => import(imya), platforma = process.platform } = {}) {
+async function zapustitChrome({ srok = SROK_MS, zagruzit = (imya) => import(imya), platforma = process.platform, argumenty = [] } = {}) {
   const { default: puppeteer } = await zagruzit('puppeteer-core');
   if (platforma === 'linux') {
     const { default: chromium } = await zagruzit('@sparticuz/chromium');
     return puppeteer.launch({
       ...SIGNALY_NE_PEREHVATYVAT,
-      args: await puppeteer.defaultArgs({ args: chromium.args, headless: 'shell' }),
+      args: await puppeteer.defaultArgs({ args: [...chromium.args, ...argumenty], headless: 'shell' }),
       executablePath: await chromium.executablePath(),
       headless: 'shell',
       timeout: srok,
@@ -69,7 +69,7 @@ async function zapustitChrome({ srok = SROK_MS, zagruzit = (imya) => import(imya
   if (!fs.existsSync(executablePath)) {
     throw new Error(`Chrome не найден по пути ${executablePath}: на этом компьютере задайте CHROME_PATH`);
   }
-  return puppeteer.launch({ ...SIGNALY_NE_PEREHVATYVAT, executablePath, headless: true, pipe: true, timeout: srok });
+  return puppeteer.launch({ ...SIGNALY_NE_PEREHVATYVAT, executablePath, headless: true, pipe: true, timeout: srok, args: argumenty });
 }
 
 /** Закрывает Chrome; не закрылся за zakrytieMs (по умолчанию ZAKRYTIE_MS) или с ошибкой — убивает процесс. Сама не бросает. */
@@ -82,11 +82,11 @@ async function zakrytChrome(browser, zakrytieMs = ZAKRYTIE_MS) {
 }
 
 /** Один Chrome на одну печать, в пределах srok; после печати (и после ошибки) Chrome закрыт. */
-async function pechatNaOdnomChrome({ zapustit, pechatat, html, srok, zakrytieMs }) {
+async function pechatNaOdnomChrome({ zapustit, pechatat, html, srok, zakrytieMs, argumenty }) {
   let browser = null;
   let konec = false;
   const rabota = (async () => {
-    const b = await zapustit({ srok });
+    const b = await zapustit({ srok, argumenty });
     browser = b;
     // Срок вышел, пока Chrome запускался: печатать уже некому, браузер закрываем здесь
     if (konec) { await zakrytChrome(b, zakrytieMs); throw new Error('печать снята по сроку'); }
@@ -103,7 +103,10 @@ async function pechatNaOdnomChrome({ zapustit, pechatat, html, srok, zakrytieMs 
 /**
  * Печатник с очередью. Параметры нужны тестам (подставной запуск и печать без настоящего Chrome, короткие сроки).
  * Вернувшаяся функция: klientTut() — «клиент ещё ждёт ответа»; ушёл, пока печать ждала места, — KlientUshel без запуска Chrome.
- * @returns {(html: string, options?: { klientTut?: () => boolean }) => Promise<Buffer>}
+ * pechatat в её опциях — печатник страницы на эту одну печать вместо заданного при создании, argumenty — добавочные аргументы запуска Chrome на эту печать
+ * (POST /api/pdf/smeta-html печатает документ CRM со строгим белым списком адресов и запретом сети в самом Chrome); очередь, запуск Chrome и сроки у всех
+ * печатей общие.
+ * @returns {(html: string, options?: { klientTut?: () => boolean, pechatat?: typeof pechatatPdf, argumenty?: string[] }) => Promise<Buffer>}
  */
 function sozdatPechatnika({
   zapustit = zapustitChrome, pechatat = pechatatPdf, maxZhdut = MAX_ZHDUT, srok = SROK_MS,
@@ -134,12 +137,12 @@ function sozdatPechatnika({
     } else zanyato = false;
   }
 
-  return async function pechatatSmetu(html, { klientTut = () => true } = {}) {
+  return async function pechatatSmetu(html, { klientTut = () => true, pechatat: pechatatStranicu = pechatat, argumenty } = {}) {
     await vzyatMesto();
     try {
       // Место получено, Chrome ещё не запускали: ушедшему клиенту печатать незачем, место уйдёт следующему (finally)
       if (!klientTut()) throw new KlientUshel();
-      return await pechatNaOdnomChrome({ zapustit, pechatat, html, srok, zakrytieMs });
+      return await pechatNaOdnomChrome({ zapustit, pechatat: pechatatStranicu, html, srok, zakrytieMs, argumenty });
     } finally {
       otdatMesto();
     }

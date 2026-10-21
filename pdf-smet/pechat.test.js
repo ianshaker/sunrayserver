@@ -6,7 +6,7 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { pechatatPdf, razreshenAdres } = require("./pechat");
+const { pechatatPdf, pechatatDokument, razreshenAdres, razreshenAdresDokumenta, ARGUMENTY_ZAPRET_SETI } = require("./pechat");
 const { SUPABASE_URL, buildHtml, dozapolnitPozicii } = require("./shablon");
 
 // Шумит console.warn печати (заблокированный адрес) — в тесте заглушаем
@@ -51,12 +51,13 @@ function podmenaStranicy({ pdfPadaet = false } = {}) {
   const zhurnal = [];
   const reshenie = [];
   const optsPdf = []; // с какими опциями звали page.pdf
+  const setContentVyzovy = []; // с чем звали page.setContent: { html, opts }
   let obrabotchik = null;
   const stranica = {
     setJavaScriptEnabled: async (vkl) => { zhurnal.push(`js:${vkl}`); },
     setRequestInterception: async (vkl) => { zhurnal.push(`perehvat:${vkl}`); },
     on: (imya, f) => { if (imya === "request") obrabotchik = f; },
-    setContent: async () => { zhurnal.push("setContent"); },
+    setContent: async (html, opts) => { zhurnal.push("setContent"); setContentVyzovy.push({ html, opts }); },
     evaluate: async () => { zhurnal.push("evaluate"); },
     pdf: async (opts) => { zhurnal.push("pdf"); optsPdf.push(opts); if (pdfPadaet) throw new Error("pdf упал"); return new Uint8Array([37, 80, 68, 70]); },
     close: async () => { zhurnal.push("close"); },
@@ -67,7 +68,7 @@ function podmenaStranicy({ pdfPadaet = false } = {}) {
     continue: async () => { reshenie.push(`continue ${url}`); },
     abort: async (kod) => { reshenie.push(`abort ${kod} ${url}`); },
   });
-  return { browser: { newPage: async () => stranica }, zhurnal, reshenie, zapros, optsPdf };
+  return { browser: { newPage: async () => stranica }, zhurnal, reshenie, zapros, optsPdf, setContentVyzovy };
 }
 
 test("страница сметы: JS и перехват включаются до загрузки HTML, чужой адрес — abort, свой — continue", async (t) => {
@@ -187,4 +188,117 @@ test("страница сметы с городом объекта (поддом
     const sSylkoy = buildHtml({ ...body, sheet, cityContext: { name: "https://evil.example/x.png" } });
     assert.deepEqual(adresaStranicy(sSylkoy), bez, `${sheet}: ссылка в имени города стала адресом загрузки`);
   }
+});
+
+// --- документ CRM (POST /api/pdf/smeta-html, route-html.js): та же страница, что у сметы, но белый список адресов строже ---
+
+test("razreshenAdresDokumenta: data:, about:blank и шрифты Google — можно; Storage Supabase, file:, localhost, чужие хосты и порты, не-https — нельзя", () => {
+  const mozhno = [
+    "data:image/png;base64,AAAA",
+    "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg'/>",
+    "data:font/woff2;base64,AAAA",
+    "about:blank",
+    "https://fonts.googleapis.com/",
+    "https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&display=block",
+    "https://fonts.gstatic.com/s/montserrat/v26/x.woff2",
+    "https://fonts.googleapis.com:443/css2",
+    "HTTPS://FONTS.GOOGLEAPIS.COM/css2",
+  ];
+  const nelzya = [
+    // Storage Supabase: смете можно (razreshenAdres), документу CRM — нет: он самодостаточный
+    `${SUPABASE_URL}/storage/v1/object/public/estimate_products/MAIN-pics/stamp.webp`,
+    // файлы, localhost, внутренние адреса и метаданные облака
+    "file:///etc/passwd", "file://localhost/etc/passwd",
+    "http://localhost/x", "http://localhost:3000/x", "https://localhost/x", "http://127.0.0.1:9/x.png", "https://127.0.0.1/x",
+    "http://[::1]/x", "http://0.0.0.0/", "http://10.0.0.5/", "http://169.254.169.254/latest/meta-data/", "http://internal.host:10000/ping",
+    // шрифты Google, но не по https, не на своём порту, с логином или на чужом хосте
+    "http://fonts.googleapis.com/css2", "http://fonts.gstatic.com/s/x.woff2",
+    "https://fonts.googleapis.com:8443/css2", "https://fonts.googleapis.com:25/", "https://fonts.gstatic.com:80/x",
+    "https://user:pass@fonts.googleapis.com/css2", "https://user@fonts.gstatic.com/x",
+    "https://fonts.googleapis.com@evil.example/css2", "https://fonts.googleapis.com.evil.example/css2", "https://evilfonts.googleapis.com/css2",
+    "https://fonts.gstatic.com.evil.example/x", "https://evil.example/fonts.googleapis.com/css2",
+    "https://googleapis.com/", "https://www.google.com/", "https://fonts.google.com/", "https://evil.example/x.png",
+    // другие протоколы
+    "ws://fonts.googleapis.com/", "wss://fonts.googleapis.com/", "ftp://fonts.googleapis.com/x", "blob:https://fonts.googleapis.com/0000",
+    "filesystem:https://fonts.googleapis.com/temporary/x", "javascript:alert(1)", "chrome://version", "chrome-extension://abc/x",
+    "about:srcdoc", "about:blank#x", "about:blank?x", "about:",
+    // не адреса
+    "ne-adres", "", " ", undefined, null, 42, {},
+  ];
+  for (const adres of mozhno) assert.equal(razreshenAdresDokumenta(adres), true, String(adres));
+  for (const adres of nelzya) assert.equal(razreshenAdresDokumenta(adres), false, String(adres));
+  // у сметы список прежний: Storage своего Supabase пускается, about:blank — нет (документ CRM строже только по Storage и мягче на about:blank)
+  assert.equal(razreshenAdres(`${SUPABASE_URL}/storage/v1/object/public/a.png`), true);
+  assert.equal(razreshenAdres("about:blank"), false);
+});
+
+test("документ CRM: страница та же — JS и перехват до setContent, ждём сеть и шрифты, опции печати как у сметы; адреса — только строгий список", async (t) => {
+  tishina(t);
+  const html = "<html><style>@page { size: 420pt 595pt }</style></html>";
+  const doc = podmenaStranicy();
+  const pdf = await pechatatDokument(doc.browser, html, { timeout: 4321 });
+  assert.deepEqual(pdf, Buffer.from("%PDF"));
+  assert.deepEqual(doc.zhurnal, ["js:false", "perehvat:true", "setContent", "evaluate", "pdf", "close"]);
+  assert.equal(doc.setContentVyzovy.length, 1);
+  assert.equal(doc.setContentVyzovy[0].html, html, "документ изменён по дороге");
+  assert.deepEqual(doc.setContentVyzovy[0].opts, { waitUntil: "networkidle0", timeout: 4321 });
+
+  // Печать и опции — те же, что у сметы: лист и поля из @page, фон есть, колонтитулов и своего format нет
+  const smeta = podmenaStranicy();
+  await pechatatPdf(smeta.browser, html, { timeout: 4321 });
+  assert.deepEqual(doc.optsPdf, smeta.optsPdf);
+  const opts = doc.optsPdf[0];
+  assert.equal(opts.preferCSSPageSize, true);
+  assert.equal(opts.printBackground, true);
+  assert.deepEqual(opts.margin, { top: 0, right: 0, bottom: 0, left: 0 });
+  assert.equal(opts.timeout, 4321);
+  for (const lishnee of ["format", "width", "height", "landscape", "displayHeaderFooter", "headerTemplate", "footerTemplate", "scale", "pageRanges"]) {
+    assert.ok(!(lishnee in opts), `в опциях печати есть ${lishnee}`);
+  }
+
+  // Адреса: шрифты Google, data: и about:blank — continue; Storage Supabase (смете можно), file:, localhost, чужое — abort
+  const storage = `${SUPABASE_URL}/storage/v1/object/public/estimate_products/MAIN-pics/stamp.webp`;
+  const adresa = [
+    "https://fonts.googleapis.com/css2?family=Montserrat", "https://fonts.gstatic.com/s/montserrat/x.woff2", "data:image/png;base64,AAAA", "about:blank",
+    storage, "file:///etc/passwd", "http://localhost:3000/x", "http://127.0.0.1:9/x.png", "https://evil.example/x.png",
+  ];
+  for (const adres of adresa) doc.zapros(adres);
+  await tik();
+  assert.deepEqual(doc.reshenie, [
+    "continue https://fonts.googleapis.com/css2?family=Montserrat",
+    "continue https://fonts.gstatic.com/s/montserrat/x.woff2",
+    "continue data:image/png;base64,AAAA",
+    "continue about:blank",
+    `abort blockedbyclient ${storage}`,
+    "abort blockedbyclient file:///etc/passwd",
+    "abort blockedbyclient http://localhost:3000/x",
+    "abort blockedbyclient http://127.0.0.1:9/x.png",
+    "abort blockedbyclient https://evil.example/x.png",
+  ]);
+  // У сметы Storage по-прежнему открыт (правка pechatatPdf ничего не поменяла)
+  for (const adres of [storage, "http://localhost:3000/x"]) smeta.zapros(adres);
+  await tik();
+  assert.deepEqual(smeta.reshenie, [`continue ${storage}`, "abort blockedbyclient http://localhost:3000/x"]);
+});
+
+test("документ CRM: страница закрывается и когда печать упала; без timeout берётся 30 с по умолчанию", async (t) => {
+  tishina(t);
+  const upala = podmenaStranicy({ pdfPadaet: true });
+  await assert.rejects(pechatatDokument(upala.browser, "<html></html>", { timeout: 1000 }), /pdf упал/);
+  assert.equal(upala.zhurnal.at(-1), "close");
+
+  const bez = podmenaStranicy();
+  await pechatatDokument(bez.browser, "<html></html>");
+  assert.deepEqual(bez.setContentVyzovy[0].opts, { waitUntil: "networkidle0", timeout: 30000 });
+  assert.equal(bez.optsPdf[0].timeout, 30000);
+});
+
+test("ARGUMENTY_ZAPRET_SETI: всё уходит на глухой прокси, в обход — ровно шрифты Google, localhost и 127.0.0.1 не обходятся", () => {
+  assert.deepEqual(ARGUMENTY_ZAPRET_SETI, ["--proxy-server=socks5://127.0.0.1:1", "--proxy-bypass-list=fonts.googleapis.com;fonts.gstatic.com;<-loopback>"]);
+  // Хосты в обход прокси — те же, что пускает razreshenAdresDokumenta; «<-loopback>» снимает обход прокси для loopback
+  const obhod = ARGUMENTY_ZAPRET_SETI[1].split("=")[1].split(";");
+  assert.ok(obhod.includes("<-loopback>"), "обход прокси для localhost не снят");
+  const hosty = obhod.filter((x) => !x.startsWith("<"));
+  assert.equal(hosty.length, 2);
+  for (const host of hosty) assert.equal(razreshenAdresDokumenta(`https://${host}/x`), true, host);
 });

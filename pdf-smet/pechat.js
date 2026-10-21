@@ -12,6 +12,9 @@
  * Защита (буква Б, дыра 5): тело запроса подставляется в HTML, а печатает его Chrome на нашем сервере. Поэтому в странице
  * выключен JS, а запросы пускаются только к data:, шрифтам Google и публичному Storage нашего Supabase — остальное abort.
  * Сама смета сейчас грузит только шрифт Google и логотип data: (печати компании из Storage в ней нет); Storage остался в списке на случай картинок из хранилища.
+ *
+ * Готовый печатный документ CRM (POST /api/pdf/smeta-html, route-html.js): HTML приходит от клиента целиком, а не собирается нашим шаблоном, поэтому
+ * страница та же (pechatatPdf), а белый список строже — razreshenAdresDokumenta: только data:, about:blank и шрифты Google, Storage Supabase не пускается.
  */
 
 const { SUPABASE_URL } = require('./shablon');
@@ -25,6 +28,15 @@ const PDF_OPTIONS = {
 
 const HOSTY_SHRIFTOV = new Set(['fonts.googleapis.com', 'fonts.gstatic.com']);
 const PUT_STORAGE = '/storage/v1/object/public/';
+
+// Запрет сети на уровне самого Chrome для документа CRM (POST /api/pdf/smeta-html). Перехват запросов страницы не видит подсказки браузера
+// <link rel="prefetch">, <link rel="prerender"> и <link rel="preconnect">: проба 21.10.2026 показала, что они доходят до 127.0.0.1 как настоящий GET или
+// TCP-соединение (с CSP prerender и preconnect тоже проходят). Поэтому всё, кроме шрифтов Google, уходит на глухой прокси (порт 1: отказ сразу);
+// <-loopback> убирает обход прокси для localhost и 127.0.0.1. С этими флагами проба — ни одного запроса и соединения, шрифты печатаются.
+const ARGUMENTY_ZAPRET_SETI = [
+  '--proxy-server=socks5://127.0.0.1:1',
+  `--proxy-bypass-list=${[...HOSTY_SHRIFTOV].join(';')};<-loopback>`,
+];
 
 /**
  * Можно ли странице сметы грузить этот адрес. Разрешено: data:, шрифты Google (https) и публичный Storage того же хоста,
@@ -45,13 +57,33 @@ function razreshenAdres(adres, supabaseUrl = SUPABASE_URL) {
 }
 
 /**
+ * Белый список для готового печатного документа CRM (POST /api/pdf/smeta-html): строже razreshenAdres.
+ * Разрешено: data:, about:blank и https-адреса шрифтов Google (fonts.googleapis.com, fonts.gstatic.com) на обычном порту, без логина и пароля
+ * в адресе. Всё остальное — нельзя: Storage Supabase, file:, blob:, ws:, ftp:, любой http: (в том числе localhost, 127.0.0.1, [::1], метаданные
+ * облака 169.254.169.254), чужие хосты и чужие порты.
+ * @param {string} adres
+ * @returns {boolean}
+ */
+function razreshenAdresDokumenta(adres) {
+  if (typeof adres !== 'string') return false;
+  let u;
+  try { u = new URL(adres); } catch (e) { return false; }
+  if (u.protocol === 'data:') return true;
+  if (u.protocol === 'about:') return adres === 'about:blank';
+  return u.protocol === 'https:' && u.port === '' && u.username === '' && u.password === '' && HOSTY_SHRIFTOV.has(u.hostname);
+}
+
+/**
  * @param {import('puppeteer-core').Browser} browser — уже запущенный браузер (puppeteer / puppeteer-core)
  * @param {string} html — готовая страница, из shablon.buildHtml
- * @param {{ timeout?: number, supabaseUrl?: string }} [options] — timeout: предел в миллисекундах на загрузку страницы и
- *   на саму печать; supabaseUrl: чей Storage пускать (по умолчанию SUPABASE_URL шаблона)
+ * @param {{ timeout?: number, supabaseUrl?: string, razreshen?: (adres: string) => boolean }} [options] — timeout: предел в миллисекундах на
+ *   загрузку страницы и на саму печать; supabaseUrl: чей Storage пускать (по умолчанию SUPABASE_URL шаблона); razreshen: какие адреса
+ *   странице можно грузить (по умолчанию razreshenAdres со Storage из supabaseUrl; для документа CRM — razreshenAdresDokumenta)
  * @returns {Promise<Buffer>} — PDF
  */
-async function pechatatPdf(browser, html, { timeout = 30000, supabaseUrl = SUPABASE_URL } = {}) {
+async function pechatatPdf(browser, html, {
+  timeout = 30000, supabaseUrl = SUPABASE_URL, razreshen = (adres) => razreshenAdres(adres, supabaseUrl),
+} = {}) {
   const page = await browser.newPage();
   try {
     // JS в странице не нужен, а чужой HTML исполнять нельзя; до setContent, иначе скрипты успеют сработать
@@ -60,7 +92,7 @@ async function pechatatPdf(browser, html, { timeout = 30000, supabaseUrl = SUPAB
     page.on('request', (request) => {
       if (request.isInterceptResolutionHandled()) return;
       // Отказ continue/abort (страница уже закрыта) не должен ронять сервер необработанным rejection
-      if (razreshenAdres(request.url(), supabaseUrl)) Promise.resolve(request.continue()).catch(() => {});
+      if (razreshen(request.url())) Promise.resolve(request.continue()).catch(() => {});
       else {
         console.warn(`[pdf-smet] запрос страницы сметы заблокирован: ${request.url().slice(0, 200)}`);
         Promise.resolve(request.abort('blockedbyclient')).catch(() => {});
@@ -77,4 +109,17 @@ async function pechatatPdf(browser, html, { timeout = 30000, supabaseUrl = SUPAB
   }
 }
 
-module.exports = { pechatatPdf, razreshenAdres };
+/**
+ * Печать готового печатного документа CRM: та же страница и те же опции печати, что у сметы (pechatatPdf: JS выключен, перехват запросов
+ * до setContent, ожидание сети и document.fonts.ready, лист и поля из @page документа), но адреса — только razreshenAdresDokumenta.
+ * Подходит как pechatat для очереди печатника (brauzer.js): (browser, html, { timeout }) → Buffer.
+ * @param {import('puppeteer-core').Browser} browser
+ * @param {string} html — печатный документ целиком (<html> со встроенным CSS и @page)
+ * @param {{ timeout?: number }} [options]
+ * @returns {Promise<Buffer>} — PDF
+ */
+function pechatatDokument(browser, html, { timeout } = {}) {
+  return pechatatPdf(browser, html, { timeout, razreshen: razreshenAdresDokumenta });
+}
+
+module.exports = { pechatatPdf, pechatatDokument, razreshenAdres, razreshenAdresDokumenta, ARGUMENTY_ZAPRET_SETI };
