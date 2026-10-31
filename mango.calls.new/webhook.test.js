@@ -124,7 +124,7 @@ const ITOG_VKHODYASHCHIY = {
 };
 
 // Прямой вызов обработчика: поддельные запрос и ответ.
-async function vyzvat(obj, { bezTelegram } = {}) {
+async function vyzvat(obj, { bezTelegram, botDlyaKarto4ki = bot } = {}) {
   const otvet = {
     kod: 200,
     telo: null,
@@ -138,8 +138,24 @@ async function vyzvat(obj, { bezTelegram } = {}) {
     },
   };
   const zapros = { body: { json: JSON.stringify(obj) }, url: "/events/call", mangoBezTelegram: bezTelegram };
-  await handleMangoWebhook(zapros, otvet, bot);
+  await handleMangoWebhook(zapros, otvet, botDlyaKarto4ki);
   return otvet;
+}
+
+// Бот, который запоминает тексты карточек (sendMessage и editMessageText), чтобы читать, что увидит менеджер.
+function botSTekstom() {
+  const teksty = [];
+  const bot = new Proxy(
+    {},
+    {
+      get: (_, imya) => async (...args) => {
+        if (imya === "sendMessage") teksty.push(String(args[1]));
+        if (imya === "editMessageText") teksty.push(String(args[0]));
+        return { message_id: 222 };
+      },
+    },
+  );
+  return { bot, poslednyaya: () => teksty[teksty.length - 1] || "" };
 }
 
 const zapisiBazy = (imya) => baza.zapisi.filter(([nazvanie]) => nazvanie === imya);
@@ -376,4 +392,55 @@ test("и) через журнал: поздний Appeared, а заявку не
   assert.equal(zapisiBazy("appeals.insert").length, 1);
   assert.deepEqual(vyzovyBota, []);
   assert.deepEqual(Object.keys(callMessages), [], "сессия живого звонка по законченному не заводится");
+});
+
+// ---------------------------------------------------------------------------------------------
+// Итог звонка без живой сессии (Появился опоздал и пришёл после конца звонка): карточка сама ищет клиента.
+// Раньше такая карточка собиралась без поиска и писала «Клиент не найден в базе», хотя клиент был.
+// ---------------------------------------------------------------------------------------------
+
+test("к) итог звонка без сессии: клиент в базе → в карточке история клиента, а не «не найден»; клиента нет → «не найден» остаётся", async (t) => {
+  podgotovit(t);
+  const ITOG_PROPUSHCHEN = ITOG_VKHODYASHCHIY;
+  const ITOG_PRINYAT = { ...ITOG_VKHODYASHCHIY, entry_result: 1 };
+
+  // клиент есть в CRM, сессии нет: пропущенный звонок
+  baza.klientNaiden = true;
+  const kartochka = botSTekstom();
+  const propushchen = await vyzvat(ITOG_PROPUSHCHEN, { botDlyaKarto4ki: kartochka.bot });
+  assert.deepEqual([propushchen.kod, propushchen.telo], [200, { status: "summary_sent" }]);
+  assert.match(kartochka.poslednyaya(), /История клиента \(1 запись\)/);
+  assert.match(kartochka.poslednyaya(), /A-7/);
+  assert.doesNotMatch(kartochka.poslednyaya(), /Клиент не найден/);
+
+  // то же для принятого звонка: раздел истории есть
+  sbrositSostoyanie();
+  baza.klientNaiden = true;
+  const kartochka2 = botSTekstom();
+  await vyzvat({ ...ITOG_PRINYAT, entry_id: "E-5", call_id: "C-5" }, { botDlyaKarto4ki: kartochka2.bot });
+  assert.match(kartochka2.poslednyaya(), /История клиента/);
+
+  // клиента правда нет: честное «не найден», заявка при итоге не заводится
+  sbrositSostoyanie();
+  const kartochka3 = botSTekstom();
+  await vyzvat({ ...ITOG_PROPUSHCHEN, entry_id: "E-6", call_id: "C-6" }, { botDlyaKarto4ki: kartochka3.bot });
+  assert.match(kartochka3.poslednyaya(), /Клиент не найден в базе, заявка не создавалась/);
+  assert.deepEqual(zapisiBazy("appeals.insert"), []);
+
+  // сбой базы при поиске не роняет итог: карточка уходит, ответ 200
+  sbrositSostoyanie();
+  baza.klientNaiden = true;
+  const kartochka4 = botSTekstom();
+  const supabasePath = require.resolve("../lib/supabaseClient");
+  const iskhodnyy = require.cache[supabasePath].exports.supabase.from;
+  require.cache[supabasePath].exports.supabase.from = (tablitsa) => {
+    if (tablitsa === "dogovorfinished") throw new Error("search down");
+    return iskhodnyy.call(require.cache[supabasePath].exports.supabase, tablitsa);
+  };
+  t.after(() => {
+    require.cache[supabasePath].exports.supabase.from = iskhodnyy;
+  });
+  const sboy = await vyzvat({ ...ITOG_PROPUSHCHEN, entry_id: "E-7", call_id: "C-7" }, { botDlyaKarto4ki: kartochka4.bot });
+  assert.deepEqual([sboy.kod, sboy.telo], [200, { status: "summary_sent" }]);
+  assert.ok(kartochka4.poslednyaya().length > 0, "карточка ушла несмотря на сбой поиска");
 });

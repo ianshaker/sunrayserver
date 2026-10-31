@@ -214,11 +214,19 @@ async function handleMangoWebhook(request, reply, telegramBot) {
             await syncSessionCard(telegramBot, messageData);
             delete callMessages[formattedFromNumber];
         } else {
+            // Живой сессии нет: Появился опоздал и пришёл после конца звонка (или сервер перезапускали). Карточка без
+            // поиска писала «Клиент не найден в базе», хотя клиент был, — ищем по базе сами. Сбой поиска итог не роняет.
+            let foundInfoList = [];
+            try {
+                foundInfoList = await findAllClientInfoByPhone(formattedFromNumber);
+            } catch (e) {
+                console.log("⚠️ Итог звонка без сессии: поиск клиента не удался:", e.message);
+            }
             const session = {
                 callData,
-                foundInfoList: [],
+                foundInfoList,
                 createdAppealId: null,
-                crmPhase: null,
+                crmPhase: foundInfoList.length ? "found" : null,
                 errorNote: null,
                 finished: true,
             };
