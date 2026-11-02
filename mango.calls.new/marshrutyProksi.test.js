@@ -421,7 +421,7 @@ test("в) ошибка базы: в лог (без тела, телефонов,
 });
 
 test("г) поздний повтор call (x-mango-povtor: 1, принято >10 мин назад): только запись, 200, без обработчика", async (t) => {
-  const { app, supabase, obrabotchik } = await sobratPrilozhenie(t);
+  const { app, supabase, obrabotchik, zhurnalLog } = await sobratPrilozhenie(t);
   const otvet = await sobytieMango(app, {
     obj: SOBYTIE_CONNECTED,
     zagolovki: { "x-mango-povtor": "1", "x-mango-prinyato": minutNazad(11), "x-mango-podpis": "ok" },
@@ -430,6 +430,9 @@ test("г) поздний повтор call (x-mango-povtor: 1, принято >1
   assert.equal(otvet.statusCode, 200);
   assert.deepEqual(otvet.json(), { ok: true, stale: true });
   assert.equal(obrabotchik.vyzovy.length, 0);
+  const preduprezhdeniya = zhurnalLog.zapisi.filter((z) => z.uroven === "warn");
+  assert.equal(preduprezhdeniya.length, 1);
+  assert.match(preduprezhdeniya[0].tekst, /\[mango_events\] \/events\/call entry=ENTRY-1: повтор опоздал \(старше 10 минут\) — без карточки Telegram/);
   await peredacha();
   assert.equal(supabase.zaprosy.length, 2, "событие записано и закрыто");
   const [stroka] = shag(supabase.zaprosy[0], "upsert");
@@ -1171,17 +1174,17 @@ test("п4) новые /internal/*: секрет обязателен всегд�
   assert.equal((await vnutrennee(bezSekreta.app, "GET", "/internal/recording-queue", undefined, { sekret: SEKRET })).statusCode, 403);
 });
 
-test("п6) повтор call-события по законченному звонку (есть summary или Disconnected с тем же entry_id) — только запись, без обработчика", async (t) => {
+test("п6) повтор call-события по законченному звонку (по тому же entry_id есть итог — summary) — только запись, без обработчика; Disconnected звонок не заканчивает", async (t) => {
   const pamyat = pamyatMangoEvents();
-  const { app, obrabotchik, chasy } = await sobratPrilozhenie(t, {
+  const { app, obrabotchik, chasy, zhurnalLog } = await sobratPrilozhenie(t, {
     supabase: podmenaSupabase(pamyat.otvet),
     otvetObrabotchika: (req, reply, nomer) => reply.code(nomer === 3 ? 500 : 200).send({ nomer }),
   });
   const svezhiyPovtor = () => ({ "x-mango-povtor": "1", "x-mango-prinyato": new Date(chasy.teper - MINUT).toISOString() });
   const drugoyZvonok = (obj) => ({ ...obj, entry_id: "ENTRY-2", call_id: "CALL-2" });
 
-  // звонок ENTRY-1 закончился: пришёл Disconnected
-  await sobytieMango(app, { obj: SOBYTIE_DISCONNECTED });
+  // звонок ENTRY-1 закончился: пришёл итог
+  await sobytieMango(app, { put: "/events/summary", obj: SOBYTIE_SUMMARY });
   await peredacha();
   assert.equal(obrabotchik.vyzovy.length, 1);
 
@@ -1191,24 +1194,26 @@ test("п6) повтор call-события по законченному зво
   assert.deepEqual(connected.json(), { ok: true, stale: true });
   assert.equal(obrabotchik.vyzovy.length, 1);
   assert.deepEqual([pamyat.stroki[1].obrabotano, pamyat.stroki[1].kod], [true, 200]);
+  const preduprezhdenie = zhurnalLog.zapisi.find((z) => z.uroven === "warn");
+  assert.match(preduprezhdenie.tekst, /\[mango_events\] \/events\/call entry=ENTRY-1: повтор опоздал \(итог звонка уже пришёл\) — без карточки Telegram/);
 
   // тот же повтор без x-mango-povtor (первая доставка, а не досылка) — обрабатывается как обычно
   const pervayaDostavka = await sobytieMango(app, { obj: { ...SOBYTIE_CONNECTED, seq: 5 } });
   assert.deepEqual(pervayaDostavka.json(), { nomer: 2 });
 
-  // чужой звонок: Disconnected у ENTRY-1 не мешает повтору Connected у ENTRY-2
+  // чужой звонок: итог у ENTRY-1 не мешает повтору Connected у ENTRY-2
   const chuzhoy = await sobytieMango(app, { obj: drugoyZvonok(SOBYTIE_CONNECTED), zagolovki: svezhiyPovtor() });
   assert.deepEqual(chuzhoy.json(), { nomer: 3 }.nomer === 3 ? { nomer: 3 } : {});
 
-  // summary закончил звонок так же, как Disconnected
-  await sobytieMango(app, { put: "/events/summary", obj: { ...SOBYTIE_SUMMARY, entry_id: "ENTRY-3", call_id: "CALL-3" } });
-  const posleSummary = await sobytieMango(app, { obj: { ...SOBYTIE_CONNECTED, entry_id: "ENTRY-3", call_id: "CALL-3" }, zagolovki: svezhiyPovtor() });
-  assert.deepEqual(posleSummary.json(), { ok: true, stale: true });
+  // Disconnected — конец одного плеча дозвона, а не звонка: повтор Connected после него обрабатывается
+  await sobytieMango(app, { obj: { ...SOBYTIE_DISCONNECTED, entry_id: "ENTRY-3", call_id: "CALL-3" } });
+  const posleDisconnected = await sobytieMango(app, { obj: { ...SOBYTIE_CONNECTED, entry_id: "ENTRY-3", call_id: "CALL-3" }, zagolovki: svezhiyPovtor() });
+  assert.deepEqual(posleDisconnected.json(), { nomer: 5 });
 
-  // повтор самого Disconnected: «других» событий о конце звонка нет, его надо обработать (когда аренда истекла)
+  // обычный дубль итога: итог уже обработан (200) — журнал отвечает «дубль», а не «законченный звонок» (когда аренда истекла)
   chasy.teper += ARENDA_MS + 1000;
-  const sam = await sobytieMango(app, { obj: SOBYTIE_DISCONNECTED, zagolovki: svezhiyPovtor() });
-  assert.deepEqual(sam.json(), { ok: true, duplicate: true }, "он уже был обработан (200) — это дубль, а не «законченный звонок»");
+  const dubl = await sobytieMango(app, { put: "/events/summary", obj: SOBYTIE_SUMMARY, zagolovki: svezhiyPovtor() });
+  assert.deepEqual(dubl.json(), { ok: true, duplicate: true }, "он уже был обработан (200) — это дубль, а не «законченный звонок»");
 });
 
 test("п6б) повтор call: ошибка чтения журнала при проверке «звонок закончен» — 503, ничего не записано и не арендовано", async (t) => {
@@ -1222,6 +1227,23 @@ test("п6б) повтор call: ошибка чтения журнала при 
   assert.equal(pamyat.stroki.length, 0);
   assert.match(zhurnalLog.zapisi[0].tekst, /не проверили, закончен ли звонок \(08006: down\)/);
   utverditChistyyZhurnal(zhurnalLog);
+});
+
+test("п6в) строка лога об опоздавшем повторе ответы не меняет: log.warn падает — всё равно 200 stale, а Appeared@abonent идёт в обработчик без Telegram", async (t) => {
+  const { app, obrabotchik, zhurnalLog } = await sobratPrilozhenie(t);
+  zhurnalLog.log.warn = () => {
+    throw new Error("лог упал");
+  };
+  const pozdno = { "x-mango-povtor": "1", "x-mango-prinyato": minutNazad(11) };
+
+  const connected = await sobytieMango(app, { obj: SOBYTIE_CONNECTED, zagolovki: pozdno });
+  assert.deepEqual([connected.statusCode, connected.json()], [200, { ok: true, stale: true }]);
+  assert.equal(obrabotchik.vyzovy.length, 0);
+
+  const appeared = await sobytieMango(app, { obj: SOBYTIE_CALL, zagolovki: pozdno });
+  assert.deepEqual([appeared.statusCode, appeared.json()], [200, { status: "handled" }]);
+  assert.deepEqual(obrabotchik.vyzovy.map((v) => v.bezTelegram), [true]);
+  assert.deepEqual(zhurnalLog.zapisi, [], "журнал сбоев пуст: сбой самой строки лога не считается сбоем журнала");
 });
 
 test("п7) x-mango-prinyato принимается только как ISO с Z или ±hh:mm; иное считается «нет заголовка» — повтор не поздний", async (t) => {

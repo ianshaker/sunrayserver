@@ -1,7 +1,16 @@
 const { supabase } = require("../lib/supabaseClient");
 const { getMskTodayDate } = require("../appeals-deadlines/queries");
 const { TELEGRAM_CHAT_ID } = require("./constants");
-const { activeCalls, entryCallMeta, callMessages } = require("./state");
+const {
+    activeCalls,
+    entryCallMeta,
+    callMessages,
+    otmetitZavershenie,
+    zvonokUzheZavershen,
+    otlozhitSessiyu,
+    dostatOtlozhennuyu,
+    zabytOtlozhennuyu,
+} = require("./state");
 const { logMangoWebhook } = require("./logging");
 const { CallCard } = require("./callCard");
 const { renderCallCard } = require("./renderCallCard");
@@ -78,8 +87,9 @@ function sobratZayavkuNovogoKlienta({ appeal_id, formattedFromNumber, managerNam
     };
 }
 
-// Поздний повтор Appeared из очереди прокси (журнал выставил request.mangoBezTelegram): карточка Telegram и
-// сессии звонка (callMessages/activeCalls) уже не нужны, а заявку новому клиенту создать надо.
+// Заявка новому клиенту по Appeared, у которого карточку Telegram заводить не надо. Три пути сюда:
+// поздний повтор из очереди прокси (журнал выставил request.mangoBezTelegram), звонок, итог которого уже пришёл
+// (память «звонок закончен»), и итог, забравший сессию, пока этот же Appeared искал клиента.
 // Поиск клиента и создание заявки — те же помощники, что в живой ветке. Бросает при ошибке базы.
 async function zayavkaBezTelegram({ formattedFromNumber, managerName, lineNumber }) {
     const foundList = await findAllClientInfoByPhone(formattedFromNumber);
@@ -94,6 +104,55 @@ async function zayavkaBezTelegram({ formattedFromNumber, managerName, lineNumber
         .insert([sobratZayavkuNovogoKlienta({ appeal_id, formattedFromNumber, managerName, appealSource })]);
     if (error) throw error;
     return { status: "appeal_created", appeal_id };
+}
+
+// Ответ на Appeared, у которого карточки не будет: заявка новому клиенту без Telegram и без сессий.
+// Сбой — лог и 503 (прокси дошлёт); sbrosPered503 снимает метки, из-за которых повтор отбросят.
+// posleUspekha(itog) — после успешного поиска/заявки, до ответа; сбой ответ не меняет, поэтому должен ловить свои ошибки.
+async function otvetZayavkaBezTelegram(reply, dannye, sbrosPered503 = () => {}, posleUspekha = async () => {}) {
+    try {
+        const itog = await zayavkaBezTelegram(dannye);
+        await posleUspekha(itog);
+        return reply.send({ status: `appeared_late_${itog.status}` });
+    } catch (e) {
+        console.log("⚠️ Appeared без карточки: заявка не создана:", e.message);
+        sbrosPered503();
+        return reply.code(503).send({ error: "late_appeal_failed" });
+    }
+}
+
+// Сессия карточки того же звонка — единственное место выбора сессии для итога, Connected, Disconnected и дозвона.
+// entry_id — устойчивый идентификатор звонка целиком (оба плеча дозвона делят его); сессия лежит по телефону клиента
+// (последняя на номере), поэтому там может висеть сессия другого звонка — её не трогаем и ищем свою среди отложенных.
+// Если entry_id нет у сессии или у события — как раньше, считаем сессию по телефону своей.
+function sessiyaTogoZheZvonka(formattedFromNumber, entryId) {
+    const session = callMessages[formattedFromNumber];
+    if (session && (!session.entryId || !entryId || session.entryId === entryId)) return session;
+    return entryId ? dostatOtlozhennuyu(entryId) : undefined;
+}
+
+// Сессию, пока этот обработчик искал клиента или заводил заявку, забрал итог звонка (его карточка уже нарисована без заявки:
+// «Клиент не найден в базе, заявка не создавалась») или вытеснил другой звонок с того же номера (карточка так и висит
+// «Ищу по базам…» / «Создаю заявку…»). Результат пишем в СВОЮ сессию и перерисовываем её карточку. Сбой перерисовки ответ не меняет.
+async function dopisatPozdnyuyuZayavku(telegramBot, session, appeal_id) {
+    session.createdAppealId = appeal_id;
+    session.crmPhase = "appeal_created";
+    try {
+        await syncSessionCard(telegramBot, session);
+    } catch (e) {
+        console.log("⚠️ Карточка после поздней заявки не перерисована:", e.message);
+    }
+}
+
+// То же для найденного клиента: вытесненная (или забранная итогом) сессия получает историю клиента.
+async function dopisatNaydennogoKlienta(telegramBot, session, foundList) {
+    session.foundInfoList = foundList;
+    session.crmPhase = "found";
+    try {
+        await syncSessionCard(telegramBot, session);
+    } catch (e) {
+        console.log("⚠️ Карточка после поиска клиента не перерисована:", e.message);
+    }
 }
 
 async function handleMangoWebhook(request, reply, telegramBot) {
@@ -143,6 +202,10 @@ async function handleMangoWebhook(request, reply, telegramBot) {
             return reply.send({ status: "outgoing_saved" });
         }
 
+        // Звонок закончен: опоздавший Appeared этого звонка живую сессию уже не заведёт (память до 30 минут).
+        // Отмечаем до записи в базу — он может прийти, пока итог ещё сохраняется.
+        otmetitZavershenie(entryId);
+
         const fromNumber = body.from?.number;
         const toNumber = body.to?.number;
         const lineNumber = resolveLineNumber(body, entryId);
@@ -173,7 +236,8 @@ async function handleMangoWebhook(request, reply, telegramBot) {
 
         if (entryId) delete entryCallMeta[entryId];
 
-        const messageData = callMessages[formattedFromNumber];
+        // Чужую сессию (другой звонок с этого номера) итог не берёт и не удаляет: рисуется отдельная карточка.
+        const messageData = sessiyaTogoZheZvonka(formattedFromNumber, entryId);
 
         const callData = messageData?.callData || {
             formattedFromNumber,
@@ -212,7 +276,10 @@ async function handleMangoWebhook(request, reply, telegramBot) {
                     : null;
 
             await syncSessionCard(telegramBot, messageData);
-            delete callMessages[formattedFromNumber];
+            // Использованную сессию убираем отовсюду: из слота телефона (если она там; пока карточка уходила, на этом
+            // номере мог начаться другой звонок и занять место — его сессию не трогаем) и из отложенных.
+            if (callMessages[formattedFromNumber] === messageData) delete callMessages[formattedFromNumber];
+            zabytOtlozhennuyu(entryId);
         } else {
             // Живой сессии нет: Появился опоздал и пришёл после конца звонка (или сервер перезапускали). Карточка без
             // поиска писала «Клиент не найден в базе», хотя клиент был, — ищем по базе сами. Сбой поиска итог не роняет.
@@ -262,27 +329,24 @@ async function handleMangoWebhook(request, reply, telegramBot) {
         const formattedFromNumber = formatPhoneNumber(fromNumber);
         const managerName = getManagerName(toNumber);
 
-        // Поздний повтор из очереди прокси: только заявка новому клиенту, без карточки и без сессий в памяти.
-        if (request.mangoBezTelegram === true) {
-            try {
-                const itog = await zayavkaBezTelegram({ formattedFromNumber, managerName, lineNumber });
-                return reply.send({ status: `appeared_late_${itog.status}` });
-            } catch (e) {
-                console.log("⚠️ Поздний Appeared: заявка не создана:", e.message);
-                return reply.code(503).send({ error: "late_appeal_failed" });
-            }
+        // Поздний повтор из очереди прокси или звонок, итог которого уже пришёл (журнал мог этого не увидеть:
+        // итог обработан, пока Appeared писал строку в журнал): только заявка новому клиенту, без карточки и без сессий в памяти.
+        if (request.mangoBezTelegram === true || zvonokUzheZavershen(entryId)) {
+            return otvetZayavkaBezTelegram(reply, { formattedFromNumber, managerName, lineNumber });
         }
 
         // === ПРОВЕРЯЕМ: это новый звонок или дозвон? ===
-        if (callMessages[formattedFromNumber]) {
-            const session = callMessages[formattedFromNumber];
-            session.callData.managers.push(managerName);
+        // Дозвон (второе плечо того же звонка) — когда есть сессия этого звонка: по телефону или среди отложенных
+        // (её мог вытеснить с номера другой звонок). Ведём его на ней, а не на callMessages[телефон].
+        const svoyaSessiya = sessiyaTogoZheZvonka(formattedFromNumber, entryId);
+        if (svoyaSessiya) {
+            svoyaSessiya.callData.managers.push(managerName);
             startManagerLeg(
-                session.callData,
+                svoyaSessiya.callData,
                 managerName,
                 getEventTimestamp(body)
             );
-            await syncSessionCard(telegramBot, session);
+            await syncSessionCard(telegramBot, svoyaSessiya);
             return reply.send({ status: "dialout_processed" });
         }
 
@@ -295,6 +359,7 @@ async function handleMangoWebhook(request, reply, telegramBot) {
 
         const session = {
             card: new CallCard(TELEGRAM_CHAT_ID),
+            entryId,
             crmPhase: "searching",
             foundInfoList: [],
             createdAppealId: null,
@@ -309,11 +374,17 @@ async function handleMangoWebhook(request, reply, telegramBot) {
                 currentLegIndex: -1,
             },
         };
+        // Сессия другого звонка на этом номере ещё жива (итог не пришёл): не удаляем, а откладываем под её entry_id —
+        // её события найдут сессию там, телефон остаётся индексом «последняя сессия» и теперь указывает на новый звонок.
+        const staraya = callMessages[formattedFromNumber];
+        if (staraya) otlozhitSessiyu(staraya);
         callMessages[formattedFromNumber] = session;
         // Перед ответом 5xx: прокси дошлёт это же событие. Сессию и метку звонка убираем (чужую сессию того же номера не трогаем),
         // иначе повтор примут за дозвон другому менеджеру или за «already_appeared», и заявка так и не создастся.
+        // Сессия могла уже уйти с номера в отложенные (её вытеснил другой звонок) — оттуда тоже.
         const sbrositSessiyu = () => {
             if (callMessages[formattedFromNumber] === session) delete callMessages[formattedFromNumber];
+            if (dostatOtlozhennuyu(entryId) === session) zabytOtlozhennuyu(entryId);
             delete activeCalls[callId];
         };
 
@@ -328,9 +399,18 @@ async function handleMangoWebhook(request, reply, telegramBot) {
         // === Поиск во ВСЕХ таблицах === //
         const foundList = await findAllClientInfoByPhone(formattedFromNumber);
 
-        // Summary мог уже забрать сессию, пока искали
-        if (!callMessages[formattedFromNumber]) {
-            return reply.send({ status: "appeared_processed" });
+        // Summary мог уже забрать сессию (или её заняла сессия другого звонка), пока искали. Клиент найден — заявка не нужна,
+        // историю клиента дописываем на карточку своей сессии. Не найден — заявку теперь заведёт только этот обработчик:
+        // тем же путём, что поздний повтор, без новой карточки; номер заявки дописываем на карточку своей сессии
+        // (нарисованную итогом «заявка не создавалась» или всё ещё «Ищу по базам…», если сессию вытеснил другой звонок).
+        if (callMessages[formattedFromNumber] !== session) {
+            if (foundList.length > 0) {
+                await dopisatNaydennogoKlienta(telegramBot, session, foundList);
+                return reply.send({ status: "appeared_processed" });
+            }
+            return otvetZayavkaBezTelegram(reply, { formattedFromNumber, managerName, lineNumber }, sbrositSessiyu, (itog) =>
+                itog.status === "appeal_created" ? dopisatPozdnyuyuZayavku(telegramBot, session, itog.appeal_id) : undefined
+            );
         }
 
         if (foundList.length > 0) {
@@ -374,7 +454,9 @@ async function handleMangoWebhook(request, reply, telegramBot) {
                 // supabase-js ошибку не бросает, а возвращает: без этой строки карточка писала «заявка создана» при сбое
                 if (error) throw error;
 
-                if (!callMessages[formattedFromNumber]) {
+                if (callMessages[formattedFromNumber] !== session) {
+                    // Итог забрал сессию (или её вытеснил другой звонок), пока вставлялась заявка: карточка без заявки — дописываем номер.
+                    await dopisatPozdnyuyuZayavku(telegramBot, session, appeal_id);
                     return reply.send({ status: "appeared_processed" });
                 }
                 session.createdAppealId = appeal_id;
@@ -400,7 +482,7 @@ async function handleMangoWebhook(request, reply, telegramBot) {
     if (callState === "Connected" && !isManager(fromNumber)) {
         const formattedFromNumber = formatPhoneNumber(fromNumber);
         const managerName = getManagerName(toNumber);
-        const session = callMessages[formattedFromNumber];
+        const session = sessiyaTogoZheZvonka(formattedFromNumber, entryId);
 
         if (session) {
             session.callData.acceptedManager = managerName;
@@ -421,7 +503,7 @@ async function handleMangoWebhook(request, reply, telegramBot) {
 
     if (callState === "Disconnected" && location === "abonent" && !isManager(fromNumber)) {
         const formattedFromNumber = formatPhoneNumber(fromNumber);
-        const session = callMessages[formattedFromNumber];
+        const session = sessiyaTogoZheZvonka(formattedFromNumber, entryId);
         if (session) {
             closeCurrentManagerLeg(
                 session.callData,

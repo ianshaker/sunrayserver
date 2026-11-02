@@ -482,17 +482,29 @@ test("т) таймаут записи журнала — 2 с; x-mango-prinyato 
   assert.equal(sobratZapis({ path: "/events/call", telo: teloMango(SOBYTIE_CALL), prinyato: "17.10.2026 12:00" }).prinyato, null);
 });
 
-test("у) звонок закончен по журналу: есть чужое summary или call с Disconnected по тому же entry_id; свою строку и чужой звонок не считаем", async () => {
+test("у) звонок закончен по журналу только итогом: чужое summary по тому же entry_id; Disconnected@ivr и Disconnected@abonent концом не считаются; свою строку и чужой звонок не считаем", async () => {
   const stroki = [
-    { klyuch: "svoy", vid: "call", sobytie: "Disconnected@abonent" },
-    { klyuch: "a", vid: "call", sobytie: "Appeared@abonent" },
-    { klyuch: "b", vid: "call", sobytie: "Connected" },
-    { klyuch: "v", vid: "recording", sobytie: null },
+    { klyuch: "a", vid: "call", sobytie: "Appeared@ivr" },
+    { klyuch: "b", vid: "call", sobytie: "Appeared@abonent" },
+    { klyuch: "v", vid: "call", sobytie: "Connected@abonent" },
+    { klyuch: "r", vid: "recording", sobytie: null },
   ];
   const sb = (spisok) => podmenaSupabase(() => ({ data: spisok, error: null }));
-  assert.deepEqual(await zvonokZavershen(sb(stroki), "E", "svoy"), { zavershen: false, oshibka: null }, "своя строка не в счёт");
-  assert.equal((await zvonokZavershen(sb([...stroki, { klyuch: "g", vid: "call", sobytie: "Disconnected@ivr" }]), "E", "svoy")).zavershen, true);
-  assert.equal((await zvonokZavershen(sb([...stroki, { klyuch: "d", vid: "summary", sobytie: null }]), "E", "svoy")).zavershen, true);
+  const ivr = { klyuch: "g", vid: "call", sobytie: "Disconnected@ivr" };
+  const abonent = { klyuch: "d", vid: "call", sobytie: "Disconnected@abonent" };
+  const itog = { klyuch: "e", vid: "summary", sobytie: null };
+
+  assert.deepEqual(await zvonokZavershen(sb(stroki), "E", "svoy"), { zavershen: false, oshibka: null });
+  // перевод с робота на менеджера: Disconnected@ivr приходит в ту же секунду, звонок только начинается
+  assert.equal((await zvonokZavershen(sb([...stroki, ivr]), "E", "svoy")).zavershen, false);
+  // конец одного плеча дозвона: менеджер не ответил, звонок идёт дальше
+  assert.equal((await zvonokZavershen(sb([...stroki, abonent]), "E", "svoy")).zavershen, false);
+  assert.equal((await zvonokZavershen(sb([...stroki, ivr, abonent]), "E", "svoy")).zavershen, false);
+  // итог другого ключа — конец звонка
+  assert.equal((await zvonokZavershen(sb([...stroki, ivr, abonent, itog]), "E", "svoy")).zavershen, true);
+  assert.equal((await zvonokZavershen(sb([itog]), "E", "svoy")).zavershen, true);
+  // свою строку не считаем: итог со своим ключом (повтор самого итога) звонок законченным не делает
+  assert.equal((await zvonokZavershen(sb([...stroki, { ...itog, klyuch: "svoy" }]), "E", "svoy")).zavershen, false);
   assert.equal((await zvonokZavershen(sb([]), "E", "svoy")).zavershen, false);
 
   const zapros = sb(stroki);

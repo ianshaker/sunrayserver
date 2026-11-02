@@ -163,7 +163,8 @@ async function ocherediZapisey(supabase, { limit, now = Date.now }) {
 //  - ключ есть, obrabotano=false, аренда старше 60 с (прошлый раз 5xx или упали посередине) → берём заново, обработчик зовётся;
 //  - запись упала (в т. ч. таблицы ещё нет) → лог и дальше в обработчик: звонок важнее журнала;
 //  - повтор call из очереди прокси (x-mango-povtor: 1), который живой карточке уже не нужен — старше 10 мин или звонок
-//    по журналу уже закончился (есть summary или Disconnected по тому же entry_id): только запись, 200, без обработчика.
+//    по журналу уже закончился (по тому же entry_id есть summary; Disconnected@ivr и Disconnected@abonent не в счёт:
+//    первый приходит при переводе на менеджера, второй — конец одного плеча дозвона): только запись, 200, без обработчика.
 //    Исключение — Appeared@abonent: обработчик зовётся с request.mangoBezTelegram, он создаёт заявку новому клиенту
 //    без карточки Telegram и без сессий в памяти;
 //  - summary обрабатывается всегда (кроме дубля).
@@ -209,6 +210,11 @@ function sozdatZhurnalMarshrutov({ supabase, log = console, now = Date.now }) {
       // Итог этого ответа onSend запишет в ту же строку (и у устаревшего повтора: 200 → obrabotano=true, kod=200).
       if (id !== undefined && id !== null) req.mangoZhurnalId = id;
       if (ustarel) {
+        // Строка лога ответы не меняет: сбой самого лога не должен превратить устаревший повтор в живой.
+        try {
+          const prichina = pozdniyPovtor ? "старше 10 минут" : "итог звонка уже пришёл";
+          log.warn(`[mango_events] ${metka}: повтор опоздал (${prichina}) — без карточки Telegram`);
+        } catch {}
         if (zapis.sobytie !== "Appeared@abonent") return reply.code(200).send({ ok: true, stale: true });
         // Новому клиенту заявка нужна и по устаревшему Appeared; карточка и сессии звонка — нет.
         req.mangoBezTelegram = true;

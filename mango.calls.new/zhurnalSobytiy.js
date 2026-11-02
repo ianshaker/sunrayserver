@@ -194,7 +194,9 @@ async function vstavitSobytie(supabase, zapis, { taimautMs = ZAPIS_TAIMAUT_MS, t
   }
 }
 
-// Звонок уже закончился по журналу? Есть другое событие с тем же entry_id (ключ не свой): summary или call с Disconnected.
+// Звонок уже закончился по журналу? Есть другое событие с тем же entry_id (ключ не свой) с vid = summary (итог звонка).
+// Только итог: Disconnected@ivr приходит в ту же секунду, когда звонок переведён с робота на менеджера,
+// а Disconnected@abonent — конец одного плеча дозвона (менеджер не ответил, звонок идёт на следующего).
 // Нужно для повтора call-события из очереди прокси: по законченному звонку живая карточка уже не нужна.
 // Не бросает: { zavershen, oshibka }.
 async function zvonokZavershen(supabase, entryId, svoyKlyuch, { taimautMs = ZAPIS_TAIMAUT_MS } = {}) {
@@ -205,11 +207,7 @@ async function zvonokZavershen(supabase, entryId, svoyKlyuch, { taimautMs = ZAPI
     );
     if (error) return { zavershen: null, oshibka: error };
     const stroki = Array.isArray(data) ? data : [];
-    const zavershen = stroki.some(
-      (r) =>
-        r.klyuch !== svoyKlyuch &&
-        (r.vid === "summary" || (r.vid === "call" && typeof r.sobytie === "string" && r.sobytie.startsWith("Disconnected"))),
-    );
+    const zavershen = stroki.some((r) => r.klyuch !== svoyKlyuch && r.vid === "summary");
     return { zavershen, oshibka: null };
   } catch (e) {
     return { zavershen: null, oshibka: e };
