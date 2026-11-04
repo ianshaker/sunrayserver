@@ -8,7 +8,7 @@
 -- чат Telegram, телефон и цвет — в masters; адрес, машина, расход, цена топлива — в settings_fuel_masters (один источник).
 -- Телефон — новая необязательная колонка masters.phone.
 -- «Убрать из списков» (is_active=false) здесь НЕ делается: оно пойдёт отдельной функцией с окном «что закрыть» (пункт 12).
--- Откат: drop function public.create_master(...), public.update_master(text, jsonb); alter table public.masters drop column phone.
+-- Откат: drop function public.create_master(...), public.update_master(text, jsonb), public.master_auto_color(), public.hsl_to_hex(...); alter table public.masters drop column phone.
 -- ============================================================================
 
 begin;
@@ -20,18 +20,58 @@ alter table public.masters add constraint masters_phone_format
   check (phone is null or (btrim(phone) <> '' and length(phone) <= 32));
 comment on column public.masters.phone is 'Телефон мастера, как ввёл суперадмин (необязательно)';
 
--- Палитра для автоподбора цвета: оттенок 600 Tailwind, как у прежних мастеров (12 первых заняты)
-create or replace function public.master_color_palette()
-returns text[]
-language sql
+-- Цвет мастера: подбирается сам и без предела по числу мастеров. Из 360 кандидатов (240 оттенков × 3 светлоты, насыщенность
+-- как у прежних цветов) берётся тот, что дальше всего от уже занятых (по расстоянию в RGB). Свой цвет суперадмин задаёт вручную.
+create or replace function public.hsl_to_hex(p_h numeric, p_s numeric, p_l numeric)
+returns text
+language plpgsql
 immutable
 set search_path = public
 as $$
-  select array['#2563eb','#16a34a','#9333ea','#dc2626','#ea580c','#0d9488','#4f46e5','#db2777','#0891b2','#d97706',
-               '#059669','#7c3aed','#65a30d','#0284c7','#c026d3','#e11d48','#ca8a04','#475569']
+declare
+  c numeric := (1 - abs(2 * p_l - 1)) * p_s;
+  hp numeric := (p_h % 360) / 60;
+  x numeric;
+  m numeric := p_l - ((1 - abs(2 * p_l - 1)) * p_s) / 2;
+  r numeric; g numeric; b numeric;
+begin
+  x := c * (1 - abs((hp % 2) - 1));
+  if hp < 1 then r := c; g := x; b := 0;
+  elsif hp < 2 then r := x; g := c; b := 0;
+  elsif hp < 3 then r := 0; g := c; b := x;
+  elsif hp < 4 then r := 0; g := x; b := c;
+  elsif hp < 5 then r := x; g := 0; b := c;
+  else r := c; g := 0; b := x;
+  end if;
+  return '#' || lpad(to_hex(round((r + m) * 255)::int), 2, '0')
+             || lpad(to_hex(round((g + m) * 255)::int), 2, '0')
+             || lpad(to_hex(round((b + m) * 255)::int), 2, '0');
+end;
 $$;
-revoke all on function public.master_color_palette() from public, anon;
-grant execute on function public.master_color_palette() to authenticated, service_role;
+
+create or replace function public.master_auto_color()
+returns text
+language sql
+stable
+set search_path = public
+as $$
+  with cand as (
+    select hex, ('x' || substr(hex, 2, 2))::bit(8)::int r, ('x' || substr(hex, 4, 2))::bit(8)::int g, ('x' || substr(hex, 6, 2))::bit(8)::int b
+      from (select public.hsl_to_hex(h, 0.78, l) hex
+              from generate_series(0, 357, 3) h, (values (0.38), (0.46), (0.54)) v(l)) t
+  ), occ as (
+    select ('x' || substr(color, 2, 2))::bit(8)::int r, ('x' || substr(color, 4, 2))::bit(8)::int g, ('x' || substr(color, 6, 2))::bit(8)::int b
+      from public.masters
+  )
+  select c.hex from cand c
+   order by coalesce((select min(power(c.r - o.r, 2) + power(c.g - o.g, 2) + power(c.b - o.b, 2)) from occ o), 1) desc, c.hex
+   limit 1
+$$;
+
+revoke all on function public.hsl_to_hex(numeric, numeric, numeric) from public, anon;
+revoke all on function public.master_auto_color() from public, anon;
+grant execute on function public.hsl_to_hex(numeric, numeric, numeric) to authenticated, service_role;
+grant execute on function public.master_auto_color() to authenticated, service_role;
 
 -- 1. Завести мастера -----------------------------------------------------------
 create or replace function public.create_master(
@@ -96,11 +136,7 @@ begin
   end if;
 
   if v_color is null then
-    select c into v_color
-      from unnest(public.master_color_palette()) with ordinality as p(c, ord)
-     where not exists (select 1 from public.masters m where m.color = p.c)
-     order by ord limit 1;
-    v_color := coalesce(v_color, (public.master_color_palette())[1]);
+    v_color := public.master_auto_color();
   elsif v_color !~ '^#[0-9a-f]{6}$' then
     raise exception 'Цвет — hex вида #2563eb' using hint = 'ЦВЕТ_НЕВЕРЕН';
   end if;
