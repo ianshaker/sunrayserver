@@ -40,6 +40,7 @@ const {
 } = require("../appeals-deadlines/infoUpdates");
 const { validateEventAddressForAssign } = require("./address");
 const { resolveAssignableMaster } = require("./masters");
+const { ensureFresh: ensureMastersFresh } = require("../lib/mastersDirectory");
 const { checkMasterAvailability } = require("./availability");
 
 async function reply(ctx, text, parseMode) {
@@ -82,6 +83,7 @@ async function handleAssignZamer(ctx, parsed, event) {
     return;
   }
 
+  await ensureMastersFresh();
   const master = resolveAssignableMaster(masterRaw);
   if (!master.ok) {
     await reply(ctx, `⚠️ ${master.reason}`);

@@ -5,14 +5,13 @@
 
 const { supabase } = require("../lib/supabaseClient");
 const { getTelegramBot } = require("../tgwebhook/bot");
-const { MASTER_CHAT_IDS } = require("../info-na-zamer/config");
 const { buildClientCard } = require("../info-na-zamer/messages");
 const { formatDate, formatTimeRange } = require("../info-na-zamer/format");
 const { persistEventTgMessageLink } = require("../info-na-zamer/persistTgLink");
 const { checkMasterAvailability } = require("./availability");
 const { validateEventAddressForAssign } = require("./address");
 const { insertFuelRecord, deleteFuelRecordByAppeal } = require("./fuel");
-const { getTelegramMasterKey } = require("./masters");
+const { getChatId, findByName } = require("../lib/mastersDirectory");
 const { findLoadingEventByNumber } = require("./queries");
 
 async function updateIdsMeasurement(appealNumber, master, date, startTime) {
@@ -37,8 +36,8 @@ async function sendZamerTelegram(event, { master, date, startTime, endTime, clea
   const bot = getTelegramBot();
   if (!bot) throw new Error("telegram_bot_missing");
 
-  const tgKey = getTelegramMasterKey(master);
-  const chatId = tgKey ? MASTER_CHAT_IDS[tgKey] : null;
+  const tgKey = findByName(master)?.tgKey || null;
+  const chatId = await getChatId(master);
   if (chatId == null) throw new Error("master_chat_missing");
 
   const appealNumber = String(event.appeal_number || "").replace(/^#+/, "#");

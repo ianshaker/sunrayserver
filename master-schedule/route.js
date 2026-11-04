@@ -6,7 +6,7 @@
 // Ответ: { status: "ok", sent: true, messageId, checkmarks } | { status: "error", ... }
 // ============================================================================
 
-const { MASTER_CHAT_IDS } = require("./config");
+const { getChatId } = require("../lib/mastersDirectory");
 const { sendMasterSchedulePhoto } = require("./send");
 const { sendScheduleCheckmarks } = require("./checkmarks");
 
@@ -45,7 +45,7 @@ function registerMasterScheduleRoute(fastify) {
         return fail(reply, 400, "Не указан masterName");
       }
 
-      const chatId = MASTER_CHAT_IDS[normalizedName];
+      const chatId = await getChatId(normalizedName);
       if (!chatId) {
         return fail(
           reply,

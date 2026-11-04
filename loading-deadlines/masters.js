@@ -1,38 +1,22 @@
 // ============================================================================
 // Мастера, которых можно назначить из чата погрузки.
-// Нужны: fuel-таблица + Telegram-чат в MASTER_CHAT_IDS.
+// Нужны: активный мастер в таблице masters + Telegram-чат у него.
 // ============================================================================
 
-const { MASTER_CHAT_IDS } = require("../info-na-zamer/config");
 const { resolveMasterName } = require("../schedule-ai/masterAliases");
 const { getFuelTableKey } = require("./fuel");
+const { findByName, getAssignableNames } = require("../lib/mastersDirectory");
 
-/** Каноничное имя → ключ MASTER_CHAT_IDS (UPPER). */
-const CANONICAL_TO_TG_KEY = {
-  Леша: "ЛЕША",
-  Антон: "АНТОН",
-  Семён: "СЕМЕН",
-  Семен: "СЕМЕН",
-  Рома: "РОМА",
-  Тимур: "ТИМУР",
-  Владимир: "ВЛАДИМИР",
-  Евгений: "ЕВГЕНИЙ",
-  Алексей: "АЛЕКСЕЙ",
-  Дима: "ДИМА",
-  Даниил: "ДАНИИЛ",
-  Углов: "УГЛОВ",
-};
-
+/** Ключ для Telegram (UPPER) по каноничному имени. */
 function getTelegramMasterKey(canonical) {
-  return CANONICAL_TO_TG_KEY[canonical] || null;
+  return findByName(canonical)?.tgKey || null;
 }
 
 function isAssignableMaster(canonical) {
   if (!canonical) return false;
   if (!getFuelTableKey(canonical)) return false;
-  const tgKey = getTelegramMasterKey(canonical);
-  if (!tgKey || MASTER_CHAT_IDS[tgKey] == null) return false;
-  return true;
+  const m = findByName(canonical);
+  return Boolean(m && m.active && m.chatId != null);
 }
 
 /**
@@ -61,12 +45,13 @@ function resolveAssignableMaster(rawName) {
       alternatives: [],
       tgKey: null,
       chatId: null,
-      reason: `Не понял мастера «${rawName}». Укажите имя из списка: Антон, Рома, Тимур, Семён, Леша, Евгений, Владимир, Алексей, Дима, Даниил, Углов.`,
+      reason: `Не понял мастера «${rawName}». Укажите имя из списка: ${getAssignableNames().join(", ")}.`,
     };
   }
 
-  const tgKey = getTelegramMasterKey(resolved.canonical);
-  const chatId = tgKey != null ? MASTER_CHAT_IDS[tgKey] ?? null : null;
+  const master = findByName(resolved.canonical);
+  const tgKey = master?.tgKey || null;
+  const chatId = master?.chatId ?? null;
 
   if (!getFuelTableKey(resolved.canonical)) {
     return {
@@ -78,6 +63,19 @@ function resolveAssignableMaster(rawName) {
       tgKey,
       chatId,
       reason: `Мастер ${resolved.canonical} не найден в топливном конфиге — назначьте через CRM.`,
+    };
+  }
+
+  if (master && !master.active) {
+    return {
+      ok: false,
+      raw: rawName,
+      canonical: resolved.canonical,
+      assumed: resolved.assumed,
+      alternatives: resolved.alternatives || [],
+      tgKey,
+      chatId,
+      reason: `Мастер ${resolved.canonical} больше не в списке — выберите другого.`,
     };
   }
 
@@ -156,7 +154,6 @@ function normalizeStartTime(raw) {
 }
 
 module.exports = {
-  CANONICAL_TO_TG_KEY,
   getTelegramMasterKey,
   isAssignableMaster,
   resolveAssignableMaster,

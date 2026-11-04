@@ -11,7 +11,8 @@
 // в eventsnew (кроме updateType=cancelled). Ошибка БД не ломает sent:true.
 // ============================================================================
 
-const { LOADING_CHAT_ID, MASTER_CHAT_IDS } = require("./config");
+const { LOADING_CHAT_ID } = require("./config");
+const { getChatId } = require("../lib/mastersDirectory");
 const { formatDate, formatTimeRange } = require("./format");
 const { resolveEventLabels } = require("./labels");
 const { buildClientCard, buildCancelMessage } = require("./messages");
@@ -78,7 +79,7 @@ function registerZamerRoute(fastify, telegramBot) {
         if (!normalizedName) {
           return fail(reply, 400, "Не указан мастер для обновления");
         }
-        const chatId = MASTER_CHAT_IDS[normalizedName];
+        const chatId = await getChatId(normalizedName);
         if (!chatId) {
           return fail(reply, 400, `Чат для мастера "${masterName}" не найден`);
         }
@@ -102,15 +103,16 @@ function registerZamerRoute(fastify, telegramBot) {
         if (!normalizedName) {
           return fail(reply, 400, "Не указан новый мастер");
         }
-        const newChatId = MASTER_CHAT_IDS[normalizedName];
+        const newChatId = await getChatId(normalizedName);
         if (!newChatId) {
           return fail(reply, 400, `Чат для мастера "${masterName}" не найден`);
         }
 
         let cancelMessageId = null;
-        if (prevNormalizedName && MASTER_CHAT_IDS[prevNormalizedName]) {
+        const prevChatId = prevNormalizedName ? await getChatId(prevNormalizedName) : null;
+        if (prevChatId) {
           const cancelSent = await telegramBot.sendMessage(
-            MASTER_CHAT_IDS[prevNormalizedName],
+            prevChatId,
             buildCancelMessage({
               labels,
               appealNumber,
@@ -145,7 +147,7 @@ function registerZamerRoute(fastify, telegramBot) {
         if (!normalizedName) {
           return fail(reply, 400, "Не указан мастер для отмены");
         }
-        const chatId = MASTER_CHAT_IDS[normalizedName];
+        const chatId = await getChatId(normalizedName);
         if (!chatId) {
           return fail(reply, 400, `Чат для мастера "${masterName}" не найден`);
         }
@@ -186,7 +188,7 @@ function registerZamerRoute(fastify, telegramBot) {
           header: `ЗАЯВКА НА ПОГРУЗКУ ${appealNumber || ""}`.trim(),
         });
       } else {
-        chatId = MASTER_CHAT_IDS[normalizedName];
+        chatId = await getChatId(normalizedName);
         if (!chatId) {
           return fail(reply, 400, `Чат для мастера "${masterName}" не найден`);
         }

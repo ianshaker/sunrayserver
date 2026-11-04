@@ -11,30 +11,16 @@
 // резолюции помечается assumed: true — рендер обязан показать это менеджеру.
 // ============================================================================
 
-// ИСТОЧНИК ПРАВДЫ — фронтенд CRM, sunray-crm-oasis:
-//   src/components/department/finance/wallet/types/walletTypes.ts
-//   (МастерКошелек, имяМастера, списокМастеров)
-// Бэкенд и фронтенд — разные кодовые базы без общего пакета, поэтому список
-// синхронизируется руками. Если на фронте добавили/переименовали мастера —
-// обновить и здесь (иначе Gemini не будет знать о новом мастере и уйдёт в clarify).
-// Каноничное написание — Title Case, как реально пишет фронт в eventsnew.master
-// (не ВЕРХНИЙ РЕГИСТР — это было легаси из старого kalendar.js).
-const MASTERS = [
-  { key: "anton", canonical: "Антон" },
-  { key: "lesha", canonical: "Леша" },
-  { key: "roma", canonical: "Рома" },
-  { key: "timur", canonical: "Тимур" },
-  { key: "semen", canonical: "Семён" },
-  { key: "vladimir", canonical: "Владимир" },
-  { key: "vyacheslav", canonical: "Вячеслав" },
-  { key: "aleksei", canonical: "Алексей" },
-  { key: "evgeniy", canonical: "Евгений" },
-  { key: "dima", canonical: "Дима" },
-  { key: "daniil", canonical: "Даниил" },
-  { key: "yglov", canonical: "Углов" },
-];
+// ИСТОЧНИК ПРАВДЫ — таблица public.masters в базе (с 04.11.2026), сервер читает её
+// через lib/mastersDirectory.js; запасной список на сбой базы лежит там же.
+// Каноничное написание — как в таблице (Title Case, как пишет CRM в eventsnew.master).
+// Клички и падежные формы («леха», «Леши») остаются здесь, в ALIASES и AMBIGUOUS.
+const { getCanonicalNames } = require("../lib/mastersDirectory");
 
-const CANONICAL_MASTERS = MASTERS.map((m) => m.canonical);
+/** Каноничные имена активных мастеров — каждый раз из актуального списка. */
+function canonicalMasters() {
+  return getCanonicalNames();
+}
 
 // Прямые синонимы/уменьшительные формы → один конкретный мастер (не считаются допущением,
 // кроме явно помеченных assumed:true — форм, которые сами по себе не 100% надёжны).
@@ -91,7 +77,7 @@ function matchesNameStem(cand, baseName) {
 }
 
 function resolveFromStem(cand) {
-  for (const canonical of CANONICAL_MASTERS) {
+  for (const canonical of canonicalMasters()) {
     if (matchesNameStem(cand, canonical)) {
       return { canonical, assumed: false, alternatives: [] };
     }
@@ -152,7 +138,7 @@ function resolveMasterName(rawName) {
     if (stemHit) {
       return { raw: rawName, canonical: stemHit.canonical, found: true, assumed: stemHit.assumed, alternatives: stemHit.alternatives };
     }
-    const canonicalMatch = CANONICAL_MASTERS.find((m) => normalize(m) === cand);
+    const canonicalMatch = canonicalMasters().find((m) => normalize(m) === cand);
     if (canonicalMatch) {
       return { raw: rawName, canonical: canonicalMatch, found: true, assumed: false, alternatives: [] };
     }
@@ -177,12 +163,11 @@ function resolveMasterName(rawName) {
 
 /** Текст ростера мастеров для промпта (только канонические имена — без списка алиасов). */
 function buildMasterRosterText() {
-  return CANONICAL_MASTERS.map((m) => `- ${m}`).join("\n");
+  return canonicalMasters().map((m) => `- ${m}`).join("\n");
 }
 
 module.exports = {
-  MASTERS,
-  CANONICAL_MASTERS,
+  canonicalMasters,
   resolveMasterName,
   buildMasterRosterText,
 };

@@ -3,26 +3,11 @@
 // ============================================================================
 
 const { supabase } = require("../lib/supabaseClient");
+const { getFuelKey } = require("../lib/mastersDirectory");
 
-/** Каноничное имя мастера (как в eventsnew.master) → ключ таблицы toplivo_*. */
-const MASTER_TO_FUEL_KEY = {
-  Алексей: "aleksei",
-  Антон: "anton",
-  Евгений: "evgeniy",
-  Леша: "lesha",
-  Рома: "roma",
-  Семён: "semen",
-  Семен: "semen",
-  Тимур: "timur",
-  Владимир: "vladimir",
-  Вячеслав: "vyacheslav",
-  Дима: "dima",
-  Даниил: "daniil",
-  Углов: "yglov",
-};
-
+/** Имя мастера (как в eventsnew.master) → ключ таблицы toplivo_*; список — таблица masters. */
 function getFuelTableKey(masterName) {
-  return MASTER_TO_FUEL_KEY[masterName] || null;
+  return getFuelKey(masterName);
 }
 
 /**
@@ -104,7 +89,6 @@ async function deleteFuelRecordByAppeal(masterName, appealId) {
 }
 
 module.exports = {
-  MASTER_TO_FUEL_KEY,
   getFuelTableKey,
   insertFuelRecord,
   deleteFuelRecordByAppeal,
