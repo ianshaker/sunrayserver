@@ -22,15 +22,15 @@ create table if not exists public.master_chat_kinds (
   is_active boolean not null default true,
   created_at timestamptz not null default now()
 );
-comment on table public.master_chat_kinds is 'Виды чатов мастера: замеры, монтажи, просчёты, себес, договоры, касса. group_suffix — как называть группу: «<Имя> · <suffix>»';
+comment on table public.master_chat_kinds is 'Виды чатов мастера: замеры, монтажи, просчёты, себес, договоры, касса. group_suffix — слово в названии группы: «ИМЯ СЛОВО», капсом (РОМА ЗАМЕР)';
 
 insert into public.master_chat_kinds (key, title, group_suffix, hint, sort_order) values
-  ('zamer',    'Замеры',   'замеры',   'Карточки на замер',                 1),
-  ('montazh',  'Монтажи',  'монтажи',  'Монтажи мастера',                   2),
-  ('proschet', 'Просчёты', 'просчёты', 'Обычные просчёты',                  3),
-  ('sebes',    'Себес',    'себес',    'Себестоимость (просчёты по себесу)', 4),
-  ('dogovor',  'Договоры', 'договоры', 'Договоры мастера',                   5),
-  ('kassa',    'Касса',    'касса',    'Сводки по кошельку мастера',        6)
+  ('zamer',    'Замер',    'ЗАМЕР',    'Карточки на замер',                 1),
+  ('montazh',  'Монтаж',   'МОНТАЖ',   'Монтажи мастера',                   2),
+  ('proschet', 'Просчёт',  'ПРОСЧЕТ',  'Обычные просчёты',                  3),
+  ('sebes',    'Себес',    'СЕБЕС',    'Себестоимость (просчёты по себесу)', 4),
+  ('dogovor',  'Договоры', 'ДОГОВОРЫ', 'Договоры мастера',                   5),
+  ('kassa',    'Касса',    'КАССА',    'Сводки по кошельку мастера',        6)
 on conflict (key) do nothing;
 
 create table if not exists public.master_chats (
