@@ -188,8 +188,8 @@ $function$;
 
 -- 3. Разделение проводки на две части -----------------------------------------
 -- Отличие от браузера: (а) обе половины пишутся одной операцией (раньше при сбое вставки первая часть оставалась
--- уменьшенной); (б) строка должна быть той же суммы, что видело окно (p_expected), и свободной («Сортировка»);
--- (в) сумма частей сверяется с оригиналом с допуском 0,01, как в браузере. Знаки и нули частей проверяет окно.
+-- уменьшенной); (б) строка должна быть той же суммы, что видело окно (p_expected), свободной («Сортировка») и без метки
+-- «договор изменён» (часть 2 без метки ушла бы в срез); (в) сумма частей сверяется с оригиналом с допуском 0,01, как в браузере. Знаки и нули частей проверяет окно.
 create or replace function public.split_wallet_transaction(
   p_master text,
   p_id integer,
@@ -230,6 +230,12 @@ begin
     raise exception 'Разделение: делить можно только транзакции из «Сортировки»'
       using hint = 'СТРОКА_НЕ_СВОБОДНА';
   end if;
+  if exists (select 1 from public.wallet_holds h
+              where h.master = p_master and h.released_at is null
+                and upper(btrim(h.transaction_number)) = upper(btrim(v_orig.transaction_number))) then
+    raise exception 'Разделение: у транзакции метка «договор изменён» — сначала снимите её'
+      using hint = 'СТРОКА_С_МЕТКОЙ';
+  end if;
   if abs(p_first_amount + p_second_amount - v_orig.amount) > 0.01 then
     raise exception 'Разделение: сумма частей не равна сумме транзакции'
       using hint = 'СУММА_НЕ_СХОДИТСЯ';
@@ -256,7 +262,7 @@ $function$;
 -- 4. Аванс и замер при создании договора -------------------------------------
 -- Зовётся ПОСЛЕ записи договора (раньше деньги шли до договора, откат их не удалял, повтор давал вторую пару).
 -- Договор, номер и обращение база берёт из строки dogovornew по id, не от клиента. Повторный вызов того же договора
--- не пишет вторую пару: возвращает уже записанные проводки (already=true). Сбой — откат обеих проводок.
+-- не пишет вторую пару: возвращает уже записанные проводки (already=true); ищет и в срезах, и по «(часть N/2)». Сбой — откат обеих проводок.
 -- Статус проводок — как в браузере: «подтверждено» при «Наличные» или «Безнал», иначе «неподтверждено» (одно на обе).
 -- Отличие от браузера: дата проводок — по Москве.
 create or replace function public.add_contract_money(
@@ -297,6 +303,9 @@ begin
   if p_advance < 0 then
     raise exception 'Деньги договора: аванс не может быть отрицательным';
   end if;
+  if p_advance = 0 and p_measurement = 0 then
+    raise exception 'Деньги договора: должна быть указана либо сумма аванса, либо сумма замера';
+  end if;
 
   perform set_config('lock_timeout', '5s', true);
   -- Замок на договор: повтор и параллельный вызов ждут первого
@@ -314,10 +323,15 @@ begin
   v_mes_event := 'Оплата за замер по договору №' || v_number;
 
   if p_advance > 0 then
-    select jsonb_build_object('id', w.id, 'transaction_number', w.transaction_number, 'amount', w.amount) into v_adv
-      from public.wallet_all w
-     where w.master = p_master and w.appeal_id = v_appeal and w.event_type = 'Аванс' and w.event = v_adv_event
-     order by w.id limit 1;
+    select jsonb_build_object('id', x.id, 'transaction_number', x.transaction_number, 'amount', x.amount) into v_adv
+      from (select w.id, w.transaction_number, w.amount from public.wallet_all w
+             where w.master = p_master and w.appeal_id = v_appeal and w.event_type = 'Аванс'
+               and (w.event = v_adv_event or w.event like v_adv_event || ' (часть %')
+            union all
+            select f.id, f.transaction_number, f.amount from public.walletfinal_all f
+             where f.master = p_master and f.appeal_id = v_appeal and f.event_type = 'Аванс'
+               and (f.event = v_adv_event or f.event like v_adv_event || ' (часть %')) x
+     limit 1;
     if v_adv is null then
       v_tr := public.wallet_new_transaction_number();
       insert into public.wallet_all (master, transaction_number, date, time, event_type, event, appeal_id, payment_type, amount,
@@ -331,10 +345,15 @@ begin
   end if;
 
   if p_measurement <> 0 then
-    select jsonb_build_object('id', w.id, 'transaction_number', w.transaction_number, 'amount', w.amount) into v_mes
-      from public.wallet_all w
-     where w.master = p_master and w.appeal_id = v_appeal and w.event_type = 'Выплата по замеру' and w.event = v_mes_event
-     order by w.id limit 1;
+    select jsonb_build_object('id', x.id, 'transaction_number', x.transaction_number, 'amount', x.amount) into v_mes
+      from (select w.id, w.transaction_number, w.amount from public.wallet_all w
+             where w.master = p_master and w.appeal_id = v_appeal and w.event_type = 'Выплата по замеру'
+               and (w.event = v_mes_event or w.event like v_mes_event || ' (часть %')
+            union all
+            select f.id, f.transaction_number, f.amount from public.walletfinal_all f
+             where f.master = p_master and f.appeal_id = v_appeal and f.event_type = 'Выплата по замеру'
+               and (f.event = v_mes_event or f.event like v_mes_event || ' (часть %')) x
+     limit 1;
     if v_mes is null then
       v_tr := public.wallet_new_transaction_number();
       insert into public.wallet_all (master, transaction_number, date, time, event_type, event, appeal_id, payment_type, amount,
