@@ -194,6 +194,7 @@ registerGmailAuthRoutes(fastify);
 // --- Telegram webhook: приём апдейтов + страница управления /telegram/setup --- //
 registerTelegramWebhook(fastify);
 registerBotChatsAdminRoutes(fastify);
+require("./lib/mastersAdmin").registerMastersAdminRoutes(fastify);
 require("./rutina")(fastify);
 require("./pdf-smet/route").registerPdfSmetRoute(fastify);
 require("./pdf-smet/route-html").registerPdfSmetHtmlRoute(fastify);
